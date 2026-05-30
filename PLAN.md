@@ -68,11 +68,20 @@ ec8de44  Web service: search, similarity, submissions API
   search (`/?q=<sha256>`; search page now reads the `q` URL param on mount). Validated
   via the probe against a crafted catalog (recent list + cache reload) and `tsc`.
 
+- **Phase 3 (Windows GUI)** — `crates/curator-gui-win`: a Win32 windows-rs app calling
+  `curator-core` in-process (TreeView + XML edit + progress/status bars; File▸Open
+  image/folder; Analysis▸Cancel; worker thread posts progress via `PostMessageW`).
+  **Cross-compiled & linked on macOS** to a `PE32+ GUI` exe via `x86_64-pc-windows-gnu`
+  + mingw-w64 (needed for `rusqlite`'s bundled SQLite C). See crate README for the env.
+- **Phase 3 (web build-detail)** — `/build/[sha256]` page + `GET /api/build/[sha256]`
+  (`getBuild` query): details/hashes, flattened file list, tiered similar builds linking
+  to each other; search results + macOS neighbor rows deep-link here. Validated live.
+
 **Remaining:**
-- **Phase 3 Windows GUI** — windows-rs over the same `curator-ffi`/core (scaffold only;
-  can't build on macOS).
-- macOS GUI polish: codesign/notarize, drag-and-drop, recent-builds list, open neighbors
-  into a web build-detail page.
+- macOS GUI: codesign/notarize (needs Developer ID).
+- Windows GUI: similarity/submit wiring, adapter bundling next to the exe, recent-builds,
+  drag-and-drop.
+- Web: submission-moderation UI.
 - Windows bundle; macOS codesign/notarization; native-arm64 `unrar`/`7zz`.
 - Web: richer UI (build detail / similarity browse), submission moderation.
 - Skipped: image pHash (validated algo, ~0 yield on retro discs — native formats).
