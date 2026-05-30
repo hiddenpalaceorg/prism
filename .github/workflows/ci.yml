@@ -103,19 +103,20 @@ jobs:
           cp dl/curator-gui-win-*/curator-gui-win.zip "out/Curator-win-${token}.zip"
           cp dl/Curator-macos-*/Curator-app.zip        "out/Curator-mac-${token}.zip"
           ls -la out
-      - name: publish per-commit draft release (hidden from /releases, no git tag)
+      - name: publish per-branch draft release (rolling; hidden from /releases, no git tag)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="ci-${GITHUB_SHA:0:8}"
-          title="CI build ${GITHUB_SHA:0:8} (${GITHUB_REF_NAME})"
-          notes="Automated build of ${GITHUB_SHA} on \`${GITHUB_REF_NAME}\`. Draft, unsigned/ad-hoc-signed."
-          # --draft: not listed publicly and pushes no git tag (the tag name is just a
-          # label on the draft). Create if new, else (re)upload assets to the existing draft.
-          gh release create "$tag" out/* --target "$GITHUB_SHA" --title "$title" --notes "$notes" --draft \
-            || gh release upload "$tag" out/* --clobber
+          branch="${GITHUB_REF_NAME//\//-}"          # sanitize slashes (feature/x -> feature-x)
+          tag="ci-${branch}"
+          title="CI build (${GITHUB_REF_NAME} @ ${GITHUB_SHA:0:8})"
+          notes="Latest automated build of \`${GITHUB_REF_NAME}\` (${GITHUB_SHA}). Draft, unsigned/ad-hoc-signed."
+          # One rolling draft per branch: recreate it each push so the randomly-named
+          # assets don't accumulate (--draft pushes no git tag; the tag is just a label).
+          gh release delete "$tag" --yes 2>/dev/null || true
+          gh release create "$tag" out/* --target "$GITHUB_SHA" --title "$title" --notes "$notes" --draft
           url=$(gh release view "$tag" --json url -q .url)
           {
             echo "### Draft build — not listed on /releases, sign-in required"
