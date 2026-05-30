@@ -1,10 +1,17 @@
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
-import { enqueueSubmission } from "@/lib/queries";
+import { enqueueSubmission, listSubmissions } from "@/lib/queries";
 import type { BuildRecord } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// GET /api/submissions?status=queued — the moderation queue.
+export async function GET(request: NextRequest) {
+  const status = request.nextUrl.searchParams.get("status") ?? undefined;
+  const items = await listSubmissions(getPool(), status);
+  return Response.json({ submissions: items });
+}
 
 // POST { nickname, record } — enqueue a build for moderation/ingest (dedup by sha256).
 export async function POST(request: NextRequest) {
