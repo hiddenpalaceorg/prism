@@ -135,13 +135,23 @@ pub fn run(
     path: &str,
     observer: Arc<dyn ProgressObserver>,
 ) -> Result<RawAnalysis> {
-    let mut child = Command::new(&cmd.program)
+    let mut builder = Command::new(&cmd.program);
+    builder
         .args(&cmd.args)
         .arg("analyze")
         .arg("--path")
         .arg(path)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Windows: run the adapter without popping up a console window (it's a console exe;
+    // stdout/stderr are still captured through the pipes above).
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        builder.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = builder
         .spawn()
         .map_err(|e| Error::Adapter(format!("failed to launch `{}`: {e}", cmd.program)))?;
 
