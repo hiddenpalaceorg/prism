@@ -239,6 +239,45 @@ mod u64_str {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sketch_u64s_serialize_as_strings_and_roundtrip() {
+        let s = Sketch { kind: "minhash-v1".into(), k: 2, seed: 42, values: vec![1, u64::MAX] };
+        let j = serde_json::to_string(&s).unwrap();
+        // u64s must be JSON strings (numbers would lose precision in JS).
+        assert!(j.contains("\"42\""), "{j}");
+        assert!(j.contains("\"18446744073709551615\""), "{j}");
+        let back: Sketch = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.seed, 42);
+        assert_eq!(back.values, vec![1, u64::MAX]);
+    }
+
+    #[test]
+    fn empty_header_and_volume_are_skipped() {
+        let rec = BuildRecord {
+            record_schema_version: RECORD_SCHEMA_VERSION,
+            fingerprint_profile: FINGERPRINT_PROFILE.into(),
+            image: ImageInfo { name: "x".into(), size: 1, md5: "m".into(), sha1: "s".into(), sha256: "h".into() },
+            info: DiscInfo::default(),
+            composites: Composites::default(),
+            structural: Structural::default(),
+            text_doc: String::new(),
+            contents: vec![],
+            media: vec![],
+            exe_fp: None,
+            sketch: None,
+        };
+        let j = serde_json::to_string(&rec).unwrap();
+        assert!(!j.contains("\"header\""), "empty header should be skipped: {j}");
+        assert!(!j.contains("\"sketch\""));
+        let back: BuildRecord = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.image.sha256, "h");
+    }
+}
+
 /// Serialize a `Vec<u64>` as a JSON array of strings.
 mod u64_str_vec {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};

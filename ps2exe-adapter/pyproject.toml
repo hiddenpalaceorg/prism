@@ -26,6 +26,9 @@ dependencies = [
 [project.scripts]
 curator-adapter = "curator_adapter.cli:main"
 
+[dependency-groups]
+dev = ["pytest>=8"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

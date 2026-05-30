@@ -1,0 +1,57 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  rust:
+    name: rust core + cli + ffi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cargo test + build (toolchain pinned by rust-toolchain.toml)
+        run: |
+          cargo test --workspace
+          cargo build --workspace
+
+  windows-gui:
+    name: windows GUI cross-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mingw-w64 (for rusqlite's bundled SQLite)
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+      - run: rustup target add x86_64-pc-windows-gnu
+      - name: cargo check (x86_64-pc-windows-gnu)
+        env:
+          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
+          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
+        run: cargo check --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc-windows-gnu
+
+  web:
+    name: web (tsc + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+
+  adapter:
+    name: python adapter (audio fp)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ps2exe-adapter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: pytest (numpy-only; skips the heavy ps2exe stack)
+        run: uv run --no-project --with numpy --with pytest pytest tests/ -q

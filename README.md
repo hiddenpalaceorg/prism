@@ -74,6 +74,17 @@ cargo run -p curator-cli -- export -o builds.jsonl
 Re-analyzing a known image is served from the sha256 cache. Cache + catalog live in
 the platform user-data dir (override with `--data-dir`).
 
+## Tests
+
+```sh
+cargo test --workspace                                              # Rust core/CLI/FFI
+cd web && npm test                                                  # tlsh vs py-tlsh + helpers
+cd ps2exe-adapter && uv run --with pytest pytest tests/             # audio fingerprint
+```
+
+CI (`.github/workflows/ci.yml`) runs all of the above on every push/PR, plus a
+`cargo check` of the Windows GUI against `x86_64-pc-windows-gnu` and `tsc --noEmit`.
+
 ## Bundling (no dev toolchain)
 
 `python ps2exe-adapter/bundle.py` (with `uv` on PATH; cross-platform — macOS or
