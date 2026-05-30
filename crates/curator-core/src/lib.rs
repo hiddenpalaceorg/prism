@@ -138,7 +138,17 @@ impl Analyzer {
                     audio_fp: m.audio_fp.clone(),
                 })
                 .collect(),
-            exe_fp: None,
+            exe_fp: raw.exe_fp.as_ref().and_then(|e| {
+                if e.tlsh.is_none() && e.imphash.is_none() {
+                    None
+                } else {
+                    Some(schema::ExeFp {
+                        tlsh: e.tlsh.clone(),
+                        imphash: e.imphash.clone(),
+                        func_hashes: Vec::new(),
+                    })
+                }
+            }),
             sketch,
         };
 

@@ -67,6 +67,7 @@ export interface QueryFeatures {
   fileset: string[];
   minhash: string[] | null;
   bands: string[] | null;
+  imphash: string | null;
 }
 
 /** Derive the query features the similarity endpoint needs from a BuildRecord. */
@@ -94,6 +95,7 @@ export function deriveQueryFeatures(rec: BuildRecord): QueryFeatures {
     fileset,
     minhash,
     bands,
+    imphash: rec.exe_fp?.imphash ?? null,
   };
 }
 

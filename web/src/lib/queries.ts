@@ -13,7 +13,7 @@ export async function logCheck(pool: Pool, sha256: string | null): Promise<void>
 /** Fuse Tier 1/2/3 neighbors for a query build's derived features. */
 export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Promise<SimilarityResult> {
   const exclude = q.sha256 || "";
-  const out: SimilarityResult = { tier1_twins: [], tier2: [], tier3: [] };
+  const out: SimilarityResult = { tier1_twins: [], tier2: [], tier3: [], tier5_exe: [] };
 
   if (q.content_hash) {
     const r = await pool.query(
@@ -56,6 +56,18 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
       }))
       .sort((a, b) => b.jaccard - a.jaccard)
       .slice(0, limit);
+  }
+
+  // Tier-5: same boot-exe imports (PE imphash equality). TLSH-distance ranking is a
+  // future refinement (needs a TLSH compare in the web stack).
+  if (q.imphash) {
+    const r = await pool.query(
+      `SELECT e.build_sha256 AS sha256, b.name, b.system
+       FROM exe_fp e JOIN builds b ON b.sha256=e.build_sha256
+       WHERE e.imphash=$1 AND e.build_sha256<>$2`,
+      [q.imphash, exclude]
+    );
+    out.tier5_exe = r.rows;
   }
 
   return out;

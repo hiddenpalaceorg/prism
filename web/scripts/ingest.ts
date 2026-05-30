@@ -63,6 +63,26 @@ async function ingestRecord(client: pg.Client, rec: BuildRecord) {
       [sha, arrayLit(mh.map(String)), arrayLit(bands.map(String))]
     );
   }
+
+  // Tier-5 exe fingerprint
+  if (rec.exe_fp && (rec.exe_fp.tlsh || rec.exe_fp.imphash)) {
+    await client.query(
+      `INSERT INTO exe_fp (build_sha256, tlsh, imphash) VALUES ($1,$2,$3)
+       ON CONFLICT (build_sha256) DO UPDATE SET tlsh=excluded.tlsh, imphash=excluded.imphash`,
+      [sha, rec.exe_fp.tlsh ?? null, rec.exe_fp.imphash ?? null]
+    );
+  }
+
+  // Tier-4 audio fingerprints (one row per audio track)
+  await client.query("DELETE FROM audio_fp WHERE build_sha256=$1", [sha]);
+  for (const m of rec.media ?? []) {
+    if (m.kind === "audio" && m.audio_fp?.length) {
+      await client.query(
+        "INSERT INTO audio_fp (build_sha256, track, subfp) VALUES ($1,$2,$3)",
+        [sha, m.path, arrayLit(m.audio_fp.map(String))]
+      );
+    }
+  }
 }
 
 async function main() {

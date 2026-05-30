@@ -45,6 +45,14 @@ pub struct RawAnalysis {
     pub files: Vec<RawFile>,
     #[serde(default)]
     pub media: Vec<RawMedia>,
+    #[serde(default)]
+    pub exe_fp: Option<RawExeFp>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RawExeFp {
+    pub tlsh: Option<String>,
+    pub imphash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -20,6 +20,7 @@ dependencies = [
     "inflate64>=1.0.4",
     "fastcdc>=1.7.0",
     "blake3>=1.0.8",
+    "py-tlsh>=5.0.0",
 ]
 
 [project.scripts]

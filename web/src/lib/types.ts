@@ -53,6 +53,16 @@ export interface BuildRecord {
   text_doc: string;
   contents: Node[];
   sketch?: Sketch | null;
+  exe_fp?: { tlsh?: string; imphash?: string } | null;
+  media?: MediaFp[];
+}
+
+export interface MediaFp {
+  path: string;
+  kind: string; // "image" | "audio"
+  phash?: string;
+  chromaprint?: string;
+  audio_fp?: number[];
 }
 
 export interface SimilarityHit {
@@ -66,4 +76,5 @@ export interface SimilarityResult {
   tier1_twins: { sha256: string; name: string; system: string }[];
   tier2: SimilarityHit[];
   tier3: SimilarityHit[];
+  tier5_exe: { sha256: string; name: string; system: string }[];
 }

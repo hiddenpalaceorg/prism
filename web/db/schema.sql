@@ -95,6 +95,16 @@ CREATE TABLE media_fp (
 CREATE INDEX idx_media_build ON media_fp(build_sha256);
 CREATE INDEX idx_media_phash ON media_fp(phash);
 
+-- audio acoustic fingerprint: a chroma sub-fingerprint set per CDDA track,
+-- compared by Jaccard (GIN), same machinery as Tier 2.
+CREATE TABLE audio_fp (
+    build_sha256 TEXT NOT NULL REFERENCES builds(sha256) ON DELETE CASCADE,
+    track        TEXT NOT NULL,
+    subfp        BIGINT[] NOT NULL
+);
+CREATE INDEX idx_audio_build ON audio_fp(build_sha256);
+CREATE INDEX idx_audio_gin   ON audio_fp USING gin (subfp);
+
 -- ── Tier 5: exe binary similarity ────────────────────────────────────────────
 CREATE TABLE exe_fp (
     build_sha256 TEXT PRIMARY KEY REFERENCES builds(sha256) ON DELETE CASCADE,
