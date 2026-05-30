@@ -199,12 +199,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Open a build in the web UI's search (exact-hash lookup) in the default browser.
+    /// Open a build's detail page in the web catalog in the default browser.
     func openInWeb(sha256: String) {
-        var comps = URLComponents(url: service.baseURL, resolvingAgainstBaseURL: false)
-        comps?.path = "/"
-        comps?.queryItems = [URLQueryItem(name: "q", value: sha256)]
-        if let url = comps?.url { NSWorkspace.shared.open(url) }
+        let url = service.baseURL.appendingPathComponent("build").appendingPathComponent(sha256)
+        NSWorkspace.shared.open(url)
     }
 
     /// Present the native open panel (files or folders) and analyze the choice.

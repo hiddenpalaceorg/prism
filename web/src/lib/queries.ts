@@ -207,6 +207,32 @@ export async function enqueueSubmission(pool: Pool, nickname: string, record: Bu
   return sha;
 }
 
+export interface BuildRow {
+  sha256: string;
+  name: string;
+  system: string;
+  size: number;
+  md5: string;
+  sha1: string;
+  content_hash: string;
+  file_count: number;
+  total_size: number;
+  fingerprint_profile: string;
+  ingested_at: string;
+  record: BuildRecord;
+}
+
+/// Fetch one catalogued build (with its full canonical record) by sha256.
+export async function getBuild(pool: Pool, sha256: string): Promise<BuildRow | null> {
+  const r = await pool.query(
+    `SELECT sha256, name, system, size, md5, sha1, content_hash, file_count,
+            total_size, fingerprint_profile, ingested_at, record
+     FROM builds WHERE sha256=$1`,
+    [sha256]
+  );
+  return (r.rows[0] as BuildRow) ?? null;
+}
+
 export async function submissionStatus(pool: Pool, sha256: string) {
   const r = await pool.query(
     "SELECT sha256, nickname, status, submitted_at, reviewed_at FROM submission_queue WHERE sha256=$1",

@@ -37,7 +37,8 @@ builds/                sample disc images for testing
 | ↳ image pHash | ⬜ skipped (validated algorithm; ~0 yield on retro discs) |
 | Phase 4 — web (Next 16/TS/Tailwind): schema, ingester, search/similarity/submission API, search UI | ✅ built & validated |
 | ↳ text-embedding tier (all-MiniLM-L6-v2 → pgvector cosine) | ✅ built & validated |
-| ↳ richer UI, submission moderation | ⬜ |
+| ↳ build-detail page (`/build/[sha256]`: details, files, similar) + search links | ✅ built & validated (live) |
+| ↳ submission moderation UI | ⬜ |
 | Phase 2 — self-contained macOS adapter bundle (standalone Python + deps + unrar) | ✅ built & validated |
 | ↳ Windows bundle, macOS codesign/notarize, native-arm64 unrar | ⬜ |
 | Phase 3 — UniFFI bridge (`curator-ffi`) + SwiftUI macOS app (tree, details, XML/JSON, progress, cancel) | ✅ built & validated |
