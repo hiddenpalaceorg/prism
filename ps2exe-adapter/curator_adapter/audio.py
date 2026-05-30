@@ -8,7 +8,37 @@ validated to score ~0.95 for the same track re-encoded and ~0.00 for different s
 Part of fingerprint_profile "v1" — changing these constants is a re-scan.
 """
 
+import re
+
 import numpy as np
+
+_CUE_FILE = re.compile(r'FILE\s+"?(.+?)"?\s+(\w+)\s*$', re.I)
+_CUE_TRACK = re.compile(r"TRACK\s+(\d+)\s+(\S+)", re.I)
+_CUE_INDEX1 = re.compile(r"INDEX\s+01\s+(\d+):(\d+):(\d+)", re.I)
+
+
+def parse_cue(text):
+    """Parse a .cue sheet into [{file, tracks:[{num, type, start_frame}]}]."""
+    files = []
+    cur = None
+    track = None
+    for line in text.splitlines():
+        mf = _CUE_FILE.search(line)
+        if mf:
+            cur = {"file": mf.group(1), "tracks": []}
+            files.append(cur)
+            track = None
+            continue
+        mt = _CUE_TRACK.search(line)
+        if mt and cur is not None:
+            track = {"num": int(mt.group(1)), "type": mt.group(2).upper(), "start_frame": None}
+            cur["tracks"].append(track)
+            continue
+        mi = _CUE_INDEX1.search(line)
+        if mi and track is not None:
+            mm, ss, ff = int(mi.group(1)), int(mi.group(2)), int(mi.group(3))
+            track["start_frame"] = (mm * 60 + ss) * 75 + ff
+    return files
 
 SR0 = 44100          # Red Book sample rate
 DECIM = 4            # crude decimation -> ~11025 Hz
