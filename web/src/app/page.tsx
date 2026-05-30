@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 interface Hit {
   sha256: string;
@@ -76,7 +77,9 @@ export default function Home() {
             <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
               {hits.map((h) => (
                 <li key={h.sha256} className="py-3">
-                  <div className="font-medium">{h.name}</div>
+                  <Link href={`/build/${h.sha256}`} className="font-medium hover:underline">
+                    {h.name}
+                  </Link>
                   <div className="mt-0.5 flex gap-3 text-xs text-neutral-500">
                     <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
                       {h.system}
