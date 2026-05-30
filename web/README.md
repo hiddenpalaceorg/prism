@@ -1,32 +1,50 @@
 # curator-web
 
-Next.js + Postgres app: a searchable public listing of known builds and the
-read-only **similarity service** the desktop GUIs call.
+Next.js 16 (App Router, TypeScript, Tailwind 4) + Postgres: a searchable public
+listing of known builds and the read-only **similarity service** the desktop GUIs call.
 
-**Status:** scaffold. The database schema (`db/schema.sql`) is complete and reflects
-all search + similarity tiers; the ingester, API routes, and UI are to be built.
+## Status
 
-## Pieces to build
+Working: DB schema, ingester, search + similarity + submission **API routes**, and a
+minimal search UI. Validated against Postgres on the Sonic CD lineage.
 
-- **Ingester** (`scripts/ingest.ts`): read an export bundle (JSONL of `BuildRecord`s,
-  produced by `curator export`) or accepted submissions, then populate:
-  - `builds`, `files` (FTS/trgm + exact-hash indexes)
-  - `build_fileset` (Tier 2), `build_sketch` + `build_chunks` + `chunk_idf` (Tier 3),
-    `media_fp` (Tier 4), `exe_fp` (Tier 5)
-  - `text_embedding` via a local model (bge-small-en, 384-d) computed at ingest
-- **`POST /api/similarity`** (read-only): body = sha256 + file-hash set + text doc +
-  structural; log by sha256; fuse Tier 1–5 + embedding rankings; return neighbors.
-  Does **not** ingest the submitted build.
-- **`POST /api/submissions`** / **`GET /api/submissions/:sha256`**: enqueue (dedup by
-  sha256) into `submission_queue`; report status. Accepted → ingester.
-- **UI**: filename FTS/fuzzy search, exact hash lookup, build detail, similarity browse.
+To build: pgvector **text embedding** at ingest, richer UI (build detail / similarity
+browse), submission moderation.
 
-## DB setup
+## Setup
 
 ```sh
-createdb curator
-psql curator -f db/schema.sql
+npm install
+createdb curator && psql curator -f db/schema.sql   # needs pg_trgm, vector, intarray
+DATABASE_URL=postgres:///curator npm run dev
 ```
 
-Requires Postgres with `pg_trgm`, `vector` (pgvector), and ideally `smlar` for exact
-set-similarity (Tier 2); `intarray` is the fallback. See `db/schema.sql`.
+## Ingesting
+
+```sh
+# from a desktop export bundle (curator export -o builds.jsonl)
+DATABASE_URL=postgres:///curator npm run ingest -- builds.jsonl
+```
+Populates `builds`, `files`, `build_fileset` (Tier 2), `build_sketch` (Tier 3), and
+derives LSH bands. `text_embedding` is left NULL pending the embedding model.
+
+## API
+
+- `GET /api/search?q=<term>` — filename FTS + trigram fuzzy, or exact hash lookup when
+  the term looks like a hash.
+- `POST /api/similarity` — body = a canonical `BuildRecord`. Logs the check by sha256
+  (read-only, not ingested) and returns fused Tier 1/2/3 neighbors.
+- `POST /api/submissions` — body `{ nickname, record }`; enqueues for moderation
+  (dedup by sha256). `GET /api/submissions/<sha256>` returns status.
+
+## Layout
+
+```
+src/app/            UI (page.tsx) + API route handlers
+src/lib/            db pool, fingerprint helpers, queries, shared types
+scripts/            ingest.ts, similar.ts (run via tsx)
+db/schema.sql       Postgres schema (tiers 1–5 + FTS + pgvector)
+```
+
+`src/lib/fingerprint.ts` mirrors the desktop fingerprint math (file-hash sets, LSH
+bands) so query features derive identically from a `BuildRecord`.
