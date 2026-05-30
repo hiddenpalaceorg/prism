@@ -43,6 +43,17 @@ pub struct RawAnalysis {
     pub info: RawInfo,
     #[serde(default)]
     pub files: Vec<RawFile>,
+    #[serde(default)]
+    pub media: Vec<RawMedia>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RawMedia {
+    pub path: String,
+    pub kind: String,
+    /// Acoustic sub-fingerprint set (Tier-4 audio); values < 2^53 so JSON-number safe.
+    #[serde(default)]
+    pub audio_fp: Vec<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]

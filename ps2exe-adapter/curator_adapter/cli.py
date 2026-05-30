@@ -282,7 +282,45 @@ def analyze(path):
 
     info = _gather_info(processor, reader, system, mods)
     files = _hash_files(reader, manager)
-    return {"info": info, "files": files}
+    media = _scan_audio_tracks(readers, mods, manager)
+    return {"info": info, "files": files, "media": media}
+
+
+def _scan_audio_tracks(readers, mods, manager):
+    """Fingerprint raw CDDA audio tracks sitting beside the data track (Tier-4).
+
+    Handles multi-track containers (e.g. a zip of per-track .bins). Single-bin+cue
+    images are not split here yet (would need cue parsing)."""
+    from . import audio
+
+    media = []
+    containers = [r for r in readers if isinstance(r, mods["compressed"])]
+    for r in containers:
+        for entry in r.iso_iterator(r.get_root_dir(), recursive=True, include_dirs=False):
+            path = r.get_file_path(entry)
+            try:
+                size = int(r.get_file_size(entry))
+            except Exception:  # noqa: BLE001
+                continue
+            try:
+                fh = r.open_file(entry)
+                is_ctx = hasattr(fh, "__enter__")
+                if is_ctx:
+                    fh.__enter__()
+                try:
+                    head = fh.read(16)
+                    if not audio.is_audio_track(head, size):
+                        continue
+                    raw = head + fh.read()
+                finally:
+                    with contextlib.suppress(Exception):
+                        fh.__exit__(None, None, None) if is_ctx else fh.close()
+            except Exception:  # noqa: BLE001
+                continue
+            fp = audio.fingerprint_pcm(raw)
+            if fp:
+                media.append({"path": _clean_path(path), "kind": "audio", "audio_fp": fp})
+    return media
 
 
 def main():
