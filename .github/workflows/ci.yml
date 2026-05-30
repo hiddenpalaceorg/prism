@@ -39,6 +39,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: macos/.build
+          # Invalidate when Swift sources, the package, or the FFI/core surface (which
+          # the regenerated UniFFI bindings derive from) change; restore-keys lets a
+          # stale .build seed an incremental rebuild.
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('macos/Package.swift', 'macos/Sources/**', 'crates/curator-ffi/src/**', 'crates/curator-core/src/**') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
       - name: build Curator.app (release)
         # No adapter bundle in CI (the app falls back to CURATOR_ADAPTER_DIR/_BIN).
         run: bash macos/build-app.sh release
