@@ -41,9 +41,9 @@ mod app {
     use windows::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW};
     use windows::Win32::UI::Controls::{
         InitCommonControlsEx, ICC_BAR_CLASSES, ICC_PROGRESS_CLASS, ICC_TREEVIEW_CLASSES,
-        INITCOMMONCONTROLSEX, PBM_SETPOS, PBM_SETRANGE32, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0,
-        TVITEMW, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM, TVM_INSERTITEMW, TVS_HASBUTTONS,
-        TVS_HASLINES, TVS_LINESATROOT,
+        INITCOMMONCONTROLSEX, NMHDR, NMTREEVIEWW, PBM_SETPOS, PBM_SETRANGE32, TVINSERTSTRUCTW,
+        TVINSERTSTRUCTW_0, TVITEMW, TVIF_PARAM, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM,
+        TVM_INSERTITEMW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
     };
     use windows::Win32::UI::Shell::{
         DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, SetWindowSubclass,
@@ -58,8 +58,20 @@ mod app {
     const IDM_EXIT: usize = 4;
     const IDM_SIMILAR: usize = 5;
     const IDM_SUBMIT: usize = 6;
+    const IDM_VIEW_OVERVIEW: usize = 7;
+    const IDM_VIEW_XML: usize = 8;
+    const IDM_VIEW_JSON: usize = 9;
     const IDM_RECENT_BASE: usize = 2000;
     const MAX_RECENT: u32 = 15;
+
+    /// What the right-hand document pane is showing.
+    #[derive(Clone, Copy, PartialEq)]
+    enum DocView {
+        Overview,
+        Selection,
+        Xml,
+        Json,
+    }
 
     const WM_APP_PROGRESS: u32 = WM_APP + 1;
     const WM_APP_DONE: u32 = WM_APP + 2;
@@ -100,6 +112,14 @@ mod app {
         working: bool,
         /// Canonical JSON of the loaded build (for similarity/submit), if any.
         last_json: Option<String>,
+        /// Document-pane content, by view. `view` selects which one is shown.
+        view: DocView,
+        doc_overview: String,
+        doc_xml: String,
+        /// Per-file metadata text, indexed by the tree item's lParam.
+        node_details: Vec<String>,
+        /// Rendered detail for the currently selected tree node.
+        selected_detail: String,
         /// Web service base URL (CURATOR_WEB_URL, default http://localhost:3001).
         web_url: String,
         /// The "Recent" submenu and the sha256s backing its items (by position).
@@ -247,6 +267,10 @@ mod app {
                     on_command(hwnd, (wparam.0 & 0xffff) as usize);
                     LRESULT(0)
                 }
+                WM_NOTIFY => {
+                    on_notify(hwnd, lparam);
+                    DefWindowProcW(hwnd, msg, wparam, lparam)
+                }
                 WM_APP_PROGRESS => {
                     drain_progress(hwnd);
                     LRESULT(0)
@@ -368,6 +392,11 @@ mod app {
             totals: HashMap::new(),
             working: false,
             last_json: None,
+            view: DocView::Overview,
+            doc_overview: String::new(),
+            doc_xml: String::new(),
+            node_details: Vec::new(),
+            selected_detail: String::new(),
             web_url: std::env::var("CURATOR_WEB_URL")
                 .unwrap_or_else(|_| "http://localhost:3001".to_string()),
             recent_menu,
@@ -396,7 +425,12 @@ mod app {
         let _ = AppendMenuW(analysis, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(analysis, MF_STRING, IDM_SIMILAR, w!("Find &Similar"));
         let _ = AppendMenuW(analysis, MF_STRING, IDM_SUBMIT, w!("Su&bmit Build…"));
+        let view = CreatePopupMenu().unwrap_or_default();
+        let _ = AppendMenuW(view, MF_STRING, IDM_VIEW_OVERVIEW, w!("&Overview"));
+        let _ = AppendMenuW(view, MF_STRING, IDM_VIEW_XML, w!("&DAT (XML)"));
+        let _ = AppendMenuW(view, MF_STRING, IDM_VIEW_JSON, w!("&JSON"));
         let _ = AppendMenuW(menu, MF_POPUP, file.0 as usize, w!("&File"));
+        let _ = AppendMenuW(menu, MF_POPUP, view.0 as usize, w!("&View"));
         let _ = AppendMenuW(menu, MF_POPUP, analysis.0 as usize, w!("&Analysis"));
         let _ = SetMenu(hwnd, menu);
         recent
@@ -438,6 +472,9 @@ mod app {
             }
             IDM_SIMILAR => find_similar(hwnd),
             IDM_SUBMIT => submit_build(hwnd),
+            IDM_VIEW_OVERVIEW => set_view(hwnd, DocView::Overview),
+            IDM_VIEW_XML => set_view(hwnd, DocView::Xml),
+            IDM_VIEW_JSON => set_view(hwnd, DocView::Json),
             IDM_EXIT => {
                 let _ = DestroyWindow(hwnd);
             }
@@ -601,19 +638,65 @@ mod app {
     }
 
     /// Render a (freshly analyzed or cache-loaded) build into the tree + document pane.
+    /// The pane opens on the formatted Overview; the DAT/XML and JSON are available under
+    /// the View menu, and clicking a tree node shows that file's metadata.
     unsafe fn display_build(hwnd: HWND, done: AnalysisDone) {
-        let Some(st) = state(hwnd) else { return };
-        populate_tree(st.tree, &done.record);
-        st.last_json = Some(done.json.clone());
-        let body = done.xml.replace('\n', "\r\n");
-        let wbody = wide(&body);
-        let _ = SetWindowTextW(st.edit, PCWSTR(wbody.as_ptr()));
         let tag = if done.from_cache { "cached" } else { "analyzed" };
         let msg = format!(
             "[{tag}] {} — {}, {} files",
             done.record.image.sha256, done.record.info.system, done.record.structural.file_count
         );
+        if let Some(st) = state(hwnd) {
+            st.node_details = populate_tree(st.tree, &done.record);
+            st.last_json = Some(done.json.clone());
+            st.doc_xml = done.xml.replace('\n', "\r\n");
+            st.doc_overview = render_overview(&done.record);
+            st.selected_detail = String::new();
+            st.view = DocView::Overview;
+        }
+        refresh_doc(hwnd);
         set_status(hwnd, &msg);
+    }
+
+    /// Push the active view's text into the document pane.
+    unsafe fn refresh_doc(hwnd: HWND) {
+        let Some(st) = state(hwnd) else { return };
+        let text = match st.view {
+            DocView::Overview => st.doc_overview.clone(),
+            DocView::Selection => st.selected_detail.clone(),
+            DocView::Xml => st.doc_xml.clone(),
+            DocView::Json => st.last_json.clone().unwrap_or_default(),
+        };
+        let w = wide(&text);
+        let _ = SetWindowTextW(st.edit, PCWSTR(w.as_ptr()));
+    }
+
+    unsafe fn set_view(hwnd: HWND, view: DocView) {
+        if let Some(st) = state(hwnd) {
+            st.view = view;
+        }
+        refresh_doc(hwnd);
+    }
+
+    /// Tree-selection handler: show the picked node's metadata in the document pane.
+    unsafe fn on_notify(hwnd: HWND, lparam: LPARAM) {
+        let nmhdr = &*(lparam.0 as *const NMHDR);
+        let (from, code) = (nmhdr.hwndFrom, nmhdr.code);
+        let mut changed = false;
+        if let Some(st) = state(hwnd) {
+            if from == st.tree && code == TVN_SELCHANGEDW {
+                let tv = &*(lparam.0 as *const NMTREEVIEWW);
+                let idx = tv.itemNew.lParam.0 as usize;
+                if let Some(detail) = st.node_details.get(idx) {
+                    st.selected_detail = detail.clone();
+                    st.view = DocView::Selection;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            refresh_doc(hwnd);
+        }
     }
 
     /// Build the analyzer (catalog + cache) on demand. Returns false if it can't open.
@@ -710,18 +793,29 @@ mod app {
         DefSubclassProc(hwnd, msg, wparam, lparam)
     }
 
-    unsafe fn populate_tree(tree: HWND, record: &BuildRecord) {
+    /// Fill the tree and return per-node detail text, indexed by each item's lParam.
+    unsafe fn populate_tree(tree: HWND, record: &BuildRecord) -> Vec<String> {
         let _ = SendMessageW(tree, TVM_DELETEITEM, WPARAM(0), LPARAM(TVI_ROOT.0));
+        let mut details = Vec::new();
         for node in &record.contents {
-            insert_node(tree, TVI_ROOT, node);
+            insert_node(tree, TVI_ROOT, node, &mut details);
         }
+        details
     }
 
-    unsafe fn insert_node(tree: HWND, parent: windows::Win32::UI::Controls::HTREEITEM, node: &Node) {
+    unsafe fn insert_node(
+        tree: HWND,
+        parent: windows::Win32::UI::Controls::HTREEITEM,
+        node: &Node,
+        details: &mut Vec<String>,
+    ) {
+        let idx = details.len();
+        details.push(render_node_detail(node));
         let mut label = wide(node.name());
         let mut item = TVITEMW::default();
-        item.mask = TVIF_TEXT;
+        item.mask = TVIF_TEXT | TVIF_PARAM;
         item.pszText = PWSTR(label.as_mut_ptr());
+        item.lParam = LPARAM(idx as isize);
         let ins = TVINSERTSTRUCTW {
             hParent: parent,
             hInsertAfter: TVI_LAST,
@@ -731,9 +825,203 @@ mod app {
         let handle = windows::Win32::UI::Controls::HTREEITEM(lr.0);
         if let Node::Dir { children, .. } = node {
             for child in children {
-                insert_node(tree, handle, child);
+                insert_node(tree, handle, child, details);
             }
         }
+    }
+
+    fn human_size(bytes: u64) -> String {
+        const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+        if bytes < 1024 {
+            return format!("{bytes} B");
+        }
+        let mut value = bytes as f64;
+        let mut i = 0;
+        while value >= 1024.0 && i < UNITS.len() - 1 {
+            value /= 1024.0;
+            i += 1;
+        }
+        format!("{value:.1} {}", UNITS[i])
+    }
+
+    /// `19970414` → `1997-04-14`; anything else is returned unchanged.
+    fn pretty_date(s: &str) -> String {
+        if s.len() == 8 && s.bytes().all(|b| b.is_ascii_digit()) {
+            format!("{}-{}-{}", &s[0..4], &s[4..6], &s[6..8])
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Per-file metadata table shown when a tree node is selected.
+    fn render_node_detail(node: &Node) -> String {
+        let mut s = String::new();
+        let mut row = |label: &str, val: &str| {
+            if !val.is_empty() {
+                s.push_str(&format!("{label:<10}{val}\r\n"));
+            }
+        };
+        match node {
+            Node::Dir { name, date, size, children } => {
+                row("Name", name);
+                row("Type", "Directory");
+                if let Some(d) = date {
+                    row("Date", d);
+                }
+                if let Some(sz) = size {
+                    row("Size", &human_size(*sz));
+                }
+                row("Items", &children.len().to_string());
+            }
+            Node::File { name, date, size, md5, sha1, sha256, unreadable } => {
+                row("Name", name);
+                row("Type", "File");
+                if let Some(sz) = size {
+                    row("Size", &human_size(*sz));
+                }
+                if let Some(d) = date {
+                    row("Date", d);
+                }
+                if *unreadable {
+                    row("Status", "Unreadable (bad dump)");
+                }
+                if let Some(h) = md5 {
+                    row("MD5", h);
+                }
+                if let Some(h) = sha1 {
+                    row("SHA-1", h);
+                }
+                if let Some(h) = sha256 {
+                    row("SHA-256", h);
+                }
+            }
+        }
+        s
+    }
+
+    /// Formatted build metadata — the readable counterpart to the raw DAT/XML, shown on load.
+    fn render_overview(record: &BuildRecord) -> String {
+        let mut s = String::new();
+        let section = |s: &mut String, title: &str| {
+            s.push_str(&format!("\r\n── {title} {}\r\n", "─".repeat(38_usize.saturating_sub(title.len()))));
+        };
+        let row = |s: &mut String, label: &str, val: &str| {
+            if !val.is_empty() {
+                s.push_str(&format!("  {label:<16}{val}\r\n"));
+            }
+        };
+
+        let img = &record.image;
+        s.push_str(&format!("── Image {}\r\n", "─".repeat(33)));
+        row(&mut s, "Name", &img.name);
+        row(&mut s, "Size", &human_size(img.size));
+        row(&mut s, "MD5", &img.md5);
+        row(&mut s, "SHA-1", &img.sha1);
+        row(&mut s, "SHA-256", &img.sha256);
+
+        let info = &record.info;
+        section(&mut s, "Disc");
+        row(&mut s, "System", &info.system);
+        if let Some(v) = &info.system_identifier {
+            row(&mut s, "System ID", v);
+        }
+        if let Some(v) = &info.disc_type {
+            row(&mut s, "Disc type", v);
+        }
+
+        let h = &info.header;
+        if !h.is_empty() {
+            section(&mut s, "Header");
+            if let Some(v) = &h.title {
+                row(&mut s, "Title", v);
+            }
+            if let Some(v) = &h.product_number {
+                row(&mut s, "Product No.", v);
+            }
+            if let Some(v) = &h.product_version {
+                row(&mut s, "Version", v);
+            }
+            if let Some(v) = &h.release_date {
+                row(&mut s, "Release date", &pretty_date(v));
+            }
+            if let Some(v) = &h.maker_id {
+                row(&mut s, "Maker", v);
+            }
+            if let Some(v) = &h.device_info {
+                row(&mut s, "Device", v);
+            }
+            if let Some(v) = &h.regions {
+                row(&mut s, "Regions", v);
+            }
+        }
+
+        let vol = &info.volume;
+        if !vol.is_empty() {
+            section(&mut s, "Volume");
+            if let Some(v) = &vol.identifier {
+                row(&mut s, "Identifier", v);
+            }
+            if let Some(v) = &vol.set_identifier {
+                row(&mut s, "Set identifier", v);
+            }
+            if let Some(v) = &vol.creation_date {
+                row(&mut s, "Created", v);
+            }
+            if let Some(v) = &vol.modification_date {
+                row(&mut s, "Modified", v);
+            }
+        }
+
+        if let Some(e) = &info.exe {
+            section(&mut s, "Boot executable");
+            row(&mut s, "Filename", &e.filename);
+            if let Some(v) = &e.date {
+                row(&mut s, "Date", v);
+            }
+        }
+
+        let c = &record.composites;
+        if c.content_hash.is_some()
+            || c.filtered_content_hash.is_some()
+            || c.hash_exe.is_some()
+            || c.incomplete_files > 0
+        {
+            section(&mut s, "Content");
+            if let Some(v) = &c.content_hash {
+                row(&mut s, "Content hash", v);
+            }
+            if let Some(v) = &c.filtered_content_hash {
+                row(&mut s, "Filtered hash", v);
+            }
+            if let Some(v) = &c.hash_exe {
+                row(&mut s, "Boot exe hash", v);
+            }
+            if let Some(m) = &c.most_recent_file {
+                row(&mut s, "Most recent", &m.path);
+            }
+            if c.incomplete_files > 0 {
+                row(&mut s, "Incomplete", &c.incomplete_files.to_string());
+            }
+        }
+
+        let st = &record.structural;
+        section(&mut s, "Structure");
+        row(&mut s, "Files", &st.file_count.to_string());
+        row(&mut s, "Total size", &human_size(st.total_size));
+        row(&mut s, "Max depth", &st.max_depth.to_string());
+        if !st.ext_histogram.is_empty() {
+            let mut exts: Vec<_> = st.ext_histogram.iter().collect();
+            exts.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+            let top = exts
+                .iter()
+                .take(8)
+                .map(|(k, v)| format!("{}×{}", if k.is_empty() { "(none)" } else { k }, v))
+                .collect::<Vec<_>>()
+                .join(", ");
+            row(&mut s, "Top extensions", &top);
+        }
+
+        s
     }
 
     // ---- modal error dialog (selectable, copyable) ----

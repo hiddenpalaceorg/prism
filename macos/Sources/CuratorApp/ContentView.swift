@@ -47,6 +47,10 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom) { StatusBar() }
         .sheet(isPresented: $model.showingSubmitSheet) { SubmitSheet() }
         .sheet(isPresented: $model.showingError) { ErrorSheet() }
+        .onChange(of: model.selection) { sel in
+            // Clicking a file in the sidebar surfaces its metadata table.
+            if sel != nil { model.detailTab = .selection }
+        }
     }
 }
 
@@ -150,13 +154,19 @@ struct DetailView: View {
             if let summary = model.summary {
                 HeaderCard(summary: summary)
                 Divider()
-                TabView {
+                TabView(selection: $model.detailTab) {
+                    BuildOverview(summary: summary, record: model.record)
+                        .tabItem { Label("Overview", systemImage: "info.circle") }
+                        .tag(DetailTab.overview)
                     NodeDetail(node: model.selectedNode)
-                        .tabItem { Label("Selection", systemImage: "info.circle") }
+                        .tabItem { Label("Selection", systemImage: "doc.text.magnifyingglass") }
+                        .tag(DetailTab.selection)
                     DocumentView(summary: summary)
-                        .tabItem { Label("Document", systemImage: "doc.text") }
+                        .tabItem { Label("DAT / JSON", systemImage: "doc.plaintext") }
+                        .tag(DetailTab.document)
                     SimilarityView()
                         .tabItem { Label("Similar", systemImage: "sparkle.magnifyingglass") }
+                        .tag(DetailTab.similar)
                 }
                 .padding(.top, 6)
             } else {
@@ -187,6 +197,96 @@ struct HeaderCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
+    }
+}
+
+/// Formatted build metadata shown on load — the readable counterpart to the raw DAT/XML.
+/// Renders only the fields present in the record (`AnalysisSummary.json`, decoded).
+struct BuildOverview: View {
+    let summary: AnalysisSummary
+    let record: RecordDoc?
+
+    var body: some View {
+        Form {
+            Section("Image") {
+                let img = record?.image
+                row("Name", img?.name ?? summary.name)
+                row("Size", humanSize(img?.size ?? summary.totalSize))
+                if let h = img?.md5 { HashRow(label: "MD5", value: h) }
+                if let h = img?.sha1 { HashRow(label: "SHA-1", value: h) }
+                HashRow(label: "SHA-256", value: img?.sha256 ?? summary.sha256)
+            }
+
+            if let info = record?.info {
+                Section("Disc") {
+                    row("System", info.system ?? summary.system)
+                    row("System ID", info.systemIdentifier)
+                    row("Disc type", info.discType)
+                }
+                if let h = info.header, !h.isEmpty {
+                    Section("Header") {
+                        row("Title", h.title)
+                        row("Product №", h.productNumber)
+                        row("Version", h.productVersion)
+                        row("Release date", prettyDate(h.releaseDate))
+                        row("Maker", h.makerId)
+                        row("Device", h.deviceInfo)
+                        row("Regions", h.regions)
+                    }
+                }
+                if let v = info.volume, !v.isEmpty {
+                    Section("Volume") {
+                        row("Identifier", v.identifier)
+                        row("Set identifier", v.setIdentifier)
+                        row("Created", prettyDate(v.creationDate))
+                        row("Modified", prettyDate(v.modificationDate))
+                    }
+                }
+                if let e = info.exe {
+                    Section("Boot executable") {
+                        row("Filename", e.filename)
+                        row("Date", prettyDate(e.date))
+                    }
+                }
+            }
+
+            if let c = record?.composites, hasContent(c) {
+                Section("Content") {
+                    if let h = c.contentHash { HashRow(label: "Content hash", value: h) }
+                    if let h = c.filteredContentHash { HashRow(label: "Filtered hash", value: h) }
+                    if let h = c.hashExe { HashRow(label: "Boot exe hash", value: h) }
+                    if let m = c.mostRecentFile?.path { row("Most recent file", m) }
+                    if let n = c.incompleteFiles, n > 0 { row("Incomplete files", "\(n)") }
+                }
+            }
+
+            if let s = record?.structural {
+                Section("Structure") {
+                    row("Files", "\(s.fileCount ?? summary.fileCount)")
+                    row("Total size", humanSize(s.totalSize ?? summary.totalSize))
+                    if let d = s.maxDepth { row("Max depth", "\(d)") }
+                    if let hist = s.extHistogram, !hist.isEmpty {
+                        row("Top extensions", topExtensions(hist))
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func row(_ label: String, _ value: String?) -> some View {
+        if let value, !value.isEmpty {
+            LabeledContent(label) {
+                Text(value).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+
+    private func hasContent(_ c: RecordDoc.Composites) -> Bool {
+        c.contentHash != nil || c.filteredContentHash != nil || c.hashExe != nil
+            || c.mostRecentFile?.path != nil || (c.incompleteFiles ?? 0) > 0
     }
 }
 
