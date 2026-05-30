@@ -73,6 +73,9 @@ ec8de44  Web service: search, similarity, submissions API
   image/folder; Analysis▸Cancel; worker thread posts progress via `PostMessageW`).
   **Cross-compiled & linked on macOS** to a `PE32+ GUI` exe via `x86_64-pc-windows-gnu`
   + mingw-w64 (needed for `rusqlite`'s bundled SQLite C). See crate README for the env.
+  Find-Similar (`POST /api/similarity`) + Submit (nickname modal → `POST
+  /api/submissions`) use native **WinHTTP**; request/response shapes match the
+  live-validated macOS client. `CURATOR_WEB_URL` overrides the base URL.
 - **Phase 3 (web build-detail)** — `/build/[sha256]` page + `GET /api/build/[sha256]`
   (`getBuild` query): details/hashes, flattened file list, tiered similar builds linking
   to each other; search results + macOS neighbor rows deep-link here. Validated live.
