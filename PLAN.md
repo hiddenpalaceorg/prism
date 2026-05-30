@@ -75,7 +75,10 @@ ec8de44  Web service: search, similarity, submissions API
   + mingw-w64 (needed for `rusqlite`'s bundled SQLite C). See crate README for the env.
   Find-Similar (`POST /api/similarity`) + Submit (nickname modal → `POST
   /api/submissions`) use native **WinHTTP**; request/response shapes match the
-  live-validated macOS client. `CURATOR_WEB_URL` overrides the base URL.
+  live-validated macOS client. `CURATOR_WEB_URL` overrides the base URL. At parity with
+  macOS: **Open Recent** menu (catalog → cache reload), **drag-and-drop** (panes
+  subclassed to forward `WM_DROPFILES`), and adapter resolution
+  (`CURATOR_ADAPTER_BIN` → `adapter\` next to exe → `CURATOR_ADAPTER_DIR` → dev uv).
 - **Phase 3 (web build-detail)** — `/build/[sha256]` page + `GET /api/build/[sha256]`
   (`getBuild` query): details/hashes, flattened file list, tiered similar builds linking
   to each other; search results + macOS neighbor rows deep-link here. Validated live.

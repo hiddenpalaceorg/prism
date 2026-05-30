@@ -42,10 +42,13 @@ mod app {
     use windows::Win32::UI::Controls::{
         InitCommonControlsEx, ICC_BAR_CLASSES, ICC_PROGRESS_CLASS, ICC_TREEVIEW_CLASSES,
         INITCOMMONCONTROLSEX, PBM_SETPOS, PBM_SETRANGE32, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0,
-        TVITEMW, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM, TVM_INSERTITEMW,
-        TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
+        TVITEMW, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM, TVM_INSERTITEMW, TVS_HASBUTTONS,
+        TVS_HASLINES, TVS_LINESATROOT,
     };
-    use windows::Win32::UI::Shell::{SHBrowseForFolderW, SHGetPathFromIDListW, BROWSEINFOW, BIF_RETURNONLYFSDIRS};
+    use windows::Win32::UI::Shell::{
+        DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, SetWindowSubclass,
+        SHBrowseForFolderW, SHGetPathFromIDListW, BIF_RETURNONLYFSDIRS, BROWSEINFOW, HDROP,
+    };
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     // ---- ids & custom messages ----
@@ -55,6 +58,8 @@ mod app {
     const IDM_EXIT: usize = 4;
     const IDM_SIMILAR: usize = 5;
     const IDM_SUBMIT: usize = 6;
+    const IDM_RECENT_BASE: usize = 2000;
+    const MAX_RECENT: u32 = 15;
 
     const WM_APP_PROGRESS: u32 = WM_APP + 1;
     const WM_APP_DONE: u32 = WM_APP + 2;
@@ -97,6 +102,9 @@ mod app {
         last_json: Option<String>,
         /// Web service base URL (CURATOR_WEB_URL, default http://localhost:3001).
         web_url: String,
+        /// The "Recent" submenu and the sha256s backing its items (by position).
+        recent_menu: HMENU,
+        recent: Vec<String>,
     }
 
     /// Construction config passed through `CreateWindowExW`'s lpParam.
@@ -107,6 +115,26 @@ mod app {
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// Resolve the adapter: env override → bundle next to the exe (`adapter\curator-adapter*`)
+    /// → `CURATOR_ADAPTER_DIR` → the dev `ps2exe-adapter` uv project.
+    fn resolve_adapter() -> AdapterCommand {
+        if let Ok(bin) = std::env::var("CURATOR_ADAPTER_BIN") {
+            return AdapterCommand::bin(&bin);
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                for name in ["curator-adapter.exe", "curator-adapter.cmd", "curator-adapter.bat", "curator-adapter"] {
+                    let p = dir.join("adapter").join(name);
+                    if p.exists() {
+                        return AdapterCommand::bin(&p.to_string_lossy());
+                    }
+                }
+            }
+        }
+        let dir = std::env::var("CURATOR_ADAPTER_DIR").unwrap_or_else(|_| "ps2exe-adapter".to_string());
+        AdapterCommand::uv(&dir)
     }
 
     pub fn run() -> Result<()> {
@@ -130,11 +158,7 @@ mod app {
             };
             RegisterClassW(&wc);
 
-            // Dev defaults; a shipped build resolves a bundled adapter next to the exe.
-            let init = Box::new(InitConfig {
-                adapter: AdapterCommand::uv("ps2exe-adapter"),
-                data_dir: None,
-            });
+            let init = Box::new(InitConfig { adapter: resolve_adapter(), data_dir: None });
 
             let hwnd = CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -194,6 +218,10 @@ mod app {
                 }
                 WM_APP_SERVICE => {
                     on_service_result(hwnd, lparam);
+                    LRESULT(0)
+                }
+                WM_DROPFILES => {
+                    on_drop(hwnd, wparam);
                     LRESULT(0)
                 }
                 WM_DESTROY => {
@@ -259,7 +287,15 @@ mod app {
             SendMessageW(h, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
         }
 
-        build_menu(hwnd);
+        // Drag-and-drop: the panes cover the client area, so accept drops on them and
+        // subclass them to forward WM_DROPFILES to the main window.
+        DragAcceptFiles(hwnd, true);
+        for h in [tree, edit] {
+            DragAcceptFiles(h, true);
+            let _ = SetWindowSubclass(h, Some(drop_subclass), 1, 0);
+        }
+
+        let recent_menu = build_menu(hwnd);
 
         let st = Box::new(AppState {
             adapter: init.adapter.clone(),
@@ -276,20 +312,25 @@ mod app {
             last_json: None,
             web_url: std::env::var("CURATOR_WEB_URL")
                 .unwrap_or_else(|_| "http://localhost:3001".to_string()),
+            recent_menu,
+            recent: Vec::new(),
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(st) as isize);
 
-        set_status(hwnd, "Open a disc image, container, or folder to analyze.");
+        set_status(hwnd, "Open — or drag in — a disc image, container, or folder.");
         if let Some(st) = state(hwnd) {
             layout(hwnd, st);
         }
+        refresh_recent(hwnd);
     }
 
-    unsafe fn build_menu(hwnd: HWND) {
+    unsafe fn build_menu(hwnd: HWND) -> HMENU {
         let menu = CreateMenu().unwrap_or_default();
         let file = CreatePopupMenu().unwrap_or_default();
+        let recent = CreatePopupMenu().unwrap_or_default();
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN, w!("&Open Image…\tCtrl+O"));
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_FOLDER, w!("Open &Folder…"));
+        let _ = AppendMenuW(file, MF_POPUP, recent.0 as usize, w!("Open &Recent"));
         let _ = AppendMenuW(file, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(file, MF_STRING, IDM_EXIT, w!("E&xit"));
         let analysis = CreatePopupMenu().unwrap_or_default();
@@ -300,6 +341,7 @@ mod app {
         let _ = AppendMenuW(menu, MF_POPUP, file.0 as usize, w!("&File"));
         let _ = AppendMenuW(menu, MF_POPUP, analysis.0 as usize, w!("&Analysis"));
         let _ = SetMenu(hwnd, menu);
+        recent
     }
 
     unsafe fn layout(hwnd: HWND, st: &AppState) {
@@ -340,6 +382,9 @@ mod app {
             IDM_SUBMIT => submit_build(hwnd),
             IDM_EXIT => {
                 let _ = DestroyWindow(hwnd);
+            }
+            other if other >= IDM_RECENT_BASE && other < IDM_RECENT_BASE + MAX_RECENT as usize => {
+                open_recent(hwnd, other - IDM_RECENT_BASE);
             }
             _ => {}
         }
@@ -473,32 +518,122 @@ mod app {
             return;
         }
         let outcome = *Box::from_raw(ptr);
-        let Some(st) = state(hwnd) else { return };
-        st.working = false;
-        let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM(0), LPARAM(0));
-
+        if let Some(st) = state(hwnd) {
+            st.working = false;
+            let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM(0), LPARAM(0));
+        }
         match outcome {
             Ok(done) => {
-                populate_tree(st.tree, &done.record);
-                st.last_json = Some(done.json.clone());
-                let body = done.xml.replace('\n', "\r\n");
-                let wbody = wide(&body);
-                let _ = SetWindowTextW(st.edit, PCWSTR(wbody.as_ptr()));
-                let tag = if done.from_cache { "cached" } else { "analyzed" };
-                set_status(
-                    hwnd,
-                    &format!(
-                        "[{tag}] {} — {}, {} files",
-                        done.record.image.sha256,
-                        done.record.info.system,
-                        done.record.structural.file_count
-                    ),
-                );
+                display_build(hwnd, done);
+                refresh_recent(hwnd);
             }
-            Err(msg) => {
-                set_status(hwnd, &format!("Failed: {msg}"));
+            Err(msg) => set_status(hwnd, &format!("Failed: {msg}")),
+        }
+    }
+
+    /// Render a (freshly analyzed or cache-loaded) build into the tree + document pane.
+    unsafe fn display_build(hwnd: HWND, done: AnalysisDone) {
+        let Some(st) = state(hwnd) else { return };
+        populate_tree(st.tree, &done.record);
+        st.last_json = Some(done.json.clone());
+        let body = done.xml.replace('\n', "\r\n");
+        let wbody = wide(&body);
+        let _ = SetWindowTextW(st.edit, PCWSTR(wbody.as_ptr()));
+        let tag = if done.from_cache { "cached" } else { "analyzed" };
+        let msg = format!(
+            "[{tag}] {} — {}, {} files",
+            done.record.image.sha256, done.record.info.system, done.record.structural.file_count
+        );
+        set_status(hwnd, &msg);
+    }
+
+    /// Build the analyzer (catalog + cache) on demand. Returns false if it can't open.
+    unsafe fn ensure_analyzer(st: &AppState) -> bool {
+        let mut g = st.analyzer.lock().unwrap();
+        if g.is_none() {
+            match Analyzer::new(Config { adapter: st.adapter.clone(), data_dir: st.data_dir.clone() }) {
+                Ok(a) => *g = Some(a),
+                Err(_) => return false,
             }
         }
+        true
+    }
+
+    /// Repopulate the File ▸ Open Recent submenu from the local catalog.
+    unsafe fn refresh_recent(hwnd: HWND) {
+        let Some(st) = state(hwnd) else { return };
+        if !ensure_analyzer(st) {
+            return;
+        }
+        let rows = st
+            .analyzer
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|a| a.recent_builds(MAX_RECENT).unwrap_or_default())
+            .unwrap_or_default();
+
+        while DeleteMenu(st.recent_menu, 0, MF_BYPOSITION).is_ok() {}
+        st.recent.clear();
+        if rows.is_empty() {
+            let _ = AppendMenuW(st.recent_menu, MF_STRING | MF_GRAYED, 0, w!("(none yet)"));
+            return;
+        }
+        for (i, r) in rows.iter().enumerate() {
+            let label = wide(&format!("{}  —  {}", r.name, r.system));
+            let _ = AppendMenuW(st.recent_menu, MF_STRING, IDM_RECENT_BASE + i, PCWSTR(label.as_ptr()));
+            st.recent.push(r.sha256.clone());
+        }
+    }
+
+    /// Reopen a catalogued build from cache (no re-analysis).
+    unsafe fn open_recent(hwnd: HWND, idx: usize) {
+        let sha = match state(hwnd).and_then(|st| st.recent.get(idx).cloned()) {
+            Some(s) => s,
+            None => return,
+        };
+        let Some(st) = state(hwnd) else { return };
+        if st.working || !ensure_analyzer(st) {
+            return;
+        }
+        let loaded = st.analyzer.lock().unwrap().as_ref().and_then(|a| a.load_cached(&sha).ok().flatten());
+        match loaded {
+            Some(analysis) => {
+                let xml = render::to_dat_xml(&analysis.record);
+                let json = render::to_json(&analysis.record).unwrap_or_default();
+                display_build(hwnd, AnalysisDone { record: analysis.record, xml, json, from_cache: true });
+            }
+            None => set_status(hwnd, "Build not in cache anymore."),
+        }
+    }
+
+    /// WM_DROPFILES: analyze the first dropped path.
+    unsafe fn on_drop(hwnd: HWND, wparam: WPARAM) {
+        let hdrop = HDROP(wparam.0 as *mut core::ffi::c_void);
+        let mut buf = [0u16; 1024];
+        let n = DragQueryFileW(hdrop, 0, Some(&mut buf));
+        DragFinish(hdrop);
+        if n > 0 {
+            start_analysis(hwnd, String::from_utf16_lossy(&buf[..n as usize]));
+        }
+    }
+
+    /// Subclass proc on the panes: forward dropped files to the main window.
+    unsafe extern "system" fn drop_subclass(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        if msg == WM_DROPFILES {
+            if let Ok(parent) = GetParent(hwnd) {
+                on_drop(parent, wparam);
+            }
+            return LRESULT(0);
+        }
+        DefSubclassProc(hwnd, msg, wparam, lparam)
     }
 
     unsafe fn populate_tree(tree: HWND, record: &BuildRecord) {

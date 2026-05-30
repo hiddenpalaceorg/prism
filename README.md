@@ -48,7 +48,8 @@ builds/                sample disc images for testing
 | ↳ macOS GUI: codesign/notarize | ⬜ |
 | Phase 3 — Windows GUI (windows-rs: tree, XML view, progress, cancel, open file/folder) | ✅ built (cross-compiled to a PE32+ .exe) |
 | ↳ Windows GUI: Find-Similar + Submit (native WinHTTP → web API) | ✅ built (cross-compiled) |
-| ↳ Windows GUI: adapter bundling, recent/drag-drop | ⬜ |
+| ↳ Windows GUI: recent-builds menu, drag-and-drop, adapter-next-to-exe | ✅ built (cross-compiled) |
+| ↳ Windows GUI: ship a Windows adapter bundle, code-sign | ⬜ |
 
 ## Quick start (CLI)
 
