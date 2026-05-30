@@ -61,6 +61,31 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
   return out;
 }
 
+export interface EmbeddingHit {
+  sha256: string;
+  name: string;
+  system: string;
+  cosine: number;
+}
+
+/** Tier-text: nearest builds by text-embedding cosine (pgvector). */
+export async function findByEmbedding(
+  pool: Pool,
+  vectorLiteral: string,
+  exclude: string,
+  limit = 20
+): Promise<EmbeddingHit[]> {
+  const r = await pool.query(
+    `SELECT sha256, name, system, 1 - (text_embedding <=> $1::vector) AS cosine
+     FROM builds
+     WHERE sha256<>$2 AND text_embedding IS NOT NULL
+     ORDER BY text_embedding <=> $1::vector
+     LIMIT $3`,
+    [vectorLiteral, exclude, limit]
+  );
+  return r.rows.map((x) => ({ ...x, cosine: Number(x.cosine) }));
+}
+
 export interface SearchResult {
   mode: "hash" | "text";
   results: Array<{ sha256: string; name: string; system: string; sim?: number | null }>;

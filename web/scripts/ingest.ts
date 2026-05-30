@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import pg from "pg";
 import { hexToId63, toSigned64, lshBands, flattenFiles, arrayLit } from "../src/lib/fingerprint";
+import { embed, toPgVector } from "../src/lib/embed";
 import type { BuildRecord } from "../src/lib/types";
 
 const bundle = process.argv[2];
@@ -29,6 +30,12 @@ async function ingestRecord(client: pg.Client, rec: BuildRecord) {
      comp.content_hash, comp.filtered_content_hash, st.file_count, st.total_size, st.max_depth,
      JSON.stringify(st.ext_histogram ?? {}), rec.text_doc ?? "", rec.fingerprint_profile, rec]
   );
+
+  // Tier-text embedding from the text doc.
+  if (rec.text_doc) {
+    const vec = toPgVector(await embed(rec.text_doc));
+    await client.query("UPDATE builds SET text_embedding=$1::vector WHERE sha256=$2", [vec, sha]);
+  }
 
   const files = flattenFiles(rec.contents);
   await client.query("DELETE FROM files WHERE build_sha256=$1", [sha]);
