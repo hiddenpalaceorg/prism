@@ -127,6 +127,7 @@ name = "curator-gui-win"
 version = "0.1.0"
 dependencies = [
  "curator-core",
+ "serde_json",
  "windows",
 ]
 

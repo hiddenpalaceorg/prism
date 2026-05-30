@@ -34,8 +34,10 @@ mod app {
     use windows::core::{w, PCWSTR, PWSTR, Result};
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::Graphics::Gdi::{GetStockObject, HBRUSH, DEFAULT_GUI_FONT};
+    use windows::Win32::Networking::WinHttp::*;
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
     use windows::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW};
     use windows::Win32::UI::Controls::{
         InitCommonControlsEx, ICC_BAR_CLASSES, ICC_PROGRESS_CLASS, ICC_TREEVIEW_CLASSES,
@@ -51,9 +53,12 @@ mod app {
     const IDM_OPEN_FOLDER: usize = 2;
     const IDM_CANCEL: usize = 3;
     const IDM_EXIT: usize = 4;
+    const IDM_SIMILAR: usize = 5;
+    const IDM_SUBMIT: usize = 6;
 
     const WM_APP_PROGRESS: u32 = WM_APP + 1;
     const WM_APP_DONE: u32 = WM_APP + 2;
+    const WM_APP_SERVICE: u32 = WM_APP + 3; // similarity / submit result (boxed String)
 
     const STATUS_H: i32 = 22;
     const PROGRESS_H: i32 = 16;
@@ -71,6 +76,7 @@ mod app {
     struct AnalysisDone {
         record: BuildRecord,
         xml: String,
+        json: String,
         from_cache: bool,
     }
 
@@ -87,6 +93,10 @@ mod app {
         cancel: Arc<AtomicBool>,
         totals: HashMap<u64, f64>,
         working: bool,
+        /// Canonical JSON of the loaded build (for similarity/submit), if any.
+        last_json: Option<String>,
+        /// Web service base URL (CURATOR_WEB_URL, default http://localhost:3001).
+        web_url: String,
     }
 
     /// Construction config passed through `CreateWindowExW`'s lpParam.
@@ -182,6 +192,10 @@ mod app {
                     on_done(hwnd, lparam);
                     LRESULT(0)
                 }
+                WM_APP_SERVICE => {
+                    on_service_result(hwnd, lparam);
+                    LRESULT(0)
+                }
                 WM_DESTROY => {
                     let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
                     if !ptr.is_null() {
@@ -259,6 +273,9 @@ mod app {
             cancel: Arc::new(AtomicBool::new(false)),
             totals: HashMap::new(),
             working: false,
+            last_json: None,
+            web_url: std::env::var("CURATOR_WEB_URL")
+                .unwrap_or_else(|_| "http://localhost:3001".to_string()),
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(st) as isize);
 
@@ -277,6 +294,9 @@ mod app {
         let _ = AppendMenuW(file, MF_STRING, IDM_EXIT, w!("E&xit"));
         let analysis = CreatePopupMenu().unwrap_or_default();
         let _ = AppendMenuW(analysis, MF_STRING, IDM_CANCEL, w!("&Cancel"));
+        let _ = AppendMenuW(analysis, MF_SEPARATOR, 0, PCWSTR::null());
+        let _ = AppendMenuW(analysis, MF_STRING, IDM_SIMILAR, w!("Find &Similar"));
+        let _ = AppendMenuW(analysis, MF_STRING, IDM_SUBMIT, w!("Su&bmit Build…"));
         let _ = AppendMenuW(menu, MF_POPUP, file.0 as usize, w!("&File"));
         let _ = AppendMenuW(menu, MF_POPUP, analysis.0 as usize, w!("&Analysis"));
         let _ = SetMenu(hwnd, menu);
@@ -316,6 +336,8 @@ mod app {
                     set_status(hwnd, "Cancelling…");
                 }
             }
+            IDM_SIMILAR => find_similar(hwnd),
+            IDM_SUBMIT => submit_build(hwnd),
             IDM_EXIT => {
                 let _ = DestroyWindow(hwnd);
             }
@@ -399,7 +421,8 @@ mod app {
                     .analyze(&path, obs)
                     .map_err(|e| e.to_string())?;
                 let xml = render::to_dat_xml(&analysis.record);
-                Ok(AnalysisDone { record: analysis.record, xml, from_cache: analysis.from_cache })
+                let json = render::to_json(&analysis.record).map_err(|e| e.to_string())?;
+                Ok(AnalysisDone { record: analysis.record, xml, json, from_cache: analysis.from_cache })
             })();
 
             let boxed = Box::new(outcome);
@@ -457,6 +480,7 @@ mod app {
         match outcome {
             Ok(done) => {
                 populate_tree(st.tree, &done.record);
+                st.last_json = Some(done.json.clone());
                 let body = done.xml.replace('\n', "\r\n");
                 let wbody = wide(&body);
                 let _ = SetWindowTextW(st.edit, PCWSTR(wbody.as_ptr()));
@@ -513,6 +537,391 @@ mod app {
                 LPARAM(wtext.as_ptr() as isize),
             );
         }
+    }
+
+    // ---- web service: Find Similar / Submit ----
+
+    unsafe fn find_similar(hwnd: HWND) {
+        let Some(st) = state(hwnd) else { return };
+        let Some(json) = st.last_json.clone() else {
+            set_status(hwnd, "Analyze a build first.");
+            return;
+        };
+        let url = format!("{}/api/similarity", st.web_url.trim_end_matches('/'));
+        set_status(hwnd, "Querying similar builds…");
+        let hwnd_i = hwnd.0 as isize;
+        std::thread::spawn(move || {
+            let text = match http_post_json(&url, &json) {
+                Ok((code, body)) if (200..300).contains(&code) => format_similarity(&body),
+                Ok((code, body)) => format!("Server error {code}: {}", body.trim()),
+                Err(e) => format!("Cannot reach service: {e}"),
+            };
+            post_service_result(hwnd_i, text);
+        });
+    }
+
+    unsafe fn submit_build(hwnd: HWND) {
+        let Some(st) = state(hwnd) else { return };
+        let Some(json) = st.last_json.clone() else {
+            set_status(hwnd, "Analyze a build first.");
+            return;
+        };
+        let Some(nickname) = prompt_nickname(hwnd) else { return };
+        if nickname.trim().is_empty() {
+            return;
+        }
+        let url = format!("{}/api/submissions", st.web_url.trim_end_matches('/'));
+        // { "nickname": <json string>, "record": <record> } — embed the raw record JSON.
+        let body = format!(
+            "{{\"nickname\":{},\"record\":{}}}",
+            serde_json::Value::String(nickname).to_string(),
+            json
+        );
+        set_status(hwnd, "Submitting build…");
+        let hwnd_i = hwnd.0 as isize;
+        std::thread::spawn(move || {
+            let text = match http_post_json(&url, &body) {
+                Ok((code, b)) if (200..300).contains(&code) => {
+                    let status = serde_json::from_str::<serde_json::Value>(&b)
+                        .ok()
+                        .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(String::from))
+                        .unwrap_or_else(|| "queued".into());
+                    format!("Submitted — {status}.")
+                }
+                Ok((code, b)) => format!("Server error {code}: {}", b.trim()),
+                Err(e) => format!("Cannot reach service: {e}"),
+            };
+            post_service_result(hwnd_i, text);
+        });
+    }
+
+    fn post_service_result(hwnd_i: isize, text: String) {
+        unsafe {
+            let _ = PostMessageW(
+                HWND(hwnd_i as *mut core::ffi::c_void),
+                WM_APP_SERVICE,
+                WPARAM(0),
+                LPARAM(Box::into_raw(Box::new(text)) as isize),
+            );
+        }
+    }
+
+    unsafe fn on_service_result(hwnd: HWND, lparam: LPARAM) {
+        let ptr = lparam.0 as *mut String;
+        if ptr.is_null() {
+            return;
+        }
+        let text = *Box::from_raw(ptr);
+        // Multi-line similarity output goes to the document pane; one-liners to status.
+        if text.contains('\n') {
+            if let Some(st) = state(hwnd) {
+                let body = text.replace('\n', "\r\n");
+                let wbody = wide(&body);
+                let _ = SetWindowTextW(st.edit, PCWSTR(wbody.as_ptr()));
+            }
+        }
+        set_status(hwnd, text.lines().next().unwrap_or("").trim());
+    }
+
+    /// Render the `/api/similarity` JSON response as a readable neighbor list.
+    fn format_similarity(body: &str) -> String {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+            return format!("Unexpected response:\n{body}");
+        };
+        let sections = [
+            ("Identical content (Tier 1)", "tier1_twins"),
+            ("Shared files (Tier 2)", "tier2"),
+            ("Similar chunks (Tier 3)", "tier3"),
+            ("Same boot imports (Tier 5)", "tier5_exe"),
+            ("Similar executable (TLSH)", "tier5_tlsh"),
+            ("Shared audio tracks", "audio_neighbors"),
+            ("Semantically related (text)", "text_neighbors"),
+        ];
+        let mut out = String::from("Similar builds\r\n==============\r\n");
+        let mut any = false;
+        for (title, key) in sections {
+            let Some(arr) = v.get(key).and_then(|x| x.as_array()) else { continue };
+            if arr.is_empty() {
+                continue;
+            }
+            any = true;
+            out.push_str(&format!("\n{title}\n"));
+            for item in arr {
+                let name = item.get("name").and_then(|x| x.as_str()).unwrap_or("?");
+                let sha = item.get("sha256").and_then(|x| x.as_str()).unwrap_or("");
+                let score = item
+                    .get("jaccard")
+                    .and_then(|x| x.as_f64())
+                    .map(|j| format!("  {:.0}%", j * 100.0))
+                    .or_else(|| item.get("distance").and_then(|x| x.as_f64()).map(|d| format!("  d={d}")))
+                    .or_else(|| item.get("cosine").and_then(|x| x.as_f64()).map(|c| format!("  {c:.2}")))
+                    .unwrap_or_default();
+                out.push_str(&format!("  {name}  [{}…]{score}\n", &sha.chars().take(12).collect::<String>()));
+            }
+        }
+        if !any {
+            out.push_str("\nNo similar builds found.\n");
+        }
+        out
+    }
+
+    /// Native WinHTTP `POST <url>` with a JSON body. Returns (status_code, body).
+    unsafe fn http_post_json(url: &str, body: &str) -> std::result::Result<(u32, String), String> {
+        // Parse scheme://host[:port]/path (minimal; http/https only).
+        let (secure, rest) = if let Some(r) = url.strip_prefix("https://") {
+            (true, r)
+        } else if let Some(r) = url.strip_prefix("http://") {
+            (false, r)
+        } else {
+            return Err("URL must be http(s)".into());
+        };
+        let (authority, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, "/"),
+        };
+        let (host, port) = match authority.rfind(':') {
+            Some(i) => (
+                &authority[..i],
+                authority[i + 1..].parse::<u16>().map_err(|_| "bad port")?,
+            ),
+            None => (authority, if secure { 443 } else { 80 }),
+        };
+
+        let host_w = wide(host);
+        let verb_w = wide("POST");
+        let path_w = wide(path);
+        let headers_w = wide("Content-Type: application/json");
+
+        let session = WinHttpOpen(
+            w!("curator-gui-win"),
+            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            0,
+        );
+        if session.is_null() {
+            return Err("WinHttpOpen failed".into());
+        }
+        let result = (|| {
+            let conn = WinHttpConnect(session, PCWSTR(host_w.as_ptr()), port, 0);
+            if conn.is_null() {
+                return Err("WinHttpConnect failed".to_string());
+            }
+            let flags = if secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
+            let req = WinHttpOpenRequest(
+                conn,
+                PCWSTR(verb_w.as_ptr()),
+                PCWSTR(path_w.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                std::ptr::null_mut(),
+                flags,
+            );
+            if req.is_null() {
+                let _ = WinHttpCloseHandle(conn);
+                return Err("WinHttpOpenRequest failed".to_string());
+            }
+
+            let bytes = body.as_bytes();
+            let sent = WinHttpSendRequest(
+                req,
+                Some(&headers_w[..headers_w.len() - 1]), // sans NUL
+                Some(bytes.as_ptr() as *const core::ffi::c_void),
+                bytes.len() as u32,
+                bytes.len() as u32,
+                0,
+            )
+            .is_ok()
+                && WinHttpReceiveResponse(req, std::ptr::null_mut()).is_ok();
+
+            let out = if sent {
+                let code = query_status_code(req).unwrap_or(0);
+                let body = read_all(req);
+                Ok((code, body))
+            } else {
+                Err("WinHttpSendRequest failed".to_string())
+            };
+            let _ = WinHttpCloseHandle(req);
+            let _ = WinHttpCloseHandle(conn);
+            out
+        })();
+        let _ = WinHttpCloseHandle(session);
+        result
+    }
+
+    unsafe fn query_status_code(req: *mut core::ffi::c_void) -> Option<u32> {
+        let mut code: u32 = 0;
+        let mut len = std::mem::size_of::<u32>() as u32;
+        let ok = WinHttpQueryHeaders(
+            req,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            PCWSTR::null(),
+            Some(&mut code as *mut u32 as *mut core::ffi::c_void),
+            &mut len,
+            std::ptr::null_mut(),
+        )
+        .is_ok();
+        if ok {
+            Some(code)
+        } else {
+            None
+        }
+    }
+
+    unsafe fn read_all(req: *mut core::ffi::c_void) -> String {
+        let mut data: Vec<u8> = Vec::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            let mut read: u32 = 0;
+            if WinHttpReadData(
+                req,
+                buf.as_mut_ptr() as *mut core::ffi::c_void,
+                buf.len() as u32,
+                &mut read,
+            )
+            .is_err()
+                || read == 0
+            {
+                break;
+            }
+            data.extend_from_slice(&buf[..read as usize]);
+        }
+        String::from_utf8_lossy(&data).into_owned()
+    }
+
+    // ---- modal nickname prompt ----
+
+    struct PromptState {
+        edit: HWND,
+        result: Option<String>,
+        done: bool,
+    }
+
+    const IDC_PROMPT_OK: usize = 100;
+    const IDC_PROMPT_CANCEL: usize = 101;
+
+    unsafe fn prompt_nickname(owner: HWND) -> Option<String> {
+        let hinstance = GetModuleHandleW(None).ok()?;
+        let class = w!("CuratorPrompt");
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(prompt_proc),
+            hInstance: hinstance.into(),
+            lpszClassName: class,
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hbrBackground: HBRUSH(6 as *mut core::ffi::c_void),
+            ..Default::default()
+        };
+        RegisterClassW(&wc); // idempotent enough for a one-window app
+
+        let mut ps = PromptState { edit: HWND::default(), result: None, done: false };
+        let dlg = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            class,
+            w!("Submit build"),
+            WS_POPUPWINDOW | WS_CAPTION | WS_VISIBLE,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            360,
+            150,
+            owner,
+            None,
+            hinstance,
+            Some(&mut ps as *mut PromptState as *const core::ffi::c_void),
+        )
+        .ok()?;
+
+        let _ = EnableWindow(owner, false);
+        let mut msg = MSG::default();
+        while !ps.done && GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            if !IsDialogMessageW(dlg, &msg).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        let _ = EnableWindow(owner, true);
+        let _ = SetForegroundWindow(owner);
+        let _ = DestroyWindow(dlg);
+        ps.result.take()
+    }
+
+    extern "system" fn prompt_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        unsafe {
+            match msg {
+                WM_CREATE => {
+                    let cs = lparam.0 as *const CREATESTRUCTW;
+                    let ps = (*cs).lpCreateParams as *mut PromptState;
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, ps as isize);
+                    let hinst = (*cs).hInstance;
+                    let _ = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("STATIC"),
+                        w!("Nickname for attribution:"),
+                        WS_CHILD | WS_VISIBLE,
+                        12, 12, 320, 18, hwnd, None, hinst, None,
+                    );
+                    let edit = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("EDIT"),
+                        PCWSTR::null(),
+                        WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+                        12, 34, 320, 24, hwnd, None, hinst, None,
+                    )
+                    .unwrap_or_default();
+                    let _ = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("BUTTON"),
+                        w!("Submit"),
+                        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
+                        160, 72, 80, 26, hwnd,
+                        HMENU(IDC_PROMPT_OK as *mut core::ffi::c_void), hinst, None,
+                    );
+                    let _ = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("BUTTON"),
+                        w!("Cancel"),
+                        WS_CHILD | WS_VISIBLE,
+                        252, 72, 80, 26, hwnd,
+                        HMENU(IDC_PROMPT_CANCEL as *mut core::ffi::c_void), hinst, None,
+                    );
+                    if let Some(ps) = (ps as *mut PromptState).as_mut() {
+                        ps.edit = edit;
+                    }
+                    LRESULT(0)
+                }
+                WM_COMMAND => {
+                    let id = (wparam.0 & 0xffff) as usize;
+                    let ps = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut PromptState;
+                    if let Some(ps) = ps.as_mut() {
+                        if id == IDC_PROMPT_OK {
+                            ps.result = Some(read_edit_text(ps.edit));
+                            ps.done = true;
+                        } else if id == IDC_PROMPT_CANCEL {
+                            ps.result = None;
+                            ps.done = true;
+                        }
+                    }
+                    LRESULT(0)
+                }
+                WM_CLOSE => {
+                    let ps = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut PromptState;
+                    if let Some(ps) = ps.as_mut() {
+                        ps.done = true;
+                    }
+                    LRESULT(0)
+                }
+                _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+            }
+        }
+    }
+
+    unsafe fn read_edit_text(edit: HWND) -> String {
+        let len = GetWindowTextLengthW(edit);
+        if len <= 0 {
+            return String::new();
+        }
+        let mut buf = vec![0u16; len as usize + 1];
+        let n = GetWindowTextW(edit, &mut buf);
+        String::from_utf16_lossy(&buf[..n as usize])
     }
 
     /// Bridges core progress to the UI thread: queues an event and pokes the window.

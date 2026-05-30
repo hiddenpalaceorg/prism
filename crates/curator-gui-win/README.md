@@ -15,6 +15,11 @@ Excluded from the root workspace so non-Windows `cargo build` skips it.
   image hashing and intra-archive counters; the status bar shows batch/messages.
 - **Analysis ▸ Cancel** trips the shared cancel flag (core unwinds, subprocess killed).
 - On completion the tree is populated recursively and the XML shown.
+- **Analysis ▸ Find Similar** — POSTs the canonical record to `/api/similarity` (native
+  **WinHTTP**) and lists tiered neighbors in the document pane.
+- **Analysis ▸ Submit Build…** — a small modal nickname prompt, then POSTs
+  `{nickname, record}` to `/api/submissions`. Web base URL from `CURATOR_WEB_URL`
+  (default `http://localhost:3001`). Both calls run on a worker thread.
 
 ## Build / check
 
@@ -40,8 +45,6 @@ cargo build --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc
 
 ## Remaining
 
-- "Find Similar" / "Submit" wired to the web API (the macOS app shows the shape;
-  `curator-ffi` isn't needed here since the core is called directly).
 - Embed/resolve the Phase-2 adapter bundle next to the exe (today it uses the dev
   `ps2exe-adapter` via uv); recent-builds list; drag-and-drop.
 
