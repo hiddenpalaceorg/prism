@@ -59,14 +59,14 @@ PLIST
 
 echo ">> embed adapter bundle (if built)"
 # The app resolves Contents/Resources/adapter/curator-adapter automatically. Build it
-# first with `sh ps2exe-adapter/bundle.sh`; relocatable, so copying it here just works.
+# first with `python ps2exe-adapter/bundle.py`; relocatable, so copying it here works.
 BUNDLE="$ROOT/ps2exe-adapter/dist/bundle"
 if [ -d "$BUNDLE" ] && [ -x "$BUNDLE/curator-adapter" ]; then
   cp -R "$BUNDLE" "$APP/Contents/Resources/adapter"
   echo "   embedded $(du -sh "$APP/Contents/Resources/adapter" | cut -f1) adapter — app is self-contained"
 else
   echo "   no bundle at $BUNDLE — app falls back to CURATOR_ADAPTER_DIR/_BIN."
-  echo "   build one with:  sh ps2exe-adapter/bundle.sh   then re-run this script."
+  echo "   build one with:  python ps2exe-adapter/bundle.py   then re-run this script."
 fi
 
 echo ">> done: $APP"

@@ -39,8 +39,8 @@ builds/                sample disc images for testing
 | ↳ text-embedding tier (all-MiniLM-L6-v2 → pgvector cosine) | ✅ built & validated |
 | ↳ build-detail page (`/build/[sha256]`: details, files, similar) + search links | ✅ built & validated (live) |
 | ↳ submission-moderation UI (`/moderate`: list, accept→ingest, reject) | ✅ built & validated (live) |
-| Phase 2 — self-contained macOS adapter bundle (standalone Python + deps + unrar) | ✅ built & validated |
-| ↳ Windows bundle, macOS codesign/notarize, native-arm64 unrar | ⬜ |
+| Phase 2 — self-contained adapter bundle (`bundle.py`, cross-platform; standalone Python + deps + archive tool) | ✅ built & validated (macOS run; Windows branch reviewed) |
+| ↳ macOS codesign/notarize, native-arm64 unrar | ⬜ (signing out of scope) |
 | Phase 3 — UniFFI bridge (`curator-ffi`) + SwiftUI macOS app (tree, details, XML/JSON, progress, cancel) | ✅ built & validated |
 | ↳ macOS GUI: embedded self-contained adapter (no env/dev-tools) | ✅ built & validated |
 | ↳ macOS GUI: Find-Similar + Submit wired to web API (neighbors deep-link to web) | ✅ built & validated (live) |
@@ -49,7 +49,7 @@ builds/                sample disc images for testing
 | Phase 3 — Windows GUI (windows-rs: tree, XML view, progress, cancel, open file/folder) | ✅ built (cross-compiled to a PE32+ .exe) |
 | ↳ Windows GUI: Find-Similar + Submit (native WinHTTP → web API) | ✅ built (cross-compiled) |
 | ↳ Windows GUI: recent-builds menu, drag-and-drop, adapter-next-to-exe | ✅ built (cross-compiled) |
-| ↳ Windows GUI: ship a Windows adapter bundle, code-sign | ⬜ |
+| ↳ Windows adapter bundle (`bundle.py` → `curator-adapter.cmd`) | ✅ (Windows branch reviewed; run on Windows) |
 
 ## Quick start (CLI)
 
@@ -76,9 +76,10 @@ the platform user-data dir (override with `--data-dir`).
 
 ## Bundling (no dev toolchain)
 
-`sh ps2exe-adapter/bundle.sh` builds a self-contained adapter under
-`ps2exe-adapter/dist/bundle/`: a relocatable standalone CPython 3.10 with the locked
-deps, the adapter + ps2exe source, a bundled `unrar`, and a `curator-adapter` launcher.
+`python ps2exe-adapter/bundle.py` (with `uv` on PATH; cross-platform — macOS or
+Windows) builds a self-contained adapter under `ps2exe-adapter/dist/bundle/`: a
+relocatable standalone CPython 3.10 with the locked deps, the adapter + ps2exe source,
+a bundled archive tool, and a `curator-adapter`/`curator-adapter.cmd` launcher.
 The CLI/GUI uses it with no uv/Python/dev-tools present:
 
 ```sh

@@ -48,9 +48,11 @@ cargo build --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc
 # → target/x86_64-pc-windows-gnu/debug/curator-gui-win.exe  (PE32+ GUI executable)
 ```
 
-## Remaining
+## Adapter bundle
 
-- Ship a Windows Phase-2 adapter bundle to drop in `adapter\` next to the exe (the
-  resolution path is already in place); code-signing.
+On Windows, `python ..\..\ps2exe-adapter\bundle.py` (uv on PATH) produces
+`ps2exe-adapter\dist\bundle\` with a `curator-adapter.cmd` launcher. Copy that `bundle`
+folder next to the exe as `adapter\` and the GUI finds it automatically — no env var,
+no dev tools. Code-signing is out of scope.
 
 Shares all logic with the macOS app via `curator-core`; only the shell differs.
