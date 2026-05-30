@@ -14,4 +14,13 @@ fn main() {
             println!("cargo:rustc-cfg=embed_adapter");
         }
     }
+
+    // Embed a Common-Controls v6 manifest so ListView group view and modern visual styles
+    // are active. Without it, comctl32 stays on the classic v5 look and LVM_ENABLEGROUPVIEW
+    // is a no-op. embed-manifest handles both the MSVC and GNU toolchains with no external
+    // resource compiler.
+    if env::var_os("CARGO_CFG_WINDOWS").is_some() {
+        use embed_manifest::{embed_manifest, new_manifest};
+        embed_manifest(new_manifest("Curator.Gui")).expect("unable to embed manifest");
+    }
 }

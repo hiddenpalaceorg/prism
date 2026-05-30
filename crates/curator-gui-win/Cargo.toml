@@ -16,12 +16,21 @@ path = "src/main.rs"
 curator-core = { path = "../curator-core" }
 serde_json = "1"
 
+# Embeds a Common-Controls v6 manifest (build.rs) so ListView groups and modern visual
+# styles work. Cross-toolchain (MSVC + GNU), no external resource compiler needed.
+# Unconditional: build-dep cfg() matches the host, not the target; build.rs gates the
+# actual embed on CARGO_CFG_WINDOWS instead.
+[build-dependencies]
+embed-manifest = "1.4"
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
     "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
     "Win32_Networking_WinHttp",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
