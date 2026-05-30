@@ -283,7 +283,60 @@ def analyze(path):
     info = _gather_info(processor, reader, system, mods)
     files = _hash_files(reader, manager)
     media = _scan_audio_tracks(readers, mods, manager)
-    return {"info": info, "files": files, "media": media}
+    exe_fp = None
+    exe = info.get("exe")
+    if exe and exe.get("filename"):
+        exe_fp = _exe_fingerprint(reader, exe["filename"])
+    return {"info": info, "files": files, "media": media, "exe_fp": exe_fp}
+
+
+def _exe_fingerprint(reader, exe_path):
+    """Tier-5: TLSH (any bytes) + imphash (PE only) of the boot executable."""
+    import tlsh
+
+    target = None
+    for f in reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=False):
+        if _clean_path(reader.get_file_path(f)) == exe_path:
+            target = f
+            break
+    if target is None:
+        return None
+    try:
+        fh = reader.open_file(target)
+        is_ctx = hasattr(fh, "__enter__")
+        if is_ctx:
+            fh.__enter__()
+        try:
+            data = fh.read()
+        finally:
+            with contextlib.suppress(Exception):
+                fh.__exit__(None, None, None) if is_ctx else fh.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+    if not data or len(data) < 256:
+        return None
+
+    th = tlsh.hash(data)
+    if th in ("", "TNULL"):
+        th = None
+
+    imphash = None
+    if data[:2] == b"MZ":  # PE
+        try:
+            import pefile
+
+            pe = pefile.PE(data=data, fast_load=True)
+            pe.parse_data_directories(
+                directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]]
+            )
+            imphash = pe.get_imphash() or None
+        except Exception:  # noqa: BLE001
+            imphash = None
+
+    if not th and not imphash:
+        return None
+    return {"tlsh": th, "imphash": imphash}
 
 
 def _scan_audio_tracks(readers, mods, manager):

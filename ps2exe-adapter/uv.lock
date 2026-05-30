@@ -262,6 +262,7 @@ dependencies = [
     { name = "pathlab" },
     { name = "pefile" },
     { name = "psutil" },
+    { name = "py-tlsh" },
     { name = "pycdlib" },
     { name = "pycryptodome" },
     { name = "pyisotools" },
@@ -282,6 +283,7 @@ requires-dist = [
     { name = "pathlab", specifier = ">=0.2" },
     { name = "pefile", specifier = ">=2023.2.7" },
     { name = "psutil", specifier = ">=5.9" },
+    { name = "py-tlsh", specifier = ">=5.0.0" },
     { name = "pycdlib", specifier = "==1.14.0" },
     { name = "pycryptodome", specifier = ">=3.18.0" },
     { name = "pyisotools", specifier = ">=2.4.6" },
@@ -537,6 +539,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/37/a8/d832f7293ebb21690
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/a9/023730ba63db1e494a271cb018dcd361bd2c917ba7004c3e49d5daf795a2/py_cpuinfo-9.0.0-py3-none-any.whl", hash = "sha256:859625bc251f64e21f077d099d4162689c762b5d6a4c3c97553d56241c9674d5", size = 22335, upload-time = "2022-10-25T20:38:27.636Z" },
 ]
+
+[[package]]
+name = "py-tlsh"
+version = "5.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d4/fb/a1aceafcf0c5196f1cb558319dca5231190f248f27fbec2e4033276db77f/py_tlsh-5.0.0.tar.gz", hash = "sha256:a21cb75eb49e9d9237c8c39d2fb310a5c976b3abc6c35c2e405e16c089abad1b", size = 49020, upload-time = "2026-05-08T04:31:47.377Z" }
 
 [[package]]
 name = "pycdlib"
