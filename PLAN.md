@@ -93,13 +93,17 @@ ec8de44  Web service: search, similarity, submissions API
   the catalog, reject just marks status. Validated live: submit→queue→accept ingests
   builds/files/fileset, reject stays out.
 
-**Remaining:**
-- macOS GUI: codesign/notarize (needs Developer ID).
-- Windows GUI: similarity/submit wiring, adapter bundling next to the exe, recent-builds,
-  drag-and-drop.
-- Windows bundle; macOS codesign/notarization; native-arm64 `unrar`/`7zz`.
-- Web: richer UI (build detail / similarity browse), submission moderation.
-- Skipped: image pHash (validated algo, ~0 yield on retro discs — native formats).
+- **Tests + CI** — `cargo test` (10 core/schema tests: composite invariance, structural,
+  tree, MinHash determinism, serde), `web npm test` (TLSH vs py-tlsh fixtures + fingerprint
+  helpers, via `node --test`/tsx), `pytest` (audio constellation properties + cue/track).
+  `.github/workflows/ci.yml`: rust, web (tsc+test), adapter pytest, windows-gnu cross-check.
+
+**Remaining (all environment-bound, not doable here):**
+- Code-signing/notarization (macOS Developer ID, Windows Authenticode) — explicitly out of scope.
+- Run `bundle.py` *on Windows* once to produce that platform's bundle (logic verified on macOS).
+- native-arm64 `unrar`/`7zz` for the macOS bundle (currently x86_64 via Rosetta).
+- Submission moderation has no auth gate; Tier-3 TLSH/LSH are linear scans (fine at current scale).
+- Skipped by design: image pHash (validated algo, ~0 yield on retro discs — native formats).
 - Audio fp is **offset-tolerant** (Shazam-style constellation of peak-pairs keyed by Δt;
   freq bins coarsened `>>2` for sub-frame robustness). Validated on synthetic PCM:
   identical/integer-offset 1.0, 1-sector (pregap) offset 0.73, sub-frame offset 0.68,

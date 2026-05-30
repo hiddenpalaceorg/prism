@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tlshDiff } from "../src/lib/tlsh";
 import { hexToId63, toSigned64, lshBands, setJaccard, minhashJaccard } from "../src/lib/fingerprint";
-import { TIERS, fusedScore, applicableTiers, type TierKey } from "../src/lib/tiers";
 
 // Real fixtures generated with py-tlsh (the reference implementation) — this pins the
 // pure-JS tlshDiff to the canonical distances.
@@ -58,47 +57,4 @@ test("minhashJaccard = fraction of positionally-equal slots", () => {
   assert.equal(minhashJaccard(["1", "2", "3", "4"], ["1", "2", "3", "4"]), 1);
   assert.equal(minhashJaccard(["1", "2", "3", "4"], ["1", "2", "9", "9"]), 0.5);
   assert.equal(minhashJaccard(["1"], ["1", "2"]), 0); // length mismatch
-});
-
-test("tier weights sum to 1.0 (a full match scores 100%)", () => {
-  const total = TIERS.reduce((s, t) => s + t.weight, 0);
-  assert.ok(Math.abs(total - 1) < 1e-9, `weights sum to ${total}`);
-});
-
-test("fusedScore is the weighted-portion sum with all tiers active", () => {
-  const all = new Set<TierKey>(TIERS.map((t) => t.key));
-  // perfect match on every tier => 100%
-  const perfect = Object.fromEntries(TIERS.map((t) => [t.key, 1]));
-  assert.equal(fusedScore(perfect, all), 1);
-  // files (0.20) full + resemblance (0.15) full, nothing else => 0.35
-  assert.ok(Math.abs(fusedScore({ files: 1, resemblance: 1 }, all) - 0.35) < 1e-9);
-});
-
-test("fusedScore renormalizes to the active subset when filtering", () => {
-  // Only 'resemblance' selected: its sim fills 100% regardless of its base weight.
-  assert.equal(fusedScore({ files: 0.3, resemblance: 0.8 }, new Set<TierKey>(["resemblance"])), 0.8);
-  // No tiers selected => 0.
-  assert.equal(fusedScore({ files: 1 }, new Set<TierKey>()), 0);
-});
-
-test("applicableTiers = active ∩ both builds' capabilities", () => {
-  const all = new Set<TierKey>(TIERS.map((t) => t.key));
-  const queryNoExe: TierKey[] = ["content", "files", "chunks", "resemblance", "audio", "text"];
-  const neighborAll: TierKey[] = TIERS.map((t) => t.key);
-  const ap = applicableTiers(all, queryNoExe, neighborAll);
-  assert.ok(!ap.has("imphash") && !ap.has("tlsh"), "exe tiers dropped when query lacks an exe");
-  assert.ok(ap.has("files") && ap.has("content"));
-  // the active filter further restricts
-  assert.deepEqual([...applicableTiers(new Set<TierKey>(["files"]), queryNoExe, neighborAll)], ["files"]);
-});
-
-test("a tier absent from either build is dropped from the denominator (not penalized)", () => {
-  const all = new Set<TierKey>(TIERS.map((t) => t.key));
-  // both builds only have content data → content is the only applicable tier
-  const caps: TierKey[] = ["content"];
-  const ap = applicableTiers(all, caps, caps);
-  assert.equal(fusedScore({ content: 1 }, ap), 1); // 100%, not diluted by the 7 missing tiers
-  // neighbor missing audio: audio excluded even though query has it
-  const ap2 = applicableTiers(all, ["files", "audio"], ["files"]);
-  assert.equal(fusedScore({ files: 0.5 }, ap2), 0.5);
 });

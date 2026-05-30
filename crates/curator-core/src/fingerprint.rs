@@ -300,3 +300,126 @@ fn finish_dir(d: DirBuild) -> Vec<Node> {
     out.extend(d.files.into_values());
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Valid 40-hex (20-byte) sha1 digests.
+    const A: &str = "da39a3ee5e6b4b0d3255bfef95601890afd80709";
+    const B: &str = "0000000000000000000000000000000000000001";
+    const C: &str = "ffffffffffffffffffffffffffffffffffffffff";
+
+    fn file(path: &str, sha1: &str) -> RawFile {
+        RawFile {
+            path: path.into(),
+            is_dir: false,
+            date: None,
+            size: Some(10),
+            md5: None,
+            sha1: Some(sha1.into()),
+            sha256: None,
+            unreadable: false,
+            chunks: vec![],
+        }
+    }
+
+    fn dir(path: &str) -> RawFile {
+        RawFile {
+            path: path.into(),
+            is_dir: true,
+            date: None,
+            size: None,
+            md5: None,
+            sha1: None,
+            sha256: None,
+            unreadable: false,
+            chunks: vec![],
+        }
+    }
+
+    #[test]
+    fn content_hash_ignores_order_and_names() {
+        let a = vec![file("/X.BIN", A), file("/Y.BIN", B)];
+        let b = vec![file("/deep/path/other.dat", B), file("/z", A)];
+        assert_eq!(composites(&a).content_hash, composites(&b).content_hash);
+
+        let c = vec![file("/X.BIN", A), file("/Y.BIN", C)];
+        assert_ne!(composites(&a).content_hash, composites(&c).content_hash);
+    }
+
+    #[test]
+    fn filtered_hash_ignores_scene_junk() {
+        let base = vec![file("/GAME.BIN", A)];
+        let with_nfo = vec![file("/GAME.BIN", A), file("/readme.nfo", B)];
+        // strict hash changes, filtered hash does not
+        assert_ne!(composites(&base).content_hash, composites(&with_nfo).content_hash);
+        assert_eq!(
+            composites(&base).filtered_content_hash,
+            composites(&with_nfo).filtered_content_hash
+        );
+    }
+
+    #[test]
+    fn is_ignored_matches_nfo_diz_case_insensitive() {
+        assert!(is_ignored("/FILE.NFO"));
+        assert!(is_ignored("/sub/x.diz"));
+        assert!(!is_ignored("/GAME.BIN"));
+        assert!(!is_ignored("/nfo.bin"));
+    }
+
+    #[test]
+    fn incomplete_files_counted() {
+        let mut bad = file("/A", A);
+        bad.unreadable = true;
+        assert_eq!(composites(&[bad, file("/B", B)]).incomplete_files, 1);
+    }
+
+    #[test]
+    fn structural_counts_sizes_and_extensions() {
+        let files = vec![dir("/D"), file("/D/A.BIN", A), file("/D/B.iso", B)];
+        let s = structural("PSX", &files);
+        assert_eq!(s.system, "PSX");
+        assert_eq!(s.file_count, 2); // directory excluded
+        assert_eq!(s.total_size, 20);
+        assert_eq!(s.ext_histogram.get("bin"), Some(&1));
+        assert_eq!(s.ext_histogram.get("iso"), Some(&1));
+        assert!(s.max_depth >= 2);
+    }
+
+    #[test]
+    fn build_tree_nests_paths() {
+        let tree = build_tree(&[file("/DATA/SUB/x.bin", A), file("/root.bin", B)]);
+        let names: Vec<&str> = tree.iter().map(|n| n.name()).collect();
+        assert!(names.contains(&"DATA"), "got {names:?}");
+        assert!(names.contains(&"root.bin"), "got {names:?}");
+        let data = tree.iter().find(|n| n.name() == "DATA").unwrap();
+        match data {
+            Node::Dir { children, .. } => assert_eq!(children[0].name(), "SUB"),
+            _ => panic!("DATA should be a directory"),
+        }
+    }
+
+    #[test]
+    fn chunk_sketch_is_deterministic_and_setlike() {
+        let mut a = file("/A", A);
+        a.chunks = vec![(1, 10), (2, 20), (3, 30)];
+        let mut b = file("/elsewhere", B);
+        b.chunks = vec![(3, 30), (2, 20), (1, 10)]; // same chunk set, different order/name
+        let sa = chunk_sketch(&[a]).unwrap();
+        let sb = chunk_sketch(&[b]).unwrap();
+        assert_eq!(sa.values, sb.values); // MinHash depends only on the chunk set
+        assert_eq!(sa.k as usize, sa.values.len());
+        assert!(chunk_sketch(&[file("/no-chunks", C)]).is_none());
+    }
+
+    #[test]
+    fn chunk_sidecar_has_magic_header() {
+        let mut a = file("/A", A);
+        a.chunks = vec![(7, 5)];
+        let s = chunk_sidecar(&[a]);
+        assert_eq!(&s[..4], b"CCK1");
+        // file_count = 1 in the next 4 LE bytes
+        assert_eq!(u32::from_le_bytes(s[4..8].try_into().unwrap()), 1);
+    }
+}
