@@ -34,7 +34,7 @@ service at `CURATOR_WEB_URL` (default `http://localhost:3001`).
 
 ```sh
 # optional: build the self-contained Python adapter once (embedded into the .app below)
-sh ps2exe-adapter/bundle.sh
+python ps2exe-adapter/bundle.py
 
 # build the Rust core + assemble the .app (release by default); embeds the bundle if present
 sh macos/build-app.sh            # or: sh macos/build-app.sh debug

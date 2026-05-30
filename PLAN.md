@@ -44,9 +44,13 @@ ec8de44  Web service: search, similarity, submissions API
   pgvector text embedding (all-MiniLM-L6-v2). Validated: USA↔Alt 34/34 audio @1.0;
   EU↔JP 8 shared tracks (diff content); text-embed lineage 0.80 vs unrelated 0.43;
   JS TLSH diff == py-tlsh (0/14/310).
-- **Phase 2 (macOS)** — `ps2exe-adapter/bundle.sh` → self-contained bundle (standalone
-  CPython 3.10 + locked deps + ps2exe src + bundled `unrar` + launcher), ~14 MB tar.
-  Rust CLI runs it via `--adapter-bin`/`CURATOR_ADAPTER_BIN` with no uv/dev-python.
+- **Phase 2** — `ps2exe-adapter/bundle.py` (cross-platform, replaced bundle.sh) →
+  self-contained bundle (standalone CPython 3.10 + locked deps + ps2exe src + archive
+  tool + launcher). macOS launcher `curator-adapter`, Windows `curator-adapter.cmd`.
+  Rust CLI/GUIs run it via `--adapter-bin`/`CURATOR_ADAPTER_BIN` (or auto: `adapter\`
+  next to the exe). Validated end-to-end on macOS (relocated launcher analyzes);
+  ~179 MB (numpy/cryptography/PIL). Gotcha: discover the *managed* python with
+  `VIRTUAL_ENV` stripped, else `uv python find` returns the project `.venv` (broken).
 - **Phase 3 (macOS GUI)** — `crates/curator-ffi` (UniFFI 0.31 proc-macros over the
   core): `Engine.analyze/catalogSize/exportJsonl`, `ProgressListener` callback,
   `CancelHandle`, `AnalysisSummary`+recursive `FileNode` tree. Cancellation wired into
