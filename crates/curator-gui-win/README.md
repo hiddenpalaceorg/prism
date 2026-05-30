@@ -10,7 +10,12 @@ Excluded from the root workspace so non-Windows `cargo build` skips it.
 
 - Classic Win32 window: a `SysTreeView32` of the analyzed filesystem on the left, a
   read-only multiline edit with the DAT/XML on the right, a progress bar + status bar.
-- **File ▸ Open Image…** (`GetOpenFileNameW`) and **Open Folder…** (`SHBrowseForFolderW`).
+- **File ▸ Open Image…** (`GetOpenFileNameW`), **Open Folder…** (`SHBrowseForFolderW`),
+  and **Open Recent** (the local catalog; reopens from cache, no re-analysis).
+- **Drag-and-drop** a file/folder onto the window (the panes are subclassed to forward
+  `WM_DROPFILES`).
+- Adapter resolution: `CURATOR_ADAPTER_BIN` → `adapter\curator-adapter*` next to the exe
+  → `CURATOR_ADAPTER_DIR` → the dev `ps2exe-adapter` uv project.
 - A `ProgressObserver` that queues events and pokes the window → the progress bar tracks
   image hashing and intra-archive counters; the status bar shows batch/messages.
 - **Analysis ▸ Cancel** trips the shared cancel flag (core unwinds, subprocess killed).
@@ -45,7 +50,7 @@ cargo build --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc
 
 ## Remaining
 
-- Embed/resolve the Phase-2 adapter bundle next to the exe (today it uses the dev
-  `ps2exe-adapter` via uv); recent-builds list; drag-and-drop.
+- Ship a Windows Phase-2 adapter bundle to drop in `adapter\` next to the exe (the
+  resolution path is already in place); code-signing.
 
 Shares all logic with the macOS app via `curator-core`; only the shell differs.
