@@ -39,6 +39,19 @@ echo ">> assemble $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Curator"
+
+# Embed the Rust dylib and repoint the executable at it, so the .app is relocatable
+# (the linker picks libcurator_ffi.dylib over the .a; without this it would load from
+# the build machine's $LIBDIR). No-op when the binary linked the static lib instead.
+DYLIB_NAME=libcurator_ffi.dylib
+OLD_DYLIB=$(otool -L "$APP/Contents/MacOS/Curator" | awk '/libcurator_ffi\.dylib/{print $1; exit}')
+if [ -n "${OLD_DYLIB:-}" ]; then
+  cp "$LIBDIR/$DYLIB_NAME" "$APP/Contents/MacOS/$DYLIB_NAME"
+  install_name_tool -id "@executable_path/$DYLIB_NAME" "$APP/Contents/MacOS/$DYLIB_NAME"
+  install_name_tool -change "$OLD_DYLIB" "@executable_path/$DYLIB_NAME" "$APP/Contents/MacOS/Curator"
+  echo "   embedded $DYLIB_NAME (was $OLD_DYLIB)"
+fi
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

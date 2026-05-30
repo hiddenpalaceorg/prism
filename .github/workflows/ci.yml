@@ -14,22 +14,44 @@ jobs:
           cargo test --workspace
           cargo build --workspace
 
-  windows-gui:
-    name: windows GUI cross-check
-    runs-on: ubuntu-latest
+  windows-build:
+    name: windows GUI build (exe artifact)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          key: windows-gnu
-      - name: Install mingw-w64 (for rusqlite's bundled SQLite)
-        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
-      - run: rustup target add x86_64-pc-windows-gnu
-      - name: cargo check (x86_64-pc-windows-gnu)
-        env:
-          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
-          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
-        run: cargo check --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc-windows-gnu
+          # gui-win is excluded from the root workspace; it has its own target dir.
+          workspaces: crates/curator-gui-win
+          key: windows-msvc
+      - name: cargo build --release (native MSVC)
+        run: cargo build --release --manifest-path crates/curator-gui-win/Cargo.toml
+      - name: upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: curator-gui-win-${{ github.sha }}
+          path: crates/curator-gui-win/target/release/curator-gui-win.exe
+          if-no-files-found: error
+
+  macos-build:
+    name: macOS app build (.app artifact)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: build Curator.app (release)
+        # No adapter bundle in CI (the app falls back to CURATOR_ADAPTER_DIR/_BIN).
+        run: bash macos/build-app.sh release
+      - name: ad-hoc codesign (reduces Gatekeeper friction on download)
+        run: codesign --force --deep --sign - macos/dist/Curator.app
+      - name: zip the bundle (ditto preserves the .app structure)
+        run: ditto -c -k --keepParent macos/dist/Curator.app macos/dist/Curator-app.zip
+      - name: upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Curator-macos-${{ github.sha }}
+          path: macos/dist/Curator-app.zip
+          if-no-files-found: error
 
   web:
     name: web (tsc + tests)
