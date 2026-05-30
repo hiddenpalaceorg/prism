@@ -60,6 +60,21 @@ export function minhashJaccard(a: Array<string | bigint>, b: Array<string | bigi
   return eq / a.length;
 }
 
+/** True set Jaccard (intersection / union) over two id lists. */
+export function setJaccard(a: Array<string | number>, b: Array<string | number>): number {
+  if (!a.length || !b.length) return 0;
+  const A = new Set(a.map(String));
+  const B = new Set(b.map(String));
+  let inter = 0;
+  for (const x of A) if (B.has(x)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+
+export interface AudioTrack {
+  track: string;
+  subfp: string[];
+}
+
 export interface QueryFeatures {
   sha256: string | null;
   name: string | null;
@@ -68,6 +83,7 @@ export interface QueryFeatures {
   minhash: string[] | null;
   bands: string[] | null;
   imphash: string | null;
+  audioTracks: AudioTrack[];
 }
 
 /** Derive the query features the similarity endpoint needs from a BuildRecord. */
@@ -96,6 +112,9 @@ export function deriveQueryFeatures(rec: BuildRecord): QueryFeatures {
     minhash,
     bands,
     imphash: rec.exe_fp?.imphash ?? null,
+    audioTracks: (rec.media ?? [])
+      .filter((m) => m.kind === "audio" && m.audio_fp?.length)
+      .map((m) => ({ track: m.path, subfp: m.audio_fp!.map(String) })),
   };
 }
 

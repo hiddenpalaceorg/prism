@@ -364,7 +364,8 @@ def _scan_audio_tracks(readers, mods, manager):
                     head = fh.read(16)
                     if not audio.is_audio_track(head, size):
                         continue
-                    raw = head + fh.read()
+                    # Cap to the first ~90s for speed; deterministic prefix still matches.
+                    raw = head + fh.read(audio.MAX_FP_BYTES - 16)
                 finally:
                     with contextlib.suppress(Exception):
                         fh.__exit__(None, None, None) if is_ctx else fh.close()
