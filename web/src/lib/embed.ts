@@ -19,7 +19,11 @@ function getExtractor() {
 export async function embed(text: string): Promise<number[]> {
   const ex = await getExtractor();
   const out = await ex([text || ""], { pooling: "mean", normalize: true });
-  return out.tolist()[0] as number[];
+  const vec = out.tolist()[0];
+  if (!Array.isArray(vec) || vec.length !== EMBED_DIM) {
+    throw new Error(`embed: expected ${EMBED_DIM}-d vector, got ${Array.isArray(vec) ? vec.length : typeof vec}`);
+  }
+  return vec as number[];
 }
 
 /** Format a vector as a pgvector literal: `[f1,f2,...]`. */

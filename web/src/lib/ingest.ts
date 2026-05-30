@@ -2,7 +2,8 @@
 // files + Tier-2 fileset, Tier-3 sketch, Tier-5 exe, Tier-4 audio. Shared by the
 // bulk CLI ingester (scripts/ingest.ts) and the moderation accept endpoint.
 
-import { hexToId63, toSigned64, lshBands, flattenFiles, arrayLit } from "./fingerprint";
+import type { Pool } from "pg";
+import { hexToId63, toSigned64, lshBands, flattenFiles, arrayLit, parseU64 } from "./fingerprint";
 import { embed, toPgVector } from "./embed";
 import type { BuildRecord } from "./types";
 
@@ -22,7 +23,7 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (sha256) DO UPDATE SET record=excluded.record`,
     [sha, rec.image.name, rec.info?.system ?? "", rec.image.size, rec.image.md5, rec.image.sha1,
-     comp.content_hash, comp.filtered_content_hash, st.file_count, st.total_size, st.max_depth,
+     comp.content_hash ?? null, comp.filtered_content_hash ?? null, st.file_count, st.total_size, st.max_depth,
      JSON.stringify(st.ext_histogram ?? {}), rec.text_doc ?? "", rec.fingerprint_profile, rec]
   );
 
@@ -36,12 +37,25 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
   await db.query("DELETE FROM files WHERE build_sha256=$1", [sha]);
   const fileset = new Set<string>();
   for (const f of files) {
-    await db.query(
-      "INSERT INTO files (build_sha256,path,name,size,md5,sha1,sha256) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [sha, f.path, f.name, f.size, f.md5 ?? null, f.sha1 ?? null, f.sha256 ?? null]
-    );
     const id = hexToId63(f.sha1);
     if (id !== null) fileset.add(id.toString());
+  }
+  // Multi-row INSERT, chunked: 7 params/row, kept well under Postgres's 65535
+  // bind-parameter ceiling (a large disc image can hold tens of thousands of files).
+  const ROWS_PER_INSERT = 1000;
+  for (let off = 0; off < files.length; off += ROWS_PER_INSERT) {
+    const chunk = files.slice(off, off + ROWS_PER_INSERT);
+    const rows: string[] = [];
+    const params: unknown[] = [];
+    for (const f of chunk) {
+      const i = params.length;
+      rows.push(`($${i + 1},$${i + 2},$${i + 3},$${i + 4},$${i + 5},$${i + 6},$${i + 7})`);
+      params.push(sha, f.path, f.name, f.size, f.md5 ?? null, f.sha1 ?? null, f.sha256 ?? null);
+    }
+    await db.query(
+      `INSERT INTO files (build_sha256,path,name,size,md5,sha1,sha256) VALUES ${rows.join(",")}`,
+      params
+    );
   }
   await db.query(
     `INSERT INTO build_fileset (build_sha256,hashes) VALUES ($1,$2)
@@ -50,13 +64,18 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
   );
 
   if (rec.sketch?.values?.length) {
-    const mh = rec.sketch.values.map((v) => toSigned64(BigInt(v)));
-    const bands = lshBands(mh);
-    await db.query(
-      `INSERT INTO build_sketch (build_sha256,minhash,lsh_bands) VALUES ($1,$2,$3)
-       ON CONFLICT (build_sha256) DO UPDATE SET minhash=excluded.minhash, lsh_bands=excluded.lsh_bands`,
-      [sha, arrayLit(mh.map(String)), arrayLit(bands.map(String))]
-    );
+    const mh = rec.sketch.values
+      .map(parseU64)
+      .filter((x): x is bigint => x !== null)
+      .map(toSigned64);
+    if (mh.length) {
+      const bands = lshBands(mh);
+      await db.query(
+        `INSERT INTO build_sketch (build_sha256,minhash,lsh_bands) VALUES ($1,$2,$3)
+         ON CONFLICT (build_sha256) DO UPDATE SET minhash=excluded.minhash, lsh_bands=excluded.lsh_bands`,
+        [sha, arrayLit(mh.map(String)), arrayLit(bands.map(String))]
+      );
+    }
   }
 
   if (rec.exe_fp && (rec.exe_fp.tlsh || rec.exe_fp.imphash)) {
@@ -75,5 +94,20 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
         [sha, m.path, arrayLit(m.audio_fp.map(String))]
       );
     }
+  }
+}
+
+/** Ingest one record atomically on a dedicated client (all-or-nothing). */
+export async function ingestRecordTx(pool: Pool, rec: BuildRecord): Promise<void> {
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+    await ingestRecord(c, rec);
+    await c.query("COMMIT");
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
   }
 }

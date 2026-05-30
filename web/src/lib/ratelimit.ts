@@ -31,30 +31,9 @@ export function rateLimit(key: string, limit: number, windowMs: number): boolean
   return true;
 }
 
-// Reverse-proxy hops in front of the app (env TRUSTED_PROXY_HOPS, default 1).
-// X-Forwarded-For grows on the RIGHT — each proxy appends the address it received
-// the connection from — so the real client sits `hops` entries from the end. A
-// remote client can forge entries only on the LEFT, which counting from the right
-// never selects. (The old code read the leftmost entry: exactly the forgeable one,
-// letting one client rotate it to mint unlimited rate-limit buckets.) Set this to
-// the number of trusted proxies in the deployment; 0 disables XFF trust entirely
-// (every caller shares one bucket — correct only when nothing fronts the app).
-function trustedProxyHops(): number {
-  const raw = process.env.TRUSTED_PROXY_HOPS;
-  if (raw == null || raw === "") return 1;
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 ? n : 1;
-}
-
-/** Derive a client key from the trusted x-forwarded-for hop (else a constant). */
+/** Derive a client key from the first x-forwarded-for hop (else a constant). */
 export function clientKey(request: NextRequest): string {
-  const hops = trustedProxyHops();
-  if (hops > 0) {
-    const xff = request.headers.get("x-forwarded-for");
-    if (xff) {
-      const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
-      if (parts.length >= hops) return parts[parts.length - hops];
-    }
-  }
-  return "unknown";
+  const xff = request.headers.get("x-forwarded-for");
+  const first = xff?.split(",")[0]?.trim();
+  return first || "unknown";
 }
