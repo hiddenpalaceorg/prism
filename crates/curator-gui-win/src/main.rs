@@ -224,6 +224,17 @@ mod app {
                     on_drop(hwnd, wparam);
                     LRESULT(0)
                 }
+                WM_CLOSE => {
+                    // Trip the cancel flag so any in-flight worker stops cooperatively *before*
+                    // WM_DESTROY frees AppState (and the Arcs it shares with the worker). The
+                    // worker may still post WM_APP_DONE to the now-dead window; that post fails
+                    // and is reclaimed by fix #2, so no leak. We don't join (would block the UI).
+                    if let Some(st) = state(hwnd) {
+                        st.cancel.store(true, Ordering::SeqCst);
+                    }
+                    let _ = DestroyWindow(hwnd);
+                    LRESULT(0)
+                }
                 WM_DESTROY => {
                     let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
                     if !ptr.is_null() {
@@ -263,6 +274,14 @@ mod app {
             0, 0, 0, 0, hwnd, None, hinst, None,
         )
         .unwrap_or_default();
+        // Lift the EDIT control's text cap (default ~32KB for multiline) so large DAT/XML/JSON
+        // documents aren't silently truncated. wparam 0 means "maximum".
+        let _ = SendMessageW(
+            edit,
+            windows::Win32::UI::Controls::EM_SETLIMITTEXT,
+            WPARAM(0),
+            LPARAM(0),
+        );
 
         let status = CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -402,7 +421,8 @@ mod app {
             ..Default::default()
         };
         if GetOpenFileNameW(&mut ofn).as_bool() {
-            Some(String::from_utf16_lossy(&buf).trim_end_matches('\0').to_string())
+            let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            Some(String::from_utf16_lossy(&buf[..end]))
         } else {
             None
         }
@@ -470,13 +490,20 @@ mod app {
                 Ok(AnalysisDone { record: analysis.record, xml, json, from_cache: analysis.from_cache })
             })();
 
-            let boxed = Box::new(outcome);
-            let _ = PostMessageW(
+            let ptr = Box::into_raw(Box::new(outcome));
+            // SAFETY: `ptr` is a live `Box<Result<AnalysisDone, String>>` matching what the
+            // WM_APP_DONE handler (`on_done`) reclaims. If the target window is already gone
+            // PostMessageW fails and would otherwise leak the heap payload, so we take it back.
+            if PostMessageW(
                 HWND(hwnd_i as *mut core::ffi::c_void),
                 WM_APP_DONE,
                 WPARAM(0),
-                LPARAM(Box::into_raw(boxed) as isize),
-            );
+                LPARAM(ptr as isize),
+            )
+            .is_err()
+            {
+                drop(Box::from_raw(ptr));
+            }
         });
     }
 
@@ -588,20 +615,25 @@ mod app {
 
     /// Reopen a catalogued build from cache (no re-analysis).
     unsafe fn open_recent(hwnd: HWND, idx: usize) {
-        let sha = match state(hwnd).and_then(|st| st.recent.get(idx).cloned()) {
-            Some(s) => s,
-            None => return,
+        // A single `&mut AppState`, scoped so it is dropped before `display_build` (which
+        // re-derives its own &mut); holding two simultaneously would be aliasing UB.
+        let loaded = {
+            let Some(st) = state(hwnd) else { return };
+            let Some(sha) = st.recent.get(idx).cloned() else { return };
+            if st.working || !ensure_analyzer(st) {
+                return;
+            }
+            st.analyzer.lock().unwrap().as_ref().and_then(|a| a.load_cached(&sha).ok().flatten())
         };
-        let Some(st) = state(hwnd) else { return };
-        if st.working || !ensure_analyzer(st) {
-            return;
-        }
-        let loaded = st.analyzer.lock().unwrap().as_ref().and_then(|a| a.load_cached(&sha).ok().flatten());
         match loaded {
             Some(analysis) => {
                 let xml = render::to_dat_xml(&analysis.record);
-                let json = render::to_json(&analysis.record).unwrap_or_default();
-                display_build(hwnd, AnalysisDone { record: analysis.record, xml, json, from_cache: true });
+                match render::to_json(&analysis.record) {
+                    Ok(json) => {
+                        display_build(hwnd, AnalysisDone { record: analysis.record, xml, json, from_cache: true });
+                    }
+                    Err(e) => set_status(hwnd, &format!("Failed to render record: {e}")),
+                }
             }
             None => set_status(hwnd, "Build not in cache anymore."),
         }
@@ -731,13 +763,20 @@ mod app {
     }
 
     fn post_service_result(hwnd_i: isize, text: String) {
+        let ptr = Box::into_raw(Box::new(text));
+        // SAFETY: `ptr` is a live `Box<String>` matching what `on_service_result` reclaims.
+        // If the window is gone PostMessageW fails; take the allocation back to avoid a leak.
         unsafe {
-            let _ = PostMessageW(
+            if PostMessageW(
                 HWND(hwnd_i as *mut core::ffi::c_void),
                 WM_APP_SERVICE,
                 WPARAM(0),
-                LPARAM(Box::into_raw(Box::new(text)) as isize),
-            );
+                LPARAM(ptr as isize),
+            )
+            .is_err()
+            {
+                drop(Box::from_raw(ptr));
+            }
         }
     }
 
@@ -837,6 +876,9 @@ mod app {
         if session.is_null() {
             return Err("WinHttpOpen failed".into());
         }
+        // Bound every phase so a hung server can't wedge the worker thread forever
+        // (resolve 10s, connect 10s, send 30s, receive 30s; milliseconds).
+        let _ = WinHttpSetTimeouts(session, 10_000, 10_000, 30_000, 30_000);
         let result = (|| {
             let conn = WinHttpConnect(session, PCWSTR(host_w.as_ptr()), port, 0);
             if conn.is_null() {

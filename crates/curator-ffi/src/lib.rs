@@ -232,18 +232,18 @@ impl Engine {
         cancel: Option<Arc<CancelHandle>>,
     ) -> Result<AnalysisSummary, CuratorError> {
         let observer = Arc::new(ListenerObserver { listener, cancel });
-        let analysis = self.inner.lock().unwrap().analyze(&path, observer)?;
+        let analysis = self.inner.lock().unwrap_or_else(|e| e.into_inner()).analyze(&path, observer)?;
         build_summary(&analysis)
     }
 
     /// Number of builds in the local catalog.
     pub fn catalog_size(&self) -> Result<u64, CuratorError> {
-        Ok(self.inner.lock().unwrap().catalog_size()?)
+        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).catalog_size()?)
     }
 
     /// The most recently analyzed builds, newest first.
     pub fn recent_builds(&self, limit: u32) -> Result<Vec<CatalogEntry>, CuratorError> {
-        let rows = self.inner.lock().unwrap().recent_builds(limit)?;
+        let rows = self.inner.lock().unwrap_or_else(|e| e.into_inner()).recent_builds(limit)?;
         Ok(rows
             .into_iter()
             .map(|r| CatalogEntry {
@@ -259,7 +259,7 @@ impl Engine {
 
     /// Reload a catalogued build from cache by sha256 (no adapter run). `None` if absent.
     pub fn load_build(&self, sha256: String) -> Result<Option<AnalysisSummary>, CuratorError> {
-        match self.inner.lock().unwrap().load_cached(&sha256)? {
+        match self.inner.lock().unwrap_or_else(|e| e.into_inner()).load_cached(&sha256)? {
             Some(analysis) => Ok(Some(build_summary(&analysis)?)),
             None => Ok(None),
         }
@@ -270,6 +270,6 @@ impl Engine {
     pub fn export_jsonl(&self, out_path: String) -> Result<u64, CuratorError> {
         let file = std::fs::File::create(&out_path)
             .map_err(|e| CuratorError::Failed { message: format!("creating {out_path}: {e}") })?;
-        Ok(self.inner.lock().unwrap().export_jsonl(std::io::BufWriter::new(file))?)
+        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).export_jsonl(std::io::BufWriter::new(file))?)
     }
 }
