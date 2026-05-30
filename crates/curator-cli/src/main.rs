@@ -75,19 +75,18 @@ fn main() -> Result<()> {
         Command::Stats => {
             println!("builds in catalog: {}", analyzer.catalog_size()?);
         }
-        Command::Export { out } => {
-            let n = match &out {
-                Some(p) => {
-                    let f = std::fs::File::create(p)
-                        .with_context(|| format!("creating {}", p.display()))?;
-                    let n = analyzer.export_jsonl(std::io::BufWriter::new(f))?;
-                    eprintln!("exported {n} builds -> {}", p.display());
-                    n
-                }
-                None => analyzer.export_jsonl(std::io::stdout().lock())?,
-            };
-            let _ = n;
-        }
+        Command::Export { out } => match &out {
+            Some(p) => {
+                let f = std::fs::File::create(p)
+                    .with_context(|| format!("creating {}", p.display()))?;
+                let n = analyzer.export_jsonl(std::io::BufWriter::new(f))?;
+                eprintln!("exported {n} builds -> {}", p.display());
+            }
+            None => {
+                let n = analyzer.export_jsonl(std::io::stdout().lock())?;
+                eprintln!("exported {n} builds");
+            }
+        },
         Command::Analyze { files, format, out } => {
             let total = files.len() as u64;
             for (i, path) in files.iter().enumerate() {

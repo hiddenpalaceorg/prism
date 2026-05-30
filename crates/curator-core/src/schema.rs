@@ -120,10 +120,12 @@ pub struct Exe {
 /// independent of names, layout, order, and image container.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Composites {
-    /// Over all files (strict).
-    pub content_hash: String,
+    /// Over all files (strict). `None` when no file had a decodable content hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
     /// Over all files except ignored junk (`.nfo`/`.diz`/…); tolerant of cosmetic diffs.
-    pub filtered_content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filtered_content_hash: Option<String>,
     /// md5 of the boot executable, when identified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hash_exe: Option<String>,
@@ -216,10 +218,10 @@ pub struct ExeFp {
     pub func_hashes: Vec<String>,
 }
 
-/// Tier-3 weighted-MinHash sketch over the chunk set (size/IDF-aware server-side).
+/// Tier-3 MinHash sketch over the chunk set (size/IDF-aware server-side).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sketch {
-    pub kind: String, // e.g. "weighted-minhash"
+    pub kind: String, // e.g. "minhash-v1"
     pub k: u32,
     #[serde(with = "u64_str")]
     pub seed: u64,

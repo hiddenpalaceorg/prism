@@ -25,12 +25,16 @@ pub fn to_dat_xml(record: &BuildRecord) -> String {
         ("sha1", img.sha1.clone()),
         ("sha256", img.sha256.clone()),
     ];
-    attrs.push(("content_hash", record.composites.content_hash.clone()));
-    attrs.push(("filtered_content_hash", record.composites.filtered_content_hash.clone()));
-    write_open(&mut s, 1, "image", &attrs, false);
+    if let Some(ch) = &record.composites.content_hash {
+        attrs.push(("content_hash", ch.clone()));
+    }
+    if let Some(fch) = &record.composites.filtered_content_hash {
+        attrs.push(("filtered_content_hash", fch.clone()));
+    }
+    write_open(&mut s, 1, "image", &attrs);
 
     // <info>
-    write_open(&mut s, 2, "info", &[], false);
+    write_open(&mut s, 2, "info", &[]);
     let info = &record.info;
     let mut sys = vec![("name", info.system.clone())];
     if let Some(id) = &info.system_identifier {
@@ -76,7 +80,7 @@ pub fn to_dat_xml(record: &BuildRecord) -> String {
     write_close(&mut s, 2, "info");
 
     // <contents>
-    write_open(&mut s, 2, "contents", &[], false);
+    write_open(&mut s, 2, "contents", &[]);
     for node in &record.contents {
         write_node(&mut s, 3, node);
     }
@@ -102,7 +106,7 @@ fn write_node(s: &mut String, indent: usize, node: &Node) {
             if children.is_empty() {
                 write_empty(s, indent, "directory", &a);
             } else {
-                write_open(s, indent, "directory", &a, false);
+                write_open(s, indent, "directory", &a);
                 for c in children {
                     write_node(s, indent + 1, c);
                 }
@@ -153,7 +157,7 @@ fn write_attrs(s: &mut String, attrs: &[(&str, String)]) {
     }
 }
 
-fn write_open(s: &mut String, level: usize, tag: &str, attrs: &[(&str, String)], _empty: bool) {
+fn write_open(s: &mut String, level: usize, tag: &str, attrs: &[(&str, String)]) {
     indent(s, level);
     write!(s, "<{tag}").ok();
     write_attrs(s, attrs);
