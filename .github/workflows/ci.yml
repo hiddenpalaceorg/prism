@@ -83,7 +83,7 @@ jobs:
           cp dl/curator-gui-win-*/curator-gui-win.exe "out/Curator-win-${token}.exe"
           cp dl/Curator-macos-*/Curator-app.zip        "out/Curator-mac-${token}.zip"
           ls -la out
-      - name: publish per-commit prerelease (direct downloads)
+      - name: publish per-commit draft release (hidden from /releases, no git tag)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -91,13 +91,21 @@ jobs:
           set -euo pipefail
           tag="ci-${GITHUB_SHA:0:8}"
           title="CI build ${GITHUB_SHA:0:8} (${GITHUB_REF_NAME})"
-          notes="Automated build of ${GITHUB_SHA} on \`${GITHUB_REF_NAME}\`. Prerelease, unsigned/ad-hoc-signed."
-          # Create the release if new, otherwise just (re)upload the assets.
-          gh release create "$tag" out/* --target "$GITHUB_SHA" --title "$title" --notes "$notes" --prerelease \
+          notes="Automated build of ${GITHUB_SHA} on \`${GITHUB_REF_NAME}\`. Draft, unsigned/ad-hoc-signed."
+          # --draft: not listed publicly and pushes no git tag (the tag name is just a
+          # label on the draft). Create if new, else (re)upload assets to the existing draft.
+          gh release create "$tag" out/* --target "$GITHUB_SHA" --title "$title" --notes "$notes" --draft \
             || gh release upload "$tag" out/* --clobber
-          echo "### Downloadable builds" >> "$GITHUB_STEP_SUMMARY"
-          gh release view "$tag" --json assets \
-            -q '.assets[] | "- [\(.name)](\(.url))"' >> "$GITHUB_STEP_SUMMARY"
+          url=$(gh release view "$tag" --json url -q .url)
+          {
+            echo "### Draft build — not listed on /releases, sign-in required"
+            echo "Draft page: $url"
+            echo ""
+            echo "Assets:"
+            gh release view "$tag" --json assets -q '.assets[] | "- \(.name)"'
+            echo ""
+            echo "Download: \`gh release download $tag\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   web:
     name: web (tsc + tests)
