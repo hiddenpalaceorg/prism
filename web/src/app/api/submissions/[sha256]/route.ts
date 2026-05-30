@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { submissionStatus, setSubmissionStatus } from "@/lib/queries";
 import { ingestRecord } from "@/lib/ingest";
+import { isModerator, moderationToken } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,11 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
 // POST /api/submissions/<sha256> { action: "accept" | "reject" } — moderate.
 // Accept ingests the stored record into the catalog, then marks it accepted.
 export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
+  if (!isModerator(request)) {
+    return moderationToken()
+      ? Response.json({ error: "unauthorized" }, { status: 401 })
+      : Response.json({ error: "moderation disabled (set MODERATION_TOKEN)" }, { status: 403 });
+  }
   const { sha256 } = await ctx.params;
   let action: string | undefined;
   try {
