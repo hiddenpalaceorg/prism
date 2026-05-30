@@ -7,7 +7,7 @@
 
 import fs from "node:fs";
 import pg from "pg";
-import { ingestRecord } from "../src/lib/ingest";
+import { ingestRecordTx } from "../src/lib/ingest";
 import type { BuildRecord } from "../src/lib/types";
 
 const bundle = process.argv[2];
@@ -17,19 +17,18 @@ if (!bundle) {
 }
 
 async function main() {
-  const client = new pg.Client({
+  const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL || "postgres:///curator_test",
   });
-  await client.connect();
   let n = 0;
   try {
     const lines = fs.readFileSync(bundle, "utf8").split("\n").filter((l) => l.trim());
     for (const line of lines) {
-      await ingestRecord(client, JSON.parse(line) as BuildRecord);
+      await ingestRecordTx(pool, JSON.parse(line) as BuildRecord);
       n++;
     }
   } finally {
-    await client.end();
+    await pool.end();
   }
   console.log(`ingested ${n} builds`);
 }

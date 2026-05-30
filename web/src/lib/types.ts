@@ -9,8 +9,8 @@ export interface ImageInfo {
 }
 
 export interface Composites {
-  content_hash: string;
-  filtered_content_hash: string;
+  content_hash?: string;
+  filtered_content_hash?: string;
   hash_exe?: string;
   incomplete_files?: number;
 }

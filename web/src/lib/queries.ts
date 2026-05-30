@@ -119,9 +119,11 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
   // A TLSH forest would index this at scale.
   if (q.tlsh) {
     const r = await pool.query(
+      // Cap the linear TLSH scan to bound work on large corpora.
       `SELECT e.build_sha256 AS sha256, b.name, b.system, e.tlsh
        FROM exe_fp e JOIN builds b ON b.sha256=e.build_sha256
-       WHERE e.tlsh IS NOT NULL AND e.build_sha256<>$1`,
+       WHERE e.tlsh IS NOT NULL AND e.build_sha256<>$1
+       LIMIT 5000`,
       [exclude]
     );
     out.tier5_tlsh = r.rows
@@ -279,6 +281,6 @@ export async function setSubmissionStatus(
     `UPDATE submission_queue SET status=$2, reviewed_at=now() WHERE sha256=$1 RETURNING record`,
     [sha256, status]
   );
-  if (r.rowCount === 0) return null;
+  if (!r.rowCount) return null;
   return r.rows[0].record as BuildRecord;
 }

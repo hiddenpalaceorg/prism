@@ -22,8 +22,8 @@ CREATE TABLE builds (
     size                  BIGINT NOT NULL,
     md5                   TEXT NOT NULL,
     sha1                  TEXT NOT NULL,
-    content_hash          TEXT NOT NULL,            -- Tier 1
-    filtered_content_hash TEXT NOT NULL,            -- Tier 1
+    content_hash          TEXT,                     -- Tier 1 (NULL when no file hashes)
+    filtered_content_hash TEXT,                     -- Tier 1 (NULL when no file hashes)
     file_count            BIGINT NOT NULL,
     total_size            BIGINT NOT NULL,
     max_depth             INT NOT NULL DEFAULT 0,

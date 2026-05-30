@@ -3,6 +3,7 @@ import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { getBuild, findSimilar, findByEmbedding } from "@/lib/queries";
 import { embed, toPgVector } from "@/lib/embed";
+import { isSha256 } from "@/lib/validate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export const dynamic = "force-dynamic";
 // (same fusion as /api/similarity, computed from the stored record).
 export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await ctx.params;
+  if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
   const pool = getPool();
 
   const build = await getBuild(pool, sha256);

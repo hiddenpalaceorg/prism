@@ -7,7 +7,23 @@ const MASK63 = (1n << 63n) - 1n;
 /** Stable 63-bit id from a hex content hash (for the Tier-2 file-hash set). */
 export function hexToId63(hex?: string | null): bigint | null {
   if (!hex) return null;
+  if (!/^[0-9a-fA-F]+$/.test(hex)) return null;
   return BigInt("0x" + hex.slice(0, 16)) & MASK63;
+}
+
+const U64_MAX = (1n << 64n) - 1n;
+
+/** Parse an untrusted u64 value (decimal string/number); null if not a valid u64. */
+export function parseU64(v: unknown): bigint | null {
+  if (typeof v === "number") {
+    if (!Number.isInteger(v) || v < 0) return null;
+    return BigInt(v);
+  }
+  if (typeof v === "string" && /^\d+$/.test(v)) {
+    const b = BigInt(v);
+    return b <= U64_MAX ? b : null;
+  }
+  return null;
 }
 
 /** Postgres BIGINT is signed; reinterpret a u64 bit pattern as i64. */
@@ -101,9 +117,14 @@ export function deriveQueryFeatures(rec: BuildRecord): QueryFeatures {
   let minhash: string[] | null = null;
   let bands: string[] | null = null;
   if (rec.sketch?.values?.length) {
-    const mh = rec.sketch.values.map((v) => toSigned64(BigInt(v)));
-    minhash = mh.map(String);
-    bands = lshBands(mh).map(String);
+    const mh = rec.sketch.values
+      .map(parseU64)
+      .filter((x): x is bigint => x !== null)
+      .map(toSigned64);
+    if (mh.length) {
+      minhash = mh.map(String);
+      bands = lshBands(mh).map(String);
+    }
   }
   return {
     sha256: rec.image?.sha256 ?? null,
