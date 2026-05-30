@@ -32,18 +32,28 @@ mod app {
     use curator_core::{render, Analyzer, BuildRecord, Config, Event, Node, ProgressObserver};
 
     use windows::core::{w, PCWSTR, PWSTR, Result};
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::Graphics::Gdi::{GetStockObject, HBRUSH, DEFAULT_GUI_FONT};
     use windows::Win32::Networking::WinHttp::*;
     use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
     use windows::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW};
     use windows::Win32::UI::Controls::{
-        InitCommonControlsEx, ICC_BAR_CLASSES, ICC_PROGRESS_CLASS, ICC_TREEVIEW_CLASSES,
-        INITCOMMONCONTROLSEX, NMHDR, NMTREEVIEWW, PBM_SETPOS, PBM_SETRANGE32, TVINSERTSTRUCTW,
-        TVINSERTSTRUCTW_0, TVITEMW, TVIF_PARAM, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM,
-        TVM_INSERTITEMW, TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
+        InitCommonControlsEx, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_PROGRESS_CLASS,
+        ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCOLUMNW, LVGA_HEADER_LEFT,
+        LVGF_ALIGN, LVGF_GROUPID, LVGF_HEADER, LVGROUP, LVITEMW, LVCF_SUBITEM, LVCF_TEXT,
+        LVCF_WIDTH, LVIF_GROUPID, LVIF_TEXT, LVM_DELETEALLITEMS, LVM_ENABLEGROUPVIEW,
+        LVM_GETITEMTEXTW, LVM_INSERTCOLUMNW, LVM_INSERTGROUP, LVM_INSERTITEMW, LVM_REMOVEALLGROUPS,
+        LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMW, LVS_EX_DOUBLEBUFFER,
+        LVS_EX_FULLROWSELECT, LVS_EX_LABELTIP, LVS_NOCOLUMNHEADER, LVS_REPORT, NMHDR, NMITEMACTIVATE,
+        NMTREEVIEWW, NM_DBLCLK, PBM_SETPOS, PBM_SETRANGE32, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0,
+        TVITEMW, TVIF_PARAM, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM, TVM_INSERTITEMW,
+        TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
     };
     use windows::Win32::UI::Shell::{
         DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, SetWindowSubclass,
@@ -64,13 +74,21 @@ mod app {
     const IDM_RECENT_BASE: usize = 2000;
     const MAX_RECENT: u32 = 15;
 
-    /// What the right-hand document pane is showing.
+    /// What the right-hand document pane is showing. Overview/Selection render in the
+    /// grouped ListView; Xml/Json render as text in the EDIT control.
     #[derive(Clone, Copy, PartialEq)]
     enum DocView {
         Overview,
         Selection,
         Xml,
         Json,
+    }
+
+    /// A titled group of key/value rows — one ListView group with its items.
+    #[derive(Clone)]
+    struct Section {
+        title: String,
+        rows: Vec<(String, String)>,
     }
 
     const WM_APP_PROGRESS: u32 = WM_APP + 1;
@@ -104,6 +122,8 @@ mod app {
         analyzer: Arc<Mutex<Option<Analyzer>>>,
         tree: HWND,
         edit: HWND,
+        /// Grouped key/value view for Overview + per-file Selection (overlaps `edit`).
+        list: HWND,
         status: HWND,
         progress: HWND,
         events: Arc<Mutex<VecDeque<UiEvent>>>,
@@ -114,12 +134,12 @@ mod app {
         last_json: Option<String>,
         /// Document-pane content, by view. `view` selects which one is shown.
         view: DocView,
-        doc_overview: String,
+        doc_overview: Vec<Section>,
         doc_xml: String,
-        /// Per-file metadata text, indexed by the tree item's lParam.
-        node_details: Vec<String>,
-        /// Rendered detail for the currently selected tree node.
-        selected_detail: String,
+        /// Per-file metadata, indexed by the tree item's lParam.
+        node_sections: Vec<Section>,
+        /// Sections for the currently selected tree node.
+        selected_sections: Vec<Section>,
         /// Web service base URL (CURATOR_WEB_URL, default http://localhost:3001).
         web_url: String,
         /// The "Recent" submenu and the sha256s backing its items (by position).
@@ -200,7 +220,8 @@ mod app {
         unsafe {
             let _ = InitCommonControlsEx(&INITCOMMONCONTROLSEX {
                 dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
-                dwICC: ICC_TREEVIEW_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS,
+                dwICC: ICC_TREEVIEW_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS
+                    | ICC_LISTVIEW_CLASSES,
             });
 
             let hinstance = GetModuleHandleW(None)?;
@@ -346,6 +367,36 @@ mod app {
             LPARAM(0),
         );
 
+        // Grouped key/value view (overlaps `edit`; only one is visible at a time).
+        let list = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("SysListView32"),
+            PCWSTR::null(),
+            WINDOW_STYLE(child.0 | (LVS_REPORT | LVS_NOCOLUMNHEADER) as u32),
+            0, 0, 0, 0, hwnd, None, hinst, None,
+        )
+        .unwrap_or_default();
+        let _ = SendMessageW(
+            list,
+            LVM_SETEXTENDEDLISTVIEWSTYLE,
+            WPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as usize),
+            LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as isize),
+        );
+        let _ = SendMessageW(list, LVM_ENABLEGROUPVIEW, WPARAM(1), LPARAM(0));
+        // Two columns: field name (col 0, the item text) + value (col 1, subitem 1).
+        // Headers are hidden (LVS_NOCOLUMNHEADER); widths are finalized in layout().
+        for (idx, title, cx) in [(0i32, w!("Field"), 150i32), (1i32, w!("Value"), 360i32)] {
+            let mut col = LVCOLUMNW::default();
+            col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+            col.fmt = LVCFMT_LEFT;
+            col.cx = cx;
+            col.iSubItem = idx;
+            col.pszText = PWSTR(title.as_ptr() as *mut u16);
+            let _ = SendMessageW(list, LVM_INSERTCOLUMNW, WPARAM(idx as usize), LPARAM(&col as *const _ as isize));
+        }
+        // Hidden until a build loads; apply_view() reveals it for Overview/Selection.
+        let _ = ShowWindow(list, SW_HIDE);
+
         let status = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             w!("msctls_statusbar32"),
@@ -365,14 +416,14 @@ mod app {
         .unwrap_or_default();
 
         let font = GetStockObject(DEFAULT_GUI_FONT);
-        for h in [tree, edit, status] {
+        for h in [tree, edit, list, status] {
             SendMessageW(h, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
         }
 
         // Drag-and-drop: the panes cover the client area, so accept drops on them and
         // subclass them to forward WM_DROPFILES to the main window.
         DragAcceptFiles(hwnd, true);
-        for h in [tree, edit] {
+        for h in [tree, edit, list] {
             DragAcceptFiles(h, true);
             let _ = SetWindowSubclass(h, Some(drop_subclass), 1, 0);
         }
@@ -385,6 +436,7 @@ mod app {
             analyzer: Arc::new(Mutex::new(None)),
             tree,
             edit,
+            list,
             status,
             progress,
             events: Arc::new(Mutex::new(VecDeque::new())),
@@ -393,10 +445,10 @@ mod app {
             working: false,
             last_json: None,
             view: DocView::Overview,
-            doc_overview: String::new(),
+            doc_overview: Vec::new(),
             doc_xml: String::new(),
-            node_details: Vec::new(),
-            selected_detail: String::new(),
+            node_sections: Vec::new(),
+            selected_sections: Vec::new(),
             web_url: std::env::var("CURATOR_WEB_URL")
                 .unwrap_or_else(|_| "http://localhost:3001".to_string()),
             recent_menu,
@@ -446,8 +498,19 @@ mod app {
         let content_h = (h - STATUS_H - PROGRESS_H).max(0);
         let tree_w = (w as f32 * 0.38) as i32;
 
+        let pane_w = (w - tree_w).max(0);
         let _ = MoveWindow(st.tree, 0, 0, tree_w, content_h, true);
-        let _ = MoveWindow(st.edit, tree_w, 0, (w - tree_w).max(0), content_h, true);
+        let _ = MoveWindow(st.edit, tree_w, 0, pane_w, content_h, true);
+        let _ = MoveWindow(st.list, tree_w, 0, pane_w, content_h, true);
+        // Field column fixed; value column fills the rest (less the key column + scrollbar).
+        let key_w = 150;
+        let _ = SendMessageW(st.list, LVM_SETCOLUMNWIDTH, WPARAM(0), LPARAM(key_w as isize));
+        let _ = SendMessageW(
+            st.list,
+            LVM_SETCOLUMNWIDTH,
+            WPARAM(1),
+            LPARAM((pane_w - key_w - 24).max(80) as isize),
+        );
         let _ = MoveWindow(st.progress, 0, content_h, w, PROGRESS_H, true);
         let _ = MoveWindow(st.status, 0, content_h + PROGRESS_H, w, STATUS_H, true);
     }
@@ -647,56 +710,152 @@ mod app {
             done.record.image.sha256, done.record.info.system, done.record.structural.file_count
         );
         if let Some(st) = state(hwnd) {
-            st.node_details = populate_tree(st.tree, &done.record);
+            st.node_sections = populate_tree(st.tree, &done.record);
             st.last_json = Some(done.json.clone());
             st.doc_xml = done.xml.replace('\n', "\r\n");
-            st.doc_overview = render_overview(&done.record);
-            st.selected_detail = String::new();
+            st.doc_overview = overview_sections(&done.record);
+            st.selected_sections = Vec::new();
             st.view = DocView::Overview;
         }
-        refresh_doc(hwnd);
+        apply_view(hwnd);
         set_status(hwnd, &msg);
     }
 
-    /// Push the active view's text into the document pane.
-    unsafe fn refresh_doc(hwnd: HWND) {
+    /// Show the control for the active view (ListView for Overview/Selection, EDIT for
+    /// Xml/Json) and load its content.
+    unsafe fn apply_view(hwnd: HWND) {
         let Some(st) = state(hwnd) else { return };
-        let text = match st.view {
-            DocView::Overview => st.doc_overview.clone(),
-            DocView::Selection => st.selected_detail.clone(),
-            DocView::Xml => st.doc_xml.clone(),
-            DocView::Json => st.last_json.clone().unwrap_or_default(),
-        };
-        let w = wide(&text);
-        let _ = SetWindowTextW(st.edit, PCWSTR(w.as_ptr()));
+        let grouped = matches!(st.view, DocView::Overview | DocView::Selection);
+        let _ = ShowWindow(st.list, if grouped { SW_SHOW } else { SW_HIDE });
+        let _ = ShowWindow(st.edit, if grouped { SW_HIDE } else { SW_SHOW });
+        match st.view {
+            DocView::Overview => fill_list(st.list, &st.doc_overview),
+            DocView::Selection => fill_list(st.list, &st.selected_sections),
+            DocView::Xml | DocView::Json => {
+                let text = if matches!(st.view, DocView::Xml) {
+                    st.doc_xml.clone()
+                } else {
+                    st.last_json.clone().unwrap_or_default()
+                };
+                let w = wide(&text);
+                let _ = SetWindowTextW(st.edit, PCWSTR(w.as_ptr()));
+            }
+        }
     }
 
     unsafe fn set_view(hwnd: HWND, view: DocView) {
         if let Some(st) = state(hwnd) {
             st.view = view;
         }
-        refresh_doc(hwnd);
+        apply_view(hwnd);
     }
 
-    /// Tree-selection handler: show the picked node's metadata in the document pane.
+    /// Clear and repopulate the grouped ListView from `sections`.
+    unsafe fn fill_list(list: HWND, sections: &[Section]) {
+        let _ = SendMessageW(list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+        let _ = SendMessageW(list, LVM_REMOVEALLGROUPS, WPARAM(0), LPARAM(0));
+        let mut row_index = 0i32;
+        for (gid, sec) in sections.iter().enumerate() {
+            let mut htext = wide(&sec.title);
+            let mut grp = LVGROUP::default();
+            grp.cbSize = std::mem::size_of::<LVGROUP>() as u32;
+            grp.mask = LVGF_HEADER | LVGF_GROUPID | LVGF_ALIGN;
+            grp.pszHeader = PWSTR(htext.as_mut_ptr());
+            grp.cchHeader = sec.title.encode_utf16().count() as i32;
+            grp.iGroupId = gid as i32;
+            grp.uAlign = LVGA_HEADER_LEFT;
+            let _ = SendMessageW(
+                list,
+                LVM_INSERTGROUP,
+                WPARAM(usize::MAX),
+                LPARAM(&grp as *const _ as isize),
+            );
+            for (key, value) in &sec.rows {
+                let mut kw = wide(key);
+                let mut item = LVITEMW::default();
+                item.mask = LVIF_TEXT | LVIF_GROUPID;
+                item.iItem = row_index;
+                item.iSubItem = 0;
+                item.pszText = PWSTR(kw.as_mut_ptr());
+                item.iGroupId = gid as i32;
+                let inserted =
+                    SendMessageW(list, LVM_INSERTITEMW, WPARAM(0), LPARAM(&item as *const _ as isize)).0
+                        as i32;
+                let mut vw = wide(value);
+                let mut sub = LVITEMW::default();
+                sub.mask = LVIF_TEXT;
+                sub.iItem = inserted;
+                sub.iSubItem = 1;
+                sub.pszText = PWSTR(vw.as_mut_ptr());
+                let _ = SendMessageW(list, LVM_SETITEMW, WPARAM(0), LPARAM(&sub as *const _ as isize));
+                row_index = inserted + 1;
+            }
+        }
+    }
+
+    /// Notifications from child controls: tree selection → show that node's metadata;
+    /// double-click a ListView row → copy its value to the clipboard.
     unsafe fn on_notify(hwnd: HWND, lparam: LPARAM) {
         let nmhdr = &*(lparam.0 as *const NMHDR);
         let (from, code) = (nmhdr.hwndFrom, nmhdr.code);
-        let mut changed = false;
+        let mut selection_changed = false;
+        let mut copied: Option<String> = None;
         if let Some(st) = state(hwnd) {
             if from == st.tree && code == TVN_SELCHANGEDW {
                 let tv = &*(lparam.0 as *const NMTREEVIEWW);
                 let idx = tv.itemNew.lParam.0 as usize;
-                if let Some(detail) = st.node_details.get(idx) {
-                    st.selected_detail = detail.clone();
+                if let Some(sec) = st.node_sections.get(idx) {
+                    st.selected_sections = vec![sec.clone()];
                     st.view = DocView::Selection;
-                    changed = true;
+                    selection_changed = true;
+                }
+            } else if from == st.list && code == NM_DBLCLK as u32 {
+                let nia = &*(lparam.0 as *const NMITEMACTIVATE);
+                if nia.iItem >= 0 {
+                    copied = Some(list_value(st.list, nia.iItem));
                 }
             }
         }
-        if changed {
-            refresh_doc(hwnd);
+        if selection_changed {
+            apply_view(hwnd);
         }
+        if let Some(value) = copied {
+            if !value.is_empty() {
+                copy_to_clipboard(hwnd, &value);
+                set_status(hwnd, "Copied value to clipboard.");
+            }
+        }
+    }
+
+    /// Read a ListView row's value column (subitem 1).
+    unsafe fn list_value(list: HWND, row: i32) -> String {
+        let mut buf = [0u16; 2048];
+        let mut item = LVITEMW::default();
+        item.iSubItem = 1;
+        item.pszText = PWSTR(buf.as_mut_ptr());
+        item.cchTextMax = buf.len() as i32;
+        let n = SendMessageW(list, LVM_GETITEMTEXTW, WPARAM(row as usize), LPARAM(&mut item as *mut _ as isize)).0;
+        String::from_utf16_lossy(&buf[..(n as usize).min(buf.len())])
+    }
+
+    unsafe fn copy_to_clipboard(hwnd: HWND, text: &str) {
+        let wtext: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        if OpenClipboard(hwnd).is_err() {
+            return;
+        }
+        let _ = EmptyClipboard();
+        if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, wtext.len() * 2) {
+            let p = GlobalLock(hmem);
+            if !p.is_null() {
+                std::ptr::copy_nonoverlapping(wtext.as_ptr(), p as *mut u16, wtext.len());
+                let _ = GlobalUnlock(hmem);
+                // CF_UNICODETEXT = 13. On success the clipboard owns the memory.
+                if SetClipboardData(13u32, HANDLE(hmem.0)).is_err() {
+                    let _ = GlobalUnlock(hmem); // best-effort; free not exposed here
+                }
+            }
+        }
+        let _ = CloseClipboard();
     }
 
     /// Build the analyzer (catalog + cache) on demand. Returns false if it can't open.
@@ -793,24 +952,24 @@ mod app {
         DefSubclassProc(hwnd, msg, wparam, lparam)
     }
 
-    /// Fill the tree and return per-node detail text, indexed by each item's lParam.
-    unsafe fn populate_tree(tree: HWND, record: &BuildRecord) -> Vec<String> {
+    /// Fill the tree and return per-node metadata sections, indexed by each item's lParam.
+    unsafe fn populate_tree(tree: HWND, record: &BuildRecord) -> Vec<Section> {
         let _ = SendMessageW(tree, TVM_DELETEITEM, WPARAM(0), LPARAM(TVI_ROOT.0));
-        let mut details = Vec::new();
+        let mut sections = Vec::new();
         for node in &record.contents {
-            insert_node(tree, TVI_ROOT, node, &mut details);
+            insert_node(tree, TVI_ROOT, node, &mut sections);
         }
-        details
+        sections
     }
 
     unsafe fn insert_node(
         tree: HWND,
         parent: windows::Win32::UI::Controls::HTREEITEM,
         node: &Node,
-        details: &mut Vec<String>,
+        sections: &mut Vec<Section>,
     ) {
-        let idx = details.len();
-        details.push(render_node_detail(node));
+        let idx = sections.len();
+        sections.push(node_section(node));
         let mut label = wide(node.name());
         let mut item = TVITEMW::default();
         item.mask = TVIF_TEXT | TVIF_PARAM;
@@ -825,7 +984,7 @@ mod app {
         let handle = windows::Win32::UI::Controls::HTREEITEM(lr.0);
         if let Node::Dir { children, .. } = node {
             for child in children {
-                insert_node(tree, handle, child, details);
+                insert_node(tree, handle, child, sections);
             }
         }
     }
@@ -853,18 +1012,17 @@ mod app {
         }
     }
 
-    /// Per-file metadata table shown when a tree node is selected.
-    fn render_node_detail(node: &Node) -> String {
-        let mut s = String::new();
-        let mut row = |label: &str, val: &str| {
-            if !val.is_empty() {
-                s.push_str(&format!("{label:<10}{val}\r\n"));
+    /// Per-file metadata shown (as one ListView group) when a tree node is selected.
+    fn node_section(node: &Node) -> Section {
+        let mut rows: Vec<(String, String)> = Vec::new();
+        let mut row = |k: &str, v: &str| {
+            if !v.is_empty() {
+                rows.push((k.to_string(), v.to_string()));
             }
         };
-        match node {
+        let title = match node {
             Node::Dir { name, date, size, children } => {
                 row("Name", name);
-                row("Type", "Directory");
                 if let Some(d) = date {
                     row("Date", d);
                 }
@@ -872,10 +1030,10 @@ mod app {
                     row("Size", &human_size(*sz));
                 }
                 row("Items", &children.len().to_string());
+                "Directory"
             }
             Node::File { name, date, size, md5, sha1, sha256, unreadable } => {
                 row("Name", name);
-                row("Type", "File");
                 if let Some(sz) = size {
                     row("Size", &human_size(*sz));
                 }
@@ -894,121 +1052,108 @@ mod app {
                 if let Some(h) = sha256 {
                     row("SHA-256", h);
                 }
+                "File"
+            }
+        };
+        Section { title: title.to_string(), rows }
+    }
+
+    /// Build a section if it has any rows (keeps empty groups out of the ListView).
+    fn section(title: &str, rows: Vec<(String, String)>) -> Option<Section> {
+        if rows.is_empty() {
+            None
+        } else {
+            Some(Section { title: title.to_string(), rows })
+        }
+    }
+
+    /// Collect non-empty `(key, value)` rows; `opt` skips absent fields.
+    struct Rows(Vec<(String, String)>);
+    impl Rows {
+        fn new() -> Self {
+            Rows(Vec::new())
+        }
+        fn add(&mut self, k: &str, v: impl Into<String>) {
+            let v = v.into();
+            if !v.is_empty() {
+                self.0.push((k.to_string(), v));
             }
         }
-        s
+        fn opt(&mut self, k: &str, v: &Option<String>) {
+            if let Some(v) = v {
+                self.add(k, v.clone());
+            }
+        }
     }
 
     /// Formatted build metadata — the readable counterpart to the raw DAT/XML, shown on load.
-    fn render_overview(record: &BuildRecord) -> String {
-        let mut s = String::new();
-        let section = |s: &mut String, title: &str| {
-            s.push_str(&format!("\r\n── {title} {}\r\n", "─".repeat(38_usize.saturating_sub(title.len()))));
-        };
-        let row = |s: &mut String, label: &str, val: &str| {
-            if !val.is_empty() {
-                s.push_str(&format!("  {label:<16}{val}\r\n"));
-            }
-        };
+    fn overview_sections(record: &BuildRecord) -> Vec<Section> {
+        let mut out = Vec::new();
 
         let img = &record.image;
-        s.push_str(&format!("── Image {}\r\n", "─".repeat(33)));
-        row(&mut s, "Name", &img.name);
-        row(&mut s, "Size", &human_size(img.size));
-        row(&mut s, "MD5", &img.md5);
-        row(&mut s, "SHA-1", &img.sha1);
-        row(&mut s, "SHA-256", &img.sha256);
+        let mut r = Rows::new();
+        r.add("Name", img.name.clone());
+        r.add("Size", human_size(img.size));
+        r.add("MD5", img.md5.clone());
+        r.add("SHA-1", img.sha1.clone());
+        r.add("SHA-256", img.sha256.clone());
+        out.extend(section("Image", r.0));
 
         let info = &record.info;
-        section(&mut s, "Disc");
-        row(&mut s, "System", &info.system);
-        if let Some(v) = &info.system_identifier {
-            row(&mut s, "System ID", v);
-        }
-        if let Some(v) = &info.disc_type {
-            row(&mut s, "Disc type", v);
-        }
+        let mut r = Rows::new();
+        r.add("System", info.system.clone());
+        r.opt("System ID", &info.system_identifier);
+        r.opt("Disc type", &info.disc_type);
+        out.extend(section("Disc", r.0));
 
         let h = &info.header;
         if !h.is_empty() {
-            section(&mut s, "Header");
-            if let Some(v) = &h.title {
-                row(&mut s, "Title", v);
-            }
-            if let Some(v) = &h.product_number {
-                row(&mut s, "Product No.", v);
-            }
-            if let Some(v) = &h.product_version {
-                row(&mut s, "Version", v);
-            }
-            if let Some(v) = &h.release_date {
-                row(&mut s, "Release date", &pretty_date(v));
-            }
-            if let Some(v) = &h.maker_id {
-                row(&mut s, "Maker", v);
-            }
-            if let Some(v) = &h.device_info {
-                row(&mut s, "Device", v);
-            }
-            if let Some(v) = &h.regions {
-                row(&mut s, "Regions", v);
-            }
+            let mut r = Rows::new();
+            r.opt("Title", &h.title);
+            r.opt("Product No.", &h.product_number);
+            r.opt("Version", &h.product_version);
+            r.add("Release date", h.release_date.as_deref().map(pretty_date).unwrap_or_default());
+            r.opt("Maker", &h.maker_id);
+            r.opt("Device", &h.device_info);
+            r.opt("Regions", &h.regions);
+            out.extend(section("Header", r.0));
         }
 
         let vol = &info.volume;
         if !vol.is_empty() {
-            section(&mut s, "Volume");
-            if let Some(v) = &vol.identifier {
-                row(&mut s, "Identifier", v);
-            }
-            if let Some(v) = &vol.set_identifier {
-                row(&mut s, "Set identifier", v);
-            }
-            if let Some(v) = &vol.creation_date {
-                row(&mut s, "Created", v);
-            }
-            if let Some(v) = &vol.modification_date {
-                row(&mut s, "Modified", v);
-            }
+            let mut r = Rows::new();
+            r.opt("Identifier", &vol.identifier);
+            r.opt("Set identifier", &vol.set_identifier);
+            r.opt("Created", &vol.creation_date);
+            r.opt("Modified", &vol.modification_date);
+            out.extend(section("Volume", r.0));
         }
 
         if let Some(e) = &info.exe {
-            section(&mut s, "Boot executable");
-            row(&mut s, "Filename", &e.filename);
-            if let Some(v) = &e.date {
-                row(&mut s, "Date", v);
-            }
+            let mut r = Rows::new();
+            r.add("Filename", e.filename.clone());
+            r.opt("Date", &e.date);
+            out.extend(section("Boot executable", r.0));
         }
 
         let c = &record.composites;
-        if c.content_hash.is_some()
-            || c.filtered_content_hash.is_some()
-            || c.hash_exe.is_some()
-            || c.incomplete_files > 0
-        {
-            section(&mut s, "Content");
-            if let Some(v) = &c.content_hash {
-                row(&mut s, "Content hash", v);
-            }
-            if let Some(v) = &c.filtered_content_hash {
-                row(&mut s, "Filtered hash", v);
-            }
-            if let Some(v) = &c.hash_exe {
-                row(&mut s, "Boot exe hash", v);
-            }
-            if let Some(m) = &c.most_recent_file {
-                row(&mut s, "Most recent", &m.path);
-            }
-            if c.incomplete_files > 0 {
-                row(&mut s, "Incomplete", &c.incomplete_files.to_string());
-            }
+        let mut r = Rows::new();
+        r.opt("Content hash", &c.content_hash);
+        r.opt("Filtered hash", &c.filtered_content_hash);
+        r.opt("Boot exe hash", &c.hash_exe);
+        if let Some(m) = &c.most_recent_file {
+            r.add("Most recent", m.path.clone());
         }
+        if c.incomplete_files > 0 {
+            r.add("Incomplete", c.incomplete_files.to_string());
+        }
+        out.extend(section("Content", r.0));
 
         let st = &record.structural;
-        section(&mut s, "Structure");
-        row(&mut s, "Files", &st.file_count.to_string());
-        row(&mut s, "Total size", &human_size(st.total_size));
-        row(&mut s, "Max depth", &st.max_depth.to_string());
+        let mut r = Rows::new();
+        r.add("Files", st.file_count.to_string());
+        r.add("Total size", human_size(st.total_size));
+        r.add("Max depth", st.max_depth.to_string());
         if !st.ext_histogram.is_empty() {
             let mut exts: Vec<_> = st.ext_histogram.iter().collect();
             exts.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
@@ -1018,10 +1163,11 @@ mod app {
                 .map(|(k, v)| format!("{}×{}", if k.is_empty() { "(none)" } else { k }, v))
                 .collect::<Vec<_>>()
                 .join(", ");
-            row(&mut s, "Top extensions", &top);
+            r.add("Top extensions", top);
         }
+        out.extend(section("Structure", r.0));
 
-        s
+        out
     }
 
     // ---- modal error dialog (selectable, copyable) ----

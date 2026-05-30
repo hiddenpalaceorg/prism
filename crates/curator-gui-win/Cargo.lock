@@ -127,6 +127,7 @@ name = "curator-gui-win"
 version = "0.1.0"
 dependencies = [
  "curator-core",
+ "embed-manifest",
  "serde_json",
  "windows",
 ]
@@ -161,6 +162,12 @@ dependencies = [
  "redox_users",
  "windows-sys",
 ]
+
+[[package]]
+name = "embed-manifest"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94cdc65b1cf9e871453ce2f86f5aaec24ff2eaa36a1fa3e02e441dddc3613b99"
 
 [[package]]
 name = "fallible-iterator"
