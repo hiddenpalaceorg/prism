@@ -736,16 +736,175 @@ mod app {
         }
     }
 
+    // ---- modal error dialog (selectable, copyable) ----
+
+    struct ErrorState {
+        /// CRLF-normalized, NUL-terminated message for the read-only edit control.
+        text: Vec<u16>,
+        edit: HWND,
+        done: bool,
+    }
+
+    const IDC_ERR_COPY: usize = 110;
+    const IDC_ERR_CLOSE: usize = 111;
+    const EM_SETSEL_MSG: u32 = 0x00B1;
+    const WM_COPY_MSG: u32 = 0x0301;
+
     /// Show a dismissable modal error dialog (in addition to the status-bar note).
-    /// Adapter failures are often long multi-line tracebacks the status bar truncates.
-    unsafe fn error_box(hwnd: HWND, text: &str) {
-        let wtext = wide(text);
-        let _ = MessageBoxW(
-            hwnd,
-            PCWSTR(wtext.as_ptr()),
+    /// Adapter failures are often long multi-line tracebacks; a read-only multiline
+    /// edit control lets the user select and copy the text (Ctrl+C or "Copy all"),
+    /// which a plain MessageBox does not.
+    unsafe fn error_box(owner: HWND, text: &str) {
+        let Ok(hinstance) = GetModuleHandleW(None) else { return };
+        let class = w!("CuratorError");
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(error_proc),
+            hInstance: hinstance.into(),
+            lpszClassName: class,
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hbrBackground: HBRUSH(6 as *mut core::ffi::c_void),
+            ..Default::default()
+        };
+        RegisterClassW(&wc); // idempotent enough for a one-window app
+
+        let mut es = ErrorState {
+            text: wide(&text.replace("\r\n", "\n").replace('\n', "\r\n")),
+            edit: HWND::default(),
+            done: false,
+        };
+        let Ok(dlg) = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            class,
             w!("Curator — Analysis failed"),
-            MB_OK | MB_ICONERROR,
-        );
+            WS_POPUPWINDOW | WS_CAPTION | WS_THICKFRAME | WS_VISIBLE,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            560,
+            380,
+            owner,
+            None,
+            hinstance,
+            Some(&mut es as *mut ErrorState as *const core::ffi::c_void),
+        ) else {
+            return;
+        };
+
+        let _ = EnableWindow(owner, false);
+        let mut msg = MSG::default();
+        while !es.done && GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            if !IsDialogMessageW(dlg, &msg).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        let _ = EnableWindow(owner, true);
+        let _ = SetForegroundWindow(owner);
+        let _ = DestroyWindow(dlg);
+    }
+
+    extern "system" fn error_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        unsafe {
+            match msg {
+                WM_CREATE => {
+                    let cs = lparam.0 as *const CREATESTRUCTW;
+                    let es = (*cs).lpCreateParams as *mut ErrorState;
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, es as isize);
+                    let hinst = (*cs).hInstance;
+                    let edit_style = WS_CHILD
+                        | WS_VISIBLE
+                        | WS_BORDER
+                        | WS_VSCROLL
+                        | WINDOW_STYLE((ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL) as u32);
+                    let edit = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("EDIT"),
+                        PCWSTR::null(),
+                        edit_style,
+                        0, 0, 0, 0, hwnd, None, hinst, None,
+                    )
+                    .unwrap_or_default();
+                    let _ = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("BUTTON"),
+                        w!("Copy all"),
+                        WS_CHILD | WS_VISIBLE,
+                        0, 0, 0, 0, hwnd,
+                        HMENU(IDC_ERR_COPY as *mut core::ffi::c_void), hinst, None,
+                    );
+                    let _ = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("BUTTON"),
+                        w!("Close"),
+                        WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
+                        0, 0, 0, 0, hwnd,
+                        HMENU(IDC_ERR_CLOSE as *mut core::ffi::c_void), hinst, None,
+                    );
+                    let font = GetStockObject(DEFAULT_GUI_FONT);
+                    for child in child_windows(hwnd) {
+                        let _ = SendMessageW(child, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+                    }
+                    if let Some(es) = es.as_mut() {
+                        es.edit = edit;
+                        let _ = SetWindowTextW(edit, PCWSTR(es.text.as_ptr()));
+                    }
+                    LRESULT(0)
+                }
+                WM_SIZE => {
+                    if let Some(es) = (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut ErrorState).as_ref() {
+                        let w = (lparam.0 & 0xffff) as i32;
+                        let h = ((lparam.0 >> 16) & 0xffff) as i32;
+                        let (pad, btn_w, btn_h) = (10, 90, 26);
+                        let edit_h = (h - btn_h - 3 * pad).max(0);
+                        let _ = MoveWindow(es.edit, pad, pad, (w - 2 * pad).max(0), edit_h, true);
+                        let btn_y = h - btn_h - pad;
+                        let _ = MoveWindow(
+                            GetDlgItem(hwnd, IDC_ERR_CLOSE as i32).unwrap_or_default(),
+                            w - btn_w - pad, btn_y, btn_w, btn_h, true,
+                        );
+                        let _ = MoveWindow(
+                            GetDlgItem(hwnd, IDC_ERR_COPY as i32).unwrap_or_default(),
+                            w - 2 * btn_w - 2 * pad, btn_y, btn_w, btn_h, true,
+                        );
+                    }
+                    LRESULT(0)
+                }
+                WM_COMMAND => {
+                    let id = (wparam.0 & 0xffff) as usize;
+                    let es = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut ErrorState;
+                    if let Some(es) = es.as_mut() {
+                        match id {
+                            IDC_ERR_COPY => {
+                                // Select all, then copy the selection to the clipboard.
+                                let _ = SendMessageW(es.edit, EM_SETSEL_MSG, WPARAM(0), LPARAM(-1));
+                                let _ = SendMessageW(es.edit, WM_COPY_MSG, WPARAM(0), LPARAM(0));
+                            }
+                            // IDC_ERR_CLOSE, or IDOK/IDCANCEL synthesized by Enter/Esc.
+                            IDC_ERR_CLOSE | 1 | 2 => es.done = true,
+                            _ => {}
+                        }
+                    }
+                    LRESULT(0)
+                }
+                WM_CLOSE => {
+                    if let Some(es) = (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut ErrorState).as_mut() {
+                        es.done = true;
+                    }
+                    LRESULT(0)
+                }
+                _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+            }
+        }
+    }
+
+    /// Collect a window's immediate child controls (used to apply the shared GUI font).
+    unsafe fn child_windows(parent: HWND) -> Vec<HWND> {
+        let mut out = Vec::new();
+        let mut child = GetWindow(parent, GW_CHILD).unwrap_or_default();
+        while !child.0.is_null() {
+            out.push(child);
+            child = GetWindow(child, GW_HWNDNEXT).unwrap_or_default();
+        }
+        out
     }
 
     unsafe fn set_status(hwnd: HWND, text: &str) {
