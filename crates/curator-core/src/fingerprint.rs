@@ -50,6 +50,10 @@ pub fn hash_image(path: &str, observer: &Arc<dyn ProgressObserver>) -> Result<Im
     let mut buf = vec![0u8; READ_CHUNK];
     let mut done: u64 = 0;
     loop {
+        if observer.is_cancelled() {
+            observer.on_event(Event::CounterClose { id: ID });
+            return Err(crate::error::Error::Cancelled);
+        }
         let n = file.read(&mut buf)?;
         if n == 0 {
             break;
