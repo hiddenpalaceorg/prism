@@ -240,3 +240,45 @@ export async function submissionStatus(pool: Pool, sha256: string) {
   );
   return r.rows[0] || null;
 }
+
+export interface SubmissionListItem {
+  sha256: string;
+  nickname: string;
+  status: string;
+  submitted_at: string;
+  reviewed_at: string | null;
+  name: string;
+  system: string;
+  file_count: number;
+}
+
+/// List submissions (optionally filtered by status), newest first.
+export async function listSubmissions(pool: Pool, status?: string, limit = 200): Promise<SubmissionListItem[]> {
+  const where = status ? "WHERE status=$1" : "";
+  const params = status ? [status, limit] : [limit];
+  const r = await pool.query(
+    `SELECT sha256, nickname, status, submitted_at, reviewed_at,
+            record->'image'->>'name'         AS name,
+            record->'info'->>'system'        AS system,
+            (record->'structural'->>'file_count')::bigint AS file_count
+     FROM submission_queue ${where}
+     ORDER BY submitted_at DESC LIMIT $${status ? 2 : 1}`,
+    params
+  );
+  return r.rows as SubmissionListItem[];
+}
+
+/// Mark a submission accepted/rejected. Returns the stored record on accept (so the
+/// caller can ingest it), or null if the submission doesn't exist.
+export async function setSubmissionStatus(
+  pool: Pool,
+  sha256: string,
+  status: "accepted" | "rejected"
+): Promise<BuildRecord | null> {
+  const r = await pool.query(
+    `UPDATE submission_queue SET status=$2, reviewed_at=now() WHERE sha256=$1 RETURNING record`,
+    [sha256, status]
+  );
+  if (r.rowCount === 0) return null;
+  return r.rows[0].record as BuildRecord;
+}

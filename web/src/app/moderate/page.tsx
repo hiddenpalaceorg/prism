@@ -22,36 +22,17 @@ export default function Moderate() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string>("");
-  const [token, setToken] = useState<string>("");
-
-  // Remember the moderation token locally so it isn't retyped each visit.
-  useEffect(() => {
-    setToken(sessionStorage.getItem("curator-mod-token") ?? "");
-  }, []);
-  function saveToken(t: string) {
-    setToken(t);
-    sessionStorage.setItem("curator-mod-token", t);
-  }
-  const authHeaders = useCallback(
-    (extra: Record<string, string> = {}) => (token ? { ...extra, "x-moderation-token": token } : extra),
-    [token],
-  );
 
   const load = useCallback(async (s: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/submissions${s ? `?status=${s}` : ""}`, { headers: authHeaders() });
-      if (res.status === 401) {
-        setItems([]);
-        setNote("Unauthorized — enter a valid moderation token.");
-        return;
-      }
+      const res = await fetch(`/api/submissions${s ? `?status=${s}` : ""}`);
       const data = await res.json();
       setItems(data.submissions ?? []);
     } finally {
       setLoading(false);
     }
-  }, [authHeaders]);
+  }, []);
 
   useEffect(() => {
     void load(status);
@@ -63,7 +44,7 @@ export default function Moderate() {
     try {
       const res = await fetch(`/api/submissions/${sha256}`, {
         method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
       const data = await res.json();
@@ -83,19 +64,10 @@ export default function Moderate() {
         <Link href="/" className="text-sm text-neutral-500 hover:underline">Search &rarr;</Link>
       </div>
       <p className="mt-1 text-sm text-neutral-500">
-        Review contributor submissions. Accepting ingests the build into the library.
+        Review contributor submissions. Accepting ingests the build into the catalog.
       </p>
 
-      <input
-        type="password"
-        value={token}
-        onChange={(e) => saveToken(e.target.value)}
-        onBlur={() => load(status)}
-        placeholder="moderation token (x-moderation-token)"
-        className="mt-5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900"
-      />
-
-      <div className="mt-4 flex gap-2">
+      <div className="mt-5 flex gap-2">
         {FILTERS.map((f) => (
           <button
             key={f || "all"}
@@ -120,7 +92,7 @@ export default function Moderate() {
           {items.map((s) => (
             <li key={s.sha256} className="flex items-center justify-between gap-4 py-3">
               <div className="min-w-0">
-                <Link href={`/builds/${s.sha256}`} className="font-medium hover:underline">
+                <Link href={`/build/${s.sha256}`} className="font-medium hover:underline">
                   {s.name ?? s.sha256}
                 </Link>
                 <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-neutral-500">

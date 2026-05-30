@@ -77,11 +77,16 @@ ec8de44  Web service: search, similarity, submissions API
   (`getBuild` query): details/hashes, flattened file list, tiered similar builds linking
   to each other; search results + macOS neighbor rows deep-link here. Validated live.
 
+- **Phase 4 (moderation)** — `/moderate` page + `GET /api/submissions[?status=]` and
+  `POST /api/submissions/[sha256] {action}`; accept reuses the extracted
+  `src/lib/ingest.ts` (`ingestRecord`, shared with the bulk CLI ingester) to ingest into
+  the catalog, reject just marks status. Validated live: submit→queue→accept ingests
+  builds/files/fileset, reject stays out.
+
 **Remaining:**
 - macOS GUI: codesign/notarize (needs Developer ID).
 - Windows GUI: similarity/submit wiring, adapter bundling next to the exe, recent-builds,
   drag-and-drop.
-- Web: submission-moderation UI.
 - Windows bundle; macOS codesign/notarization; native-arm64 `unrar`/`7zz`.
 - Web: richer UI (build detail / similarity browse), submission moderation.
 - Skipped: image pHash (validated algo, ~0 yield on retro discs — native formats).

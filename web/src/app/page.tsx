@@ -47,7 +47,10 @@ export default function Home() {
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
-      <h1 className="text-2xl font-semibold tracking-tight">Curator</h1>
+      <div className="flex items-baseline justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Curator</h1>
+        <Link href="/moderate" className="text-sm text-neutral-500 hover:underline">Moderation &rarr;</Link>
+      </div>
       <p className="mt-1 text-sm text-neutral-500">
         Search known builds by filename or hash.
       </p>
