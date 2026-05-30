@@ -34,9 +34,9 @@ ec8de44  Web service: search, similarity, submissions API
   **Nested archive→disc recursion** (zip/7z) works.
 - **Fingerprint tiers** (all captured in the one pass): T1 content-id (`content_hash`,
   `filtered_content_hash`), T2 whole-file set, T3 FastCDC+blake3 chunks → MinHash
-  sketch + `.chunks` sidecar, T4 audio (chroma sub-fp sets; multi-bin **and** `.cue`
-  single-bin), T5 exe (TLSH + imphash). Self-contained audio/TLSH algos (numpy/JS) —
-  no libchromaprint/libtlsh.
+  sketch + `.chunks` sidecar, T4 audio (Shazam-style constellation peak-pair landmarks;
+  multi-bin **and** `.cue` single-bin), T5 exe (TLSH + imphash). Self-contained
+  audio/TLSH algos (numpy/JS) — no libchromaprint/libtlsh.
 - **Phase 4 web** — Next 16 / React 19 / Tailwind 4 / TS. `web/db/schema.sql` (pgvector
   + pg_trgm + intarray), TS ingester (`scripts/ingest.ts`), API routes
   (`/api/search`, `/api/similarity`, `/api/submissions[/:sha256]`), search UI.
@@ -96,8 +96,11 @@ ec8de44  Web service: search, similarity, submissions API
 - Windows bundle; macOS codesign/notarization; native-arm64 `unrar`/`7zz`.
 - Web: richer UI (build detail / similarity browse), submission moderation.
 - Skipped: image pHash (validated algo, ~0 yield on retro discs — native formats).
-- Audio fp is alignment-sensitive (matches identical audio 1.0, same-song-diff-master
-  ~0.5); offset-tolerant matching is future work.
+- Audio fp is **offset-tolerant** (Shazam-style constellation of peak-pairs keyed by Δt;
+  freq bins coarsened `>>2` for sub-frame robustness). Validated on synthetic PCM:
+  identical/integer-offset 1.0, 1-sector (pregap) offset 0.73, sub-frame offset 0.68,
+  mild re-encode 0.88, unrelated ~0 (max cross-song 0.23). Hashes <2^26 (JSON-safe);
+  still a set → unchanged Jaccard/`audio_fp` storage + web query.
 
 **Gotchas / constraints (resume-critical):**
 - **Python 3.10 only** — pathlab uses `pathlib._Accessor`, removed in 3.11.
