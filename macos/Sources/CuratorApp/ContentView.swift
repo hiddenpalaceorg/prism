@@ -46,11 +46,46 @@ struct ContentView: View {
         }
         .safeAreaInset(edge: .bottom) { StatusBar() }
         .sheet(isPresented: $model.showingSubmitSheet) { SubmitSheet() }
-        .alert("Analysis failed", isPresented: $model.showingError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(model.errorMessage ?? "An unknown error occurred.")
+        .sheet(isPresented: $model.showingError) { ErrorSheet() }
+    }
+}
+
+// MARK: - Error sheet (selectable + copyable)
+
+/// Adapter failures are often long multi-line tracebacks. A sheet with selectable,
+/// scrollable text (plus a Copy button) lets the user grab the message — unlike a
+/// plain `.alert`, whose text can't be selected.
+struct ErrorSheet: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let message = model.errorMessage ?? "An unknown error occurred."
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Analysis failed", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(.red)
+            ScrollView {
+                Text(message)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 120, maxHeight: 360)
+            .padding(8)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            HStack {
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(message, forType: .string)
+                }
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
         }
+        .padding(16)
+        .frame(width: 520)
     }
 }
 
