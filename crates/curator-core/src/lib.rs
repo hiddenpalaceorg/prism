@@ -167,6 +167,23 @@ impl Analyzer {
         self.db.count_builds()
     }
 
+    /// The most recently analyzed builds, newest first.
+    pub fn recent_builds(&self, limit: u32) -> Result<Vec<db::CatalogRow>> {
+        self.db.list_recent(limit)
+    }
+
+    /// Reload a previously analyzed build from the sha256 cache (no adapter run).
+    pub fn load_cached(&self, sha256: &str) -> Result<Option<Analysis>> {
+        match self.cache.load(sha256)? {
+            Some(record) => Ok(Some(Analysis {
+                record,
+                from_cache: true,
+                json_path: self.cache.json_path(sha256),
+            })),
+            None => Ok(None),
+        }
+    }
+
     /// Export the catalog as JSON Lines (one canonical build record per line) — the
     /// bulk desktop→web contribute feed. Returns the number of records written.
     pub fn export_jsonl<W: std::io::Write>(&self, mut out: W) -> Result<u64> {

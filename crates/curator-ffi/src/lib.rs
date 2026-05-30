@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use curator_core::adapter::AdapterCommand;
-use curator_core::{render, Analyzer, Config, Event, Node, ProgressObserver};
+use curator_core::{render, Analysis, Analyzer, Config, Event, Node, ProgressObserver};
 
 uniffi::setup_scaffolding!();
 
@@ -69,6 +69,38 @@ pub struct AnalysisSummary {
     pub xml: String,
     /// Pretty-printed canonical JSON record.
     pub json: String,
+}
+
+/// A catalog entry for the recent-builds list.
+#[derive(uniffi::Record)]
+pub struct CatalogEntry {
+    pub sha256: String,
+    pub name: String,
+    pub system: String,
+    pub file_count: u64,
+    pub total_size: u64,
+    /// Unix seconds of last analysis.
+    pub analyzed_at: i64,
+}
+
+/// Assemble the UI summary from a canonical record (shared by analyze + loadBuild).
+fn build_summary(analysis: &Analysis) -> Result<AnalysisSummary, CuratorError> {
+    let record = &analysis.record;
+    let xml = render::to_dat_xml(record);
+    let json = render::to_json(record).map_err(CuratorError::from)?;
+    Ok(AnalysisSummary {
+        sha256: record.image.sha256.clone(),
+        name: record.image.name.clone(),
+        system: record.info.system.clone(),
+        title: record.info.header.title.clone(),
+        from_cache: analysis.from_cache,
+        file_count: record.structural.file_count,
+        total_size: record.structural.total_size,
+        json_path: analysis.json_path.to_string_lossy().into_owned(),
+        tree: record.contents.iter().map(node_to_ffi).collect(),
+        xml,
+        json,
+    })
 }
 
 fn node_to_ffi(node: &Node) -> FileNode {
@@ -201,29 +233,36 @@ impl Engine {
     ) -> Result<AnalysisSummary, CuratorError> {
         let observer = Arc::new(ListenerObserver { listener, cancel });
         let analysis = self.inner.lock().unwrap().analyze(&path, observer)?;
-        let record = &analysis.record;
-
-        let xml = render::to_dat_xml(record);
-        let json = render::to_json(record).map_err(CuratorError::from)?;
-
-        Ok(AnalysisSummary {
-            sha256: record.image.sha256.clone(),
-            name: record.image.name.clone(),
-            system: record.info.system.clone(),
-            title: record.info.header.title.clone(),
-            from_cache: analysis.from_cache,
-            file_count: record.structural.file_count,
-            total_size: record.structural.total_size,
-            json_path: analysis.json_path.to_string_lossy().into_owned(),
-            tree: record.contents.iter().map(node_to_ffi).collect(),
-            xml,
-            json,
-        })
+        build_summary(&analysis)
     }
 
     /// Number of builds in the local catalog.
     pub fn catalog_size(&self) -> Result<u64, CuratorError> {
         Ok(self.inner.lock().unwrap().catalog_size()?)
+    }
+
+    /// The most recently analyzed builds, newest first.
+    pub fn recent_builds(&self, limit: u32) -> Result<Vec<CatalogEntry>, CuratorError> {
+        let rows = self.inner.lock().unwrap().recent_builds(limit)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| CatalogEntry {
+                sha256: r.sha256,
+                name: r.name,
+                system: r.system,
+                file_count: r.file_count,
+                total_size: r.total_size,
+                analyzed_at: r.analyzed_at,
+            })
+            .collect())
+    }
+
+    /// Reload a catalogued build from cache by sha256 (no adapter run). `None` if absent.
+    pub fn load_build(&self, sha256: String) -> Result<Option<AnalysisSummary>, CuratorError> {
+        match self.inner.lock().unwrap().load_cached(&sha256)? {
+            Some(analysis) => Ok(Some(build_summary(&analysis)?)),
+            None => Ok(None),
+        }
     }
 
     /// Export the catalog as JSON Lines to `out_path` (the desktop→web feed). Returns

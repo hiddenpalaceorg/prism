@@ -42,8 +42,9 @@ builds/                sample disc images for testing
 | ↳ Windows bundle, macOS codesign/notarize, native-arm64 unrar | ⬜ |
 | Phase 3 — UniFFI bridge (`curator-ffi`) + SwiftUI macOS app (tree, details, XML/JSON, progress, cancel) | ✅ built & validated |
 | ↳ macOS GUI: embedded self-contained adapter (no env/dev-tools) | ✅ built & validated |
-| ↳ macOS GUI: Find-Similar + Submit wired to web API | ✅ built & validated (live) |
-| ↳ macOS GUI: codesign/notarize, drag-and-drop, recent builds | ⬜ |
+| ↳ macOS GUI: Find-Similar + Submit wired to web API (neighbors deep-link to web) | ✅ built & validated (live) |
+| ↳ macOS GUI: drag-and-drop + recent-builds list (reopen from cache) | ✅ built & validated |
+| ↳ macOS GUI: codesign/notarize, web build-detail page | ⬜ |
 | ↳ Windows GUI (windows-rs) | ⬜ scaffold |
 
 ## Quick start (CLI)

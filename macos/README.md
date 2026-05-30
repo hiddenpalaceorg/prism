@@ -54,18 +54,21 @@ cd macos && swift run curator-probe
 
 ## Done
 
-- Analyze (files/folders) → tree + details + XML/JSON, live progress, working Cancel.
+- Analyze (files/folders, **open dialog or drag-and-drop**) → tree + details + XML/JSON,
+  live progress, working Cancel.
+- **Recent builds** — the sidebar lists the local catalog; clicking one reopens it from
+  cache (no re-analysis).
 - **Embedded adapter** — `build-app.sh` copies a Phase-2 bundle into
   `Resources/adapter`; the app runs with no dev toolchain and no env var.
 - **Find Similar** → `POST /api/similarity`; tiered neighbors (content / files / chunks /
-  audio / exe / text) rendered in the Similar tab.
+  audio / exe / text) in the Similar tab. Click a neighbor to open it in the web catalog
+  (`?q=<sha256>`), or right-click to copy the hash.
 - **Submit** → `POST /api/submissions` with a nickname (moderation queue).
 
 ## Remaining for a shippable app
 
 - Code-signing + notarization (needs a Developer ID).
-- Drag-and-drop and a recent-builds list backed by the local catalog.
-- Open the neighbor rows into a web build-detail page.
+- A dedicated web build-detail page (neighbors currently deep-link into search).
 
 ## Notes
 

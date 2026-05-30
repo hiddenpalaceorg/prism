@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import CuratorKit
 
 struct ContentView: View {
@@ -10,6 +11,16 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 300)
         } detail: {
             DetailView()
+        }
+        .onAppear { model.loadRecentAtLaunch() }
+        .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+            guard !model.isWorking, let provider = providers.first else { return false }
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                guard let data = item as? Data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                Task { @MainActor in model.analyze(url: url) }
+            }
+            return true
         }
         .toolbar {
             ToolbarItemGroup {
@@ -38,13 +49,7 @@ struct SidebarView: View {
 
     var body: some View {
         Group {
-            if model.rootNodes.isEmpty {
-                ContentUnavailableViewCompat(
-                    title: "No image loaded",
-                    systemImage: "opticaldisc",
-                    message: "Open a disc image, container, or folder to see its contents."
-                )
-            } else {
+            if !model.rootNodes.isEmpty {
                 List(selection: $model.selection) {
                     ForEach(model.rootNodes) { root in
                         OutlineGroup(root, children: \.children) { node in
@@ -52,6 +57,36 @@ struct SidebarView: View {
                                 .tag(node.id)
                         }
                     }
+                }
+            } else if !model.recent.isEmpty {
+                RecentList()
+            } else {
+                ContentUnavailableViewCompat(
+                    title: "No image loaded",
+                    systemImage: "opticaldisc",
+                    message: "Open — or drag in — a disc image, container, or folder."
+                )
+            }
+        }
+    }
+}
+
+struct RecentList: View {
+    @EnvironmentObject var model: AppModel
+    var body: some View {
+        List {
+            Section("Recent builds") {
+                ForEach(model.recent, id: \.sha256) { e in
+                    Button { model.openRecent(sha256: e.sha256) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(e.name).lineLimit(1)
+                            Text("\(e.system) · \(e.fileCount) files · \(humanSize(e.totalSize))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -197,6 +232,7 @@ struct SimilarityView: View {
 }
 
 struct NeighborRow: View {
+    @EnvironmentObject var model: AppModel
     let neighbor: SimilarNeighbor
     var body: some View {
         HStack {
@@ -212,6 +248,16 @@ struct NeighborRow: View {
             }
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onTapGesture { model.openInWeb(sha256: neighbor.sha256) }
+        .contextMenu {
+            Button("Open in Web") { model.openInWeb(sha256: neighbor.sha256) }
+            Button("Copy SHA-256") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(neighbor.sha256, forType: .string)
+            }
+        }
+        .help("Open \(neighbor.sha256) in the web catalog")
     }
 }
 

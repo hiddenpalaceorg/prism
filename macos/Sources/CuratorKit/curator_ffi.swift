@@ -425,6 +425,22 @@ private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -434,6 +450,22 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     }
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
+    typealias FfiType = Int64
+    typealias SwiftType = Int64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int64, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
     }
 }
@@ -684,6 +716,16 @@ public protocol EngineProtocol: AnyObject, Sendable {
      */
     func exportJsonl(outPath: String) throws  -> UInt64
     
+    /**
+     * Reload a catalogued build from cache by sha256 (no adapter run). `None` if absent.
+     */
+    func loadBuild(sha256: String) throws  -> AnalysisSummary?
+    
+    /**
+     * The most recently analyzed builds, newest first.
+     */
+    func recentBuilds(limit: UInt32) throws  -> [CatalogEntry]
+    
 }
 /**
  * The analysis engine. Construct once; methods are thread-safe.
@@ -791,6 +833,30 @@ open func exportJsonl(outPath: String)throws  -> UInt64  {
     uniffi_curator_ffi_fn_method_engine_export_jsonl(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(outPath),$0
+    )
+})
+}
+    
+    /**
+     * Reload a catalogued build from cache by sha256 (no adapter run). `None` if absent.
+     */
+open func loadBuild(sha256: String)throws  -> AnalysisSummary?  {
+    return try  FfiConverterOptionTypeAnalysisSummary.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+    uniffi_curator_ffi_fn_method_engine_load_build(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(sha256),$0
+    )
+})
+}
+    
+    /**
+     * The most recently analyzed builds, newest first.
+     */
+open func recentBuilds(limit: UInt32)throws  -> [CatalogEntry]  {
+    return try  FfiConverterSequenceTypeCatalogEntry.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+    uniffi_curator_ffi_fn_method_engine_recent_builds(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(limit),$0
     )
 })
 }
@@ -945,6 +1011,85 @@ public func FfiConverterTypeAnalysisSummary_lift(_ buf: RustBuffer) throws -> An
 #endif
 public func FfiConverterTypeAnalysisSummary_lower(_ value: AnalysisSummary) -> RustBuffer {
     return FfiConverterTypeAnalysisSummary.lower(value)
+}
+
+
+/**
+ * A catalog entry for the recent-builds list.
+ */
+public struct CatalogEntry: Equatable, Hashable {
+    public var sha256: String
+    public var name: String
+    public var system: String
+    public var fileCount: UInt64
+    public var totalSize: UInt64
+    /**
+     * Unix seconds of last analysis.
+     */
+    public var analyzedAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sha256: String, name: String, system: String, fileCount: UInt64, totalSize: UInt64, 
+        /**
+         * Unix seconds of last analysis.
+         */analyzedAt: Int64) {
+        self.sha256 = sha256
+        self.name = name
+        self.system = system
+        self.fileCount = fileCount
+        self.totalSize = totalSize
+        self.analyzedAt = analyzedAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CatalogEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCatalogEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CatalogEntry {
+        return
+            try CatalogEntry(
+                sha256: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                system: FfiConverterString.read(from: &buf), 
+                fileCount: FfiConverterUInt64.read(from: &buf), 
+                totalSize: FfiConverterUInt64.read(from: &buf), 
+                analyzedAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CatalogEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sha256, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.system, into: &buf)
+        FfiConverterUInt64.write(value.fileCount, into: &buf)
+        FfiConverterUInt64.write(value.totalSize, into: &buf)
+        FfiConverterInt64.write(value.analyzedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCatalogEntry_lift(_ buf: RustBuffer) throws -> CatalogEntry {
+    return try FfiConverterTypeCatalogEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCatalogEntry_lower(_ value: CatalogEntry) -> RustBuffer {
+    return FfiConverterTypeCatalogEntry.lower(value)
 }
 
 
@@ -1476,6 +1621,55 @@ fileprivate struct FfiConverterOptionTypeCancelHandle: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAnalysisSummary: FfiConverterRustBuffer {
+    typealias SwiftType = AnalysisSummary?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAnalysisSummary.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAnalysisSummary.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeCatalogEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [CatalogEntry]
+
+    public static func write(_ value: [CatalogEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCatalogEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CatalogEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CatalogEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCatalogEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFileNode: FfiConverterRustBuffer {
     typealias SwiftType = [FileNode]
 
@@ -1526,6 +1720,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_export_jsonl() != 15472) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_curator_ffi_checksum_method_engine_load_build() != 2108) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_curator_ffi_checksum_method_engine_recent_builds() != 52827) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_constructor_cancelhandle_new() != 13737) {
