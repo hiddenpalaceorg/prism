@@ -83,6 +83,7 @@ export interface QueryFeatures {
   minhash: string[] | null;
   bands: string[] | null;
   imphash: string | null;
+  tlsh: string | null;
   audioTracks: AudioTrack[];
 }
 
@@ -112,6 +113,7 @@ export function deriveQueryFeatures(rec: BuildRecord): QueryFeatures {
     minhash,
     bands,
     imphash: rec.exe_fp?.imphash ?? null,
+    tlsh: rec.exe_fp?.tlsh ?? null,
     audioTracks: (rec.media ?? [])
       .filter((m) => m.kind === "audio" && m.audio_fp?.length)
       .map((m) => ({ track: m.path, subfp: m.audio_fp!.map(String) })),

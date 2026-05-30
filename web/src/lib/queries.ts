@@ -2,9 +2,11 @@
 
 import type { Pool } from "pg";
 import { minhashJaccard, setJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
+import { tlshDiff } from "./tlsh";
 import type { BuildRecord, SimilarityResult } from "./types";
 
 const AUDIO_MATCH_THRESHOLD = 0.3;
+const TLSH_MAX_DISTANCE = 120; // below this ≈ similar executable
 
 /** Tier-4: builds sharing audio tracks (per-track Jaccard over chroma sub-fp sets). */
 export async function findAudioSimilar(
@@ -54,7 +56,9 @@ export async function logCheck(pool: Pool, sha256: string | null): Promise<void>
 /** Fuse Tier 1/2/3 neighbors for a query build's derived features. */
 export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Promise<SimilarityResult> {
   const exclude = q.sha256 || "";
-  const out: SimilarityResult = { tier1_twins: [], tier2: [], tier3: [], tier5_exe: [], audio_neighbors: [] };
+  const out: SimilarityResult = {
+    tier1_twins: [], tier2: [], tier3: [], tier5_exe: [], tier5_tlsh: [], audio_neighbors: [],
+  };
 
   if (q.content_hash) {
     const r = await pool.query(
@@ -109,6 +113,22 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
       [q.imphash, exclude]
     );
     out.tier5_exe = r.rows;
+  }
+
+  // Tier-5 TLSH: rank stored exe digests by distance (linear scan; small corpus).
+  // A TLSH forest would index this at scale.
+  if (q.tlsh) {
+    const r = await pool.query(
+      `SELECT e.build_sha256 AS sha256, b.name, b.system, e.tlsh
+       FROM exe_fp e JOIN builds b ON b.sha256=e.build_sha256
+       WHERE e.tlsh IS NOT NULL AND e.build_sha256<>$1`,
+      [exclude]
+    );
+    out.tier5_tlsh = r.rows
+      .map((row) => ({ sha256: row.sha256, name: row.name, system: row.system, distance: tlshDiff(q.tlsh!, row.tlsh) ?? Infinity }))
+      .filter((x) => x.distance <= TLSH_MAX_DISTANCE)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, limit);
   }
 
   if (q.audioTracks.length) {
