@@ -1,4 +1,4 @@
-// Find builds similar to a stored one (CLI smoke test of the similarity tiers).
+// Find builds similar to a catalogued one (CLI smoke test of the similarity tiers).
 // Usage: npm run similar -- <sha256>   (env DATABASE_URL)
 
 import pg from "pg";
@@ -26,23 +26,15 @@ async function main() {
   const r = await findSimilar(pool, q);
 
   console.log(`query: ${q.name}\n`);
-  console.log("Identical content:");
-  r.identical_content.forEach((t) => console.log(`  ${t.name}`));
-  if (!r.identical_content.length) console.log("  (none)");
-  console.log("\nShared files (Jaccard):");
-  r.shared_files.forEach((x) => console.log(`  ${x.jaccard?.toFixed(3)}  ${x.name}`));
-  if (!r.shared_files.length) console.log("  (none)");
-  console.log("\nSimilar chunks (MinHash Jaccard):");
-  r.similar_chunks.forEach((x) => console.log(`  ${x.jaccard?.toFixed(3)}  ${x.name}`));
-  if (!r.similar_chunks.length) console.log("  (none)");
-
-  console.log("\nShared audio (matched / best Jaccard):");
-  r.audio_neighbors.forEach((x) => console.log(`  ${x.matched_tracks} tracks (best ${x.best.toFixed(3)})  ${x.name}`));
-  if (!r.audio_neighbors.length) console.log("  (none)");
-
-  console.log("\nSame boot imports (imphash):");
-  r.exe_imports.forEach((x) => console.log(`  ${x.name}`));
-  if (!r.exe_imports.length) console.log("  (none)");
+  console.log("Tier 1 — content twins:");
+  r.tier1_twins.forEach((t) => console.log(`  ${t.name}`));
+  if (!r.tier1_twins.length) console.log("  (none)");
+  console.log("\nTier 2 — identical-file overlap (Jaccard):");
+  r.tier2.forEach((x) => console.log(`  ${x.jaccard?.toFixed(3)}  ${x.name}`));
+  if (!r.tier2.length) console.log("  (none)");
+  console.log("\nTier 3 — chunk similarity (MinHash Jaccard):");
+  r.tier3.forEach((x) => console.log(`  ${x.jaccard?.toFixed(3)}  ${x.name}`));
+  if (!r.tier3.length) console.log("  (none)");
 
   await pool.end();
 }

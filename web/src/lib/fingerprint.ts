@@ -1,29 +1,13 @@
 // Fingerprint helpers shared by the ingester and the API routes.
 
-import type { BuildRecord, Node, Signature } from "./types";
+import type { BuildRecord, Node } from "./types";
 
 const MASK63 = (1n << 63n) - 1n;
 
-/** Stable 63-bit id from a hex content hash (for the identical-file set). */
+/** Stable 63-bit id from a hex content hash (for the Tier-2 file-hash set). */
 export function hexToId63(hex?: string | null): bigint | null {
   if (!hex) return null;
-  if (!/^[0-9a-fA-F]+$/.test(hex)) return null;
   return BigInt("0x" + hex.slice(0, 16)) & MASK63;
-}
-
-const U64_MAX = (1n << 64n) - 1n;
-
-/** Parse an untrusted u64 value (decimal string/number); null if not a valid u64. */
-export function parseU64(v: unknown): bigint | null {
-  if (typeof v === "number") {
-    if (!Number.isInteger(v) || v < 0) return null;
-    return BigInt(v);
-  }
-  if (typeof v === "string" && /^\d+$/.test(v)) {
-    const b = BigInt(v);
-    return b <= U64_MAX ? b : null;
-  }
-  return null;
 }
 
 /** Postgres BIGINT is signed; reinterpret a u64 bit pattern as i64. */
@@ -76,46 +60,6 @@ export function minhashJaccard(a: Array<string | bigint>, b: Array<string | bigi
   return eq / a.length;
 }
 
-/** True set Jaccard (intersection / union) over two id lists. */
-export function setJaccard(a: Array<string | number>, b: Array<string | number>): number {
-  if (!a.length || !b.length) return 0;
-  const A = new Set(a.map(String));
-  const B = new Set(b.map(String));
-  let inter = 0;
-  for (const x of A) if (B.has(x)) inter++;
-  return inter / (A.size + B.size - inter);
-}
-
-/**
- * IDF-weighted Jaccard: sum(weight over A∩B) / sum(weight over A∪B). A hash that
- * occurs in nearly every build gets weight≈0, so it neither helps the
- * intersection nor inflates the union — unlike plain setJaccard, where a shared
- * low-entropy "background" set makes unrelated builds look similar.
- */
-export function weightedSetJaccard(
-  a: Array<string | number>,
-  b: Array<string | number>,
-  weight: (h: string) => number
-): number {
-  if (!a.length || !b.length) return 0;
-  const A = new Set(a.map(String));
-  const B = new Set(b.map(String));
-  let inter = 0;
-  let union = 0;
-  for (const x of A) {
-    const w = weight(x);
-    union += w;
-    if (B.has(x)) inter += w;
-  }
-  for (const x of B) if (!A.has(x)) union += weight(x);
-  return union > 0 ? inter / union : 0;
-}
-
-export interface AudioTrack {
-  track: string;
-  subfp: string[];
-}
-
 export interface QueryFeatures {
   sha256: string | null;
   name: string | null;
@@ -123,55 +67,6 @@ export interface QueryFeatures {
   fileset: string[];
   minhash: string[] | null;
   bands: string[] | null;
-  resemblanceMinhash: string[] | null;
-  resemblanceBands: string[] | null;
-  imphash: string | null;
-  tlsh: string | null;
-  audioTracks: AudioTrack[];
-}
-
-/** A MinHash signature → signed-64 strings + its LSH band hashes (for GIN). */
-function signatureBands(sk?: Signature | null): { minhash: string[]; bands: string[] } | null {
-  if (!sk?.values?.length) return null;
-  const mh = sk.values
-    .map(parseU64)
-    .filter((x): x is bigint => x !== null)
-    .map(toSigned64);
-  if (!mh.length) return null;
-  return { minhash: mh.map(String), bands: lshBands(mh).map(String) };
-}
-
-/**
- * The text fed to the semantic-embedding tier. NOT `text_doc`: that is the
- * disc's title plus *every filename*, which buries the 1-3 meaningful title
- * tokens under 60+ structural filename tokens — so unrelated discs that merely
- * share a file layout (.BIN/.ROM/...) embed close together. We embed the build's
- * *identity* instead: the curated Redump/No-Intro name (clean, region-tagged, and
- * present for every build — even PS1 discs with no header title, or ones whose
- * header title decoded to mojibake) plus any printable internal/SFO title that
- * adds signal. File structure is already covered by the fileset/chunk tiers, and
- * text_doc still backs the keyword/FTS search path.
- */
-export function semanticDoc(rec: BuildRecord): string {
-  const info = (rec.info ?? {}) as Record<string, unknown>;
-  const header = (info.header ?? {}) as Record<string, unknown>;
-  const sfo = (info.sfo ?? {}) as Record<string, unknown>;
-  const parts: string[] = [];
-  const add = (x: unknown) => {
-    if (typeof x === "string" && x.trim()) parts.push(x.trim());
-  };
-  // A title is usable only if it survives as real printable text (≥2 ASCII
-  // chars) — this drops empties and mojibake like Silpheed's "\x...\x..." title.
-  const printable = (x: unknown) =>
-    typeof x === "string" && x.replace(/[^\x20-\x7e]/g, "").trim().length >= 2;
-
-  add((rec.image?.name ?? "").replace(/\.[^.]+$/, ""));
-  if (printable(header.title)) add(header.title);
-  if (printable(sfo.title)) add(sfo.title);
-  if (printable(sfo.category)) add(sfo.category);
-  // Never embed an empty string; fall back to the old doc if we somehow have no
-  // name and no usable title.
-  return parts.join(" ") || (rec.text_doc ?? "");
 }
 
 /** Derive the query features the similarity endpoint needs from a BuildRecord. */
@@ -185,22 +80,20 @@ export function deriveQueryFeatures(rec: BuildRecord): QueryFeatures {
         .map(String)
     ),
   ];
-  const chunkSig = signatureBands(rec.chunk_signature);
-  const resemblance = signatureBands(rec.resemblance);
+  let minhash: string[] | null = null;
+  let bands: string[] | null = null;
+  if (rec.sketch?.values?.length) {
+    const mh = rec.sketch.values.map((v) => toSigned64(BigInt(v)));
+    minhash = mh.map(String);
+    bands = lshBands(mh).map(String);
+  }
   return {
     sha256: rec.image?.sha256 ?? null,
     name: rec.image?.name ?? null,
     content_hash: rec.composites?.content_hash ?? null,
     fileset,
-    minhash: chunkSig?.minhash ?? null,
-    bands: chunkSig?.bands ?? null,
-    resemblanceMinhash: resemblance?.minhash ?? null,
-    resemblanceBands: resemblance?.bands ?? null,
-    imphash: rec.exe_fp?.imphash ?? null,
-    tlsh: rec.exe_fp?.tlsh ?? null,
-    audioTracks: (rec.media ?? [])
-      .filter((m) => m.kind === "audio" && m.audio_fp?.length)
-      .map((m) => ({ track: m.path, subfp: m.audio_fp!.map(String) })),
+    minhash,
+    bands,
   };
 }
 

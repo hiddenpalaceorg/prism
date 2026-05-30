@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useState } from "react";
 
 interface Hit {
   sha256: string;
@@ -17,11 +16,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  const doSearch = useCallback(async (term: string) => {
-    if (!term.trim()) return;
+  async function runSearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!q.trim()) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
       const data = await res.json();
       setMode(data.mode ?? "");
       setHits(data.results ?? []);
@@ -29,31 +29,11 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  // Deep-link support: /?q=<term> (e.g. a sha256 opened from the macOS app).
-  useEffect(() => {
-    const term = new URLSearchParams(window.location.search).get("q");
-    if (term) {
-      setQ(term);
-      void doSearch(term);
-    }
-  }, [doSearch]);
-
-  function runSearch(e: React.FormEvent) {
-    e.preventDefault();
-    void doSearch(q);
   }
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Curator</h1>
-        <span className="flex gap-4 text-sm text-neutral-500">
-          <Link href="/builds" className="hover:underline">Browse builds &rarr;</Link>
-          <Link href="/moderate" className="hover:underline">Moderation &rarr;</Link>
-        </span>
-      </div>
+      <h1 className="text-2xl font-semibold tracking-tight">Curator</h1>
       <p className="mt-1 text-sm text-neutral-500">
         Search known builds by filename or hash.
       </p>
@@ -83,12 +63,10 @@ export default function Home() {
             <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
               {hits.map((h) => (
                 <li key={h.sha256} className="py-3">
-                  <Link href={`/builds/${h.sha256}`} className="font-medium hover:underline">
-                    {h.name}
-                  </Link>
+                  <div className="font-medium">{h.name}</div>
                   <div className="mt-0.5 flex gap-3 text-xs text-neutral-500">
                     <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
-                      {h.system || "unknown"}
+                      {h.system}
                     </span>
                     <span className="font-mono">{h.sha256.slice(0, 16)}…</span>
                     {h.sim != null && <span>sim {h.sim.toFixed(2)}</span>}

@@ -9,8 +9,8 @@ export interface ImageInfo {
 }
 
 export interface Composites {
-  content_hash?: string;
-  filtered_content_hash?: string;
+  content_hash: string;
+  filtered_content_hash: string;
   hash_exe?: string;
   incomplete_files?: number;
 }
@@ -36,7 +36,7 @@ export type Node =
       unreadable?: boolean;
     };
 
-export interface Signature {
+export interface Sketch {
   kind: string;
   k: number;
   seed: string;
@@ -52,20 +52,7 @@ export interface BuildRecord {
   structural: Structural;
   text_doc: string;
   contents: Node[];
-  /** MinHash signature over the content-defined chunk set. */
-  chunk_signature?: Signature | null;
-  /** Byte-shingle resemblance (OPH) — robust to scattered small edits. */
-  resemblance?: Signature | null;
-  exe_fp?: { tlsh?: string; imphash?: string } | null;
-  media?: MediaFp[];
-}
-
-export interface MediaFp {
-  path: string;
-  kind: string; // "image" | "audio"
-  phash?: string;
-  chromaprint?: string;
-  audio_fp?: number[];
+  sketch?: Sketch | null;
 }
 
 export interface SimilarityHit {
@@ -76,12 +63,7 @@ export interface SimilarityHit {
 }
 
 export interface SimilarityResult {
-  identical_content: { sha256: string; name: string; system: string }[];
-  shared_files: SimilarityHit[];
-  similar_chunks: SimilarityHit[];
-  /** Byte-shingle resemblance neighbors (scattered-edit tolerant). */
-  resemblance: SimilarityHit[];
-  exe_imports: { sha256: string; name: string; system: string }[];
-  exe_similar: { sha256: string; name: string; system: string; distance: number }[];
-  audio_neighbors: { sha256: string; name: string; system: string; matched_tracks: number; best: number }[];
+  tier1_twins: { sha256: string; name: string; system: string }[];
+  tier2: SimilarityHit[];
+  tier3: SimilarityHit[];
 }
