@@ -78,20 +78,34 @@ struct SimilarityResponse: Decodable {
 /// Read-only client for the Curator web service. Base URL from `CURATOR_WEB_URL`
 /// (default `http://localhost:3001`, the dev port).
 struct CuratorService {
+    /// The dev default, built once without a force-unwrap.
+    static let defaultBaseURL: URL = {
+        var c = URLComponents()
+        c.scheme = "http"
+        c.host = "localhost"
+        c.port = 3001
+        return c.url ?? URL(fileURLWithPath: "/")
+    }()
     let baseURL: URL
 
     init() {
         let raw = ProcessInfo.processInfo.environment["CURATOR_WEB_URL"] ?? "http://localhost:3001"
-        baseURL = URL(string: raw) ?? URL(string: "http://localhost:3001")!
+        baseURL = URL(string: raw) ?? CuratorService.defaultBaseURL
     }
 
     enum ServiceError: LocalizedError {
         case http(Int, String)
         case offline(String)
+        case timedOut(String)
+        case cancelled
+        case transport(String, String)
         var errorDescription: String? {
             switch self {
             case let .http(code, msg): return "Server error \(code): \(msg)"
             case let .offline(msg): return "Cannot reach \(msg). Is the web service running?"
+            case let .timedOut(msg): return "Request to \(msg) timed out. Is the web service responding?"
+            case .cancelled: return "Request was cancelled."
+            case let .transport(msg, detail): return "Network error talking to \(msg): \(detail)"
             }
         }
     }
@@ -121,8 +135,20 @@ struct CuratorService {
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await URLSession.shared.data(for: req)
+        } catch let urlError as URLError {
+            let host = baseURL.absoluteString
+            switch urlError.code {
+            case .timedOut:
+                throw ServiceError.timedOut(host)
+            case .cancelled:
+                throw ServiceError.cancelled
+            case .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .dnsLookupFailed:
+                throw ServiceError.offline(host)
+            default:
+                throw ServiceError.transport(host, urlError.localizedDescription)
+            }
         } catch {
-            throw ServiceError.offline(baseURL.absoluteString)
+            throw ServiceError.transport(baseURL.absoluteString, error.localizedDescription)
         }
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else {

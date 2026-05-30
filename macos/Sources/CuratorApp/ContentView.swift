@@ -15,9 +15,16 @@ struct ContentView: View {
         .onAppear { model.loadRecentAtLaunch() }
         .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
             guard !model.isWorking, let provider = providers.first else { return false }
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
+                if let error {
+                    Task { @MainActor in model.reportDropFailure("Couldn't read the dropped item: \(error.localizedDescription)") }
+                    return
+                }
                 guard let data = item as? Data,
-                      let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                      let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                    Task { @MainActor in model.reportDropFailure("Couldn't resolve the dropped item as a file.") }
+                    return
+                }
                 Task { @MainActor in model.analyze(url: url) }
             }
             return true
