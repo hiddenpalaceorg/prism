@@ -1,0 +1,13 @@
+{
+  "name": "curator-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ingest": "node scripts/ingest.mjs",
+    "similar": "node scripts/similar.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
