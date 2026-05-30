@@ -118,7 +118,8 @@ mod app {
     }
 
     /// Resolve the adapter: env override → bundle next to the exe (`adapter\curator-adapter*`)
-    /// → `CURATOR_ADAPTER_DIR` → the dev `ps2exe-adapter` uv project.
+    /// → adapter embedded in this exe (single-file build, extracted once) →
+    /// `CURATOR_ADAPTER_DIR` → the dev `ps2exe-adapter` uv project.
     fn resolve_adapter() -> AdapterCommand {
         if let Ok(bin) = std::env::var("CURATOR_ADAPTER_BIN") {
             return AdapterCommand::bin(&bin);
@@ -133,8 +134,46 @@ mod app {
                 }
             }
         }
+        #[cfg(embed_adapter)]
+        {
+            if let Some(p) = extract_embedded_adapter() {
+                return AdapterCommand::bin(&p.to_string_lossy());
+            }
+        }
         let dir = std::env::var("CURATOR_ADAPTER_DIR").unwrap_or_else(|_| "ps2exe-adapter".to_string());
         AdapterCommand::uv(&dir)
+    }
+
+    /// The adapter binary frozen into this exe at build time (single-file distribution).
+    /// Enabled by build.rs when `CURATOR_ADAPTER_EXE` points at a prebuilt adapter.
+    #[cfg(embed_adapter)]
+    static EMBEDDED_ADAPTER: &[u8] = include_bytes!(env!("CURATOR_EMBEDDED_ADAPTER"));
+
+    /// Write the embedded adapter to a per-version cache path under TEMP and return it;
+    /// skipped if already present. Keyed by GUI version + byte length so an updated build
+    /// re-extracts instead of reusing a stale adapter.
+    #[cfg(embed_adapter)]
+    fn extract_embedded_adapter() -> Option<PathBuf> {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("curator");
+        std::fs::create_dir_all(&dir).ok()?;
+        let exe = dir.join(format!(
+            "curator-adapter-{}-{}.exe",
+            env!("CARGO_PKG_VERSION"),
+            EMBEDDED_ADAPTER.len()
+        ));
+        if !exe.exists() {
+            // Write to a pid-unique temp then rename, so concurrent launches don't tear.
+            let tmp = dir.join(format!("curator-adapter.{}.tmp", std::process::id()));
+            {
+                let mut f = std::fs::File::create(&tmp).ok()?;
+                f.write_all(EMBEDDED_ADAPTER).ok()?;
+                f.flush().ok()?;
+            }
+            let _ = std::fs::rename(&tmp, &exe);
+            let _ = std::fs::remove_file(&tmp);
+        }
+        exe.exists().then_some(exe)
     }
 
     pub fn run() -> Result<()> {
@@ -554,7 +593,10 @@ mod app {
                 display_build(hwnd, done);
                 refresh_recent(hwnd);
             }
-            Err(msg) => set_status(hwnd, &format!("Failed: {msg}")),
+            Err(msg) => {
+                set_status(hwnd, "Failed.");
+                error_box(hwnd, &msg);
+            }
         }
     }
 
@@ -692,6 +734,18 @@ mod app {
                 insert_node(tree, handle, child);
             }
         }
+    }
+
+    /// Show a dismissable modal error dialog (in addition to the status-bar note).
+    /// Adapter failures are often long multi-line tracebacks the status bar truncates.
+    unsafe fn error_box(hwnd: HWND, text: &str) {
+        let wtext = wide(text);
+        let _ = MessageBoxW(
+            hwnd,
+            PCWSTR(wtext.as_ptr()),
+            w!("Curator — Analysis failed"),
+            MB_OK | MB_ICONERROR,
+        );
     }
 
     unsafe fn set_status(hwnd: HWND, text: &str) {

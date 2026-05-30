@@ -46,6 +46,11 @@ struct ContentView: View {
         }
         .safeAreaInset(edge: .bottom) { StatusBar() }
         .sheet(isPresented: $model.showingSubmitSheet) { SubmitSheet() }
+        .alert("Analysis failed", isPresented: $model.showingError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.errorMessage ?? "An unknown error occurred.")
+        }
     }
 }
 

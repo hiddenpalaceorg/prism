@@ -33,11 +33,14 @@ for dep in ("pycdlib", "pyisotools"):
 # __file__ resolves under sys._MEIPASS, so placing the lib at the same relative path lets
 # that logic find it. macOS finds the system libarchive, so this only matters off-mac.
 _osdir = {"win32": "win64", "darwin": "macosx", "linux": "linux"}.get(sys.platform)
-_oslib = {"win32": "libarchive.dll", "darwin": "libarchive.dylib", "linux": "libarchive.so"}.get(sys.platform)
 if _osdir:
-    _src = ps2exe / "lib" / "libarchive" / _osdir / _oslib
-    if _src.exists():
-        binaries.append((str(_src), f"lib/libarchive/{_osdir}"))
+    # Bundle the whole dir, not just libarchive.* — it ships the sibling libraries
+    # (libcrypto, liblzma, libzstd, libbz2, …) that libarchive dlopen's at load time.
+    # rthook_libarchive.py then points $LIBARCHIVE at the main lib in this dir.
+    _libdir = ps2exe / "lib" / "libarchive" / _osdir
+    for _f in sorted(_libdir.glob("*")):
+        if _f.is_file():
+            binaries.append((str(_f), f"lib/libarchive/{_osdir}"))
 
 a = Analysis(
     ["pyinstaller_entry.py"],
@@ -45,6 +48,10 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
+    # Set $LIBARCHIVE to the bundled lib before the first import. ps2exe's lazy
+    # fallback (catch TypeError, set env, retry) breaks when frozen because the
+    # bootloader's ctypes hook re-raises that TypeError as PyInstallerImportError.
+    runtime_hooks=["rthook_libarchive.py"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
