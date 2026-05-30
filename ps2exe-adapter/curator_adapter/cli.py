@@ -340,41 +340,121 @@ def _exe_fingerprint(reader, exe_path):
 
 
 def _scan_audio_tracks(readers, mods, manager):
-    """Fingerprint raw CDDA audio tracks sitting beside the data track (Tier-4).
+    """Fingerprint raw CDDA audio tracks (Tier-4).
 
-    Handles multi-track containers (e.g. a zip of per-track .bins). Single-bin+cue
-    images are not split here yet (would need cue parsing)."""
-    from . import audio
-
+    Two layouts: a single combined .bin described by a .cue (Redump), or one .bin per
+    track sitting beside the data track."""
     media = []
     containers = [r for r in readers if isinstance(r, mods["compressed"])]
     for r in containers:
-        for entry in r.iso_iterator(r.get_root_dir(), recursive=True, include_dirs=False):
-            path = r.get_file_path(entry)
-            try:
-                size = int(r.get_file_size(entry))
-            except Exception:  # noqa: BLE001
-                continue
-            try:
-                fh = r.open_file(entry)
-                is_ctx = hasattr(fh, "__enter__")
-                if is_ctx:
-                    fh.__enter__()
-                try:
-                    head = fh.read(16)
-                    if not audio.is_audio_track(head, size):
-                        continue
-                    # Cap to the first ~90s for speed; deterministic prefix still matches.
-                    raw = head + fh.read(audio.MAX_FP_BYTES - 16)
-                finally:
-                    with contextlib.suppress(Exception):
-                        fh.__exit__(None, None, None) if is_ctx else fh.close()
-            except Exception:  # noqa: BLE001
-                continue
-            fp = audio.fingerprint_pcm(raw)
-            if fp:
-                media.append({"path": _clean_path(path), "kind": "audio", "audio_fp": fp})
+        cue_media = _scan_cue_audio(r)
+        if cue_media is not None:
+            media.extend(cue_media)
+        else:
+            media.extend(_scan_member_audio(r))
     return media
+
+
+def _read_entry(reader, entry, length=None):
+    fh = reader.open_file(entry)
+    is_ctx = hasattr(fh, "__enter__")
+    if is_ctx:
+        fh.__enter__()
+    try:
+        return fh.read() if length is None else fh.read(length)
+    finally:
+        with contextlib.suppress(Exception):
+            fh.__exit__(None, None, None) if is_ctx else fh.close()
+
+
+def _scan_member_audio(r):
+    """Per-member: separate raw-CDDA .bin tracks beside the data track."""
+    from . import audio
+
+    out = []
+    for entry in r.iso_iterator(r.get_root_dir(), recursive=True, include_dirs=False):
+        path = r.get_file_path(entry)
+        try:
+            size = int(r.get_file_size(entry))
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            fh = r.open_file(entry)
+            is_ctx = hasattr(fh, "__enter__")
+            if is_ctx:
+                fh.__enter__()
+            try:
+                head = fh.read(16)
+                if not audio.is_audio_track(head, size):
+                    continue
+                raw = head + fh.read(audio.MAX_FP_BYTES - 16)
+            finally:
+                with contextlib.suppress(Exception):
+                    fh.__exit__(None, None, None) if is_ctx else fh.close()
+        except Exception:  # noqa: BLE001
+            continue
+        fp = audio.fingerprint_pcm(raw)
+        if fp:
+            out.append({"path": _clean_path(path), "kind": "audio", "audio_fp": fp})
+    return out
+
+
+def _scan_cue_audio(r):
+    """Single combined .bin + .cue: split audio tracks by cue offsets and fingerprint.
+
+    Returns None (not a single-bin+cue layout) so the caller can fall back."""
+    from . import audio
+
+    cue_text = None
+    bins = {}
+    for entry in r.iso_iterator(r.get_root_dir(), recursive=True, include_dirs=False):
+        base = os.path.basename(r.get_file_path(entry))
+        low = base.lower()
+        if low.endswith(".cue"):
+            try:
+                cue_text = _read_entry(r, entry).decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001
+                return None
+        elif low.endswith(".bin"):
+            bins[base.lower()] = entry
+
+    if not cue_text:
+        return None
+    files = audio.parse_cue(cue_text)
+    if len(files) != 1:
+        return None  # per-track files -> member scan handles it
+
+    spec = files[0]
+    bin_entry = bins.get(os.path.basename(spec["file"]).lower())
+    if bin_entry is None and len(bins) == 1:
+        bin_entry = next(iter(bins.values()))
+    if bin_entry is None:
+        return None
+
+    tracks = spec["tracks"]
+    out = []
+    for i, t in enumerate(tracks):
+        if t["type"] != "AUDIO" or t["start_frame"] is None:
+            continue
+        start = t["start_frame"]
+        nxt = tracks[i + 1]["start_frame"] if i + 1 < len(tracks) else None
+        length = (nxt - start) * audio.SECTOR if nxt else audio.MAX_FP_BYTES
+        fh = r.open_file(bin_entry)
+        is_ctx = hasattr(fh, "__enter__")
+        if is_ctx:
+            fh.__enter__()
+        try:
+            fh.seek(start * audio.SECTOR)
+            raw = fh.read(min(length, audio.MAX_FP_BYTES))
+        finally:
+            with contextlib.suppress(Exception):
+                fh.__exit__(None, None, None) if is_ctx else fh.close()
+        fp = audio.fingerprint_pcm(raw)
+        if fp:
+            out.append(
+                {"path": f"{_clean_path(spec['file'])}#{t['num']:02d}", "kind": "audio", "audio_fp": fp}
+            )
+    return out
 
 
 def main():

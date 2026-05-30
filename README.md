@@ -29,7 +29,7 @@ builds/                sample disc images for testing
 | Phase 1 — adapter → core → CLI (analyze, cache, catalog, export) | ✅ working |
 | ↳ nested archive→disc recursion (bin/cue inside zip/7z) | ✅ working |
 | ↳ Tier-3 chunk fingerprint (FastCDC + MinHash sketch + sidecar) | ✅ working & validated |
-| ↳ Tier-4 audio fingerprint (chroma sub-fingerprint sets, numpy; no libchromaprint) | ✅ desktop, validated |
+| ↳ Tier-4 audio fingerprint (chroma sub-fp sets, numpy; multi-bin + .cue single-bin) | ✅ validated (cross-build EU↔JP) |
 | ↳ Tier-5 exe binary fingerprint (TLSH + imphash; web imphash query) | ✅ built & validated |
 | ↳ web audio-Jaccard query (shared CDDA tracks) | ✅ built & validated |
 | ↳ exe TLSH-distance ranking, image pHash | ⬜ |
