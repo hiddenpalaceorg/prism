@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/curator-core",
     "crates/curator-cli",
+    "crates/curator-ffi",
 ]
 # curator-gui-win is added on Windows only (see crates/curator-gui-win).
 exclude = ["crates/curator-gui-win"]

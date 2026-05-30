@@ -19,6 +19,9 @@ pub enum Error {
     #[error("unsupported or unreadable image: {0}")]
     Unsupported(String),
 
+    #[error("cancelled")]
+    Cancelled,
+
     #[error("{0}")]
     Other(String),
 }

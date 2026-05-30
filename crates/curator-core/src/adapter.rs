@@ -176,15 +176,34 @@ pub fn run(
         tail
     });
 
-    let mut stdout_buf = String::new();
-    child
-        .stdout
-        .take()
-        .expect("piped stdout")
-        .read_to_string(&mut stdout_buf)?;
+    // Read stdout on a side thread too, so the main thread can poll for cancellation
+    // and kill the child promptly (analyses can run for minutes on multi-GB images).
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        buf
+    });
 
-    let status = child.wait()?;
+    let mut cancelled = false;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if observer.is_cancelled() {
+            cancelled = true;
+            let _ = child.kill();
+            break child.wait()?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+
+    let stdout_buf = stdout_thread.join().unwrap_or_default();
     let diag = stderr_thread.join().unwrap_or_default();
+
+    if cancelled {
+        return Err(Error::Cancelled);
+    }
 
     if !status.success() {
         return Err(Error::Adapter(format!(

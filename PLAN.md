@@ -5,12 +5,14 @@ dependency carried forward is **ps2exe** (latest), used as the ISO/container eng
 
 ## Progress log & resume guide (updated 2026-05-29)
 
-Work lives on branch **`drx/new`** (9 commits; not yet merged/pushed). README.md has
-the live status table. Commit rules: ≤5–7 word messages, **no AI attribution**
+Work lives on branch **`drx/new`** (not yet merged/pushed). README.md has the live
+status table. Commit rules: ≤5–7 word messages, **no AI attribution**
 (`~/.claude/settings.json` → `attribution: {commit:"",pr:""}`).
 
 **Commits so far (newest first):**
 ```
+(macOS GUI)  curator-ffi UniFFI bridge + SwiftUI app
+e6fd4a1  Add progress log to plan
 a93cdf8  Add self-contained adapter bundle script
 108e3c0  Add cue-sheet audio track extraction
 7adc6b0  Add exe TLSH-distance ranking (web)
@@ -45,10 +47,20 @@ ec8de44  Web service: search, similarity, submissions API
 - **Phase 2 (macOS)** — `ps2exe-adapter/bundle.sh` → self-contained bundle (standalone
   CPython 3.10 + locked deps + ps2exe src + bundled `unrar` + launcher), ~14 MB tar.
   Rust CLI runs it via `--adapter-bin`/`CURATOR_ADAPTER_BIN` with no uv/dev-python.
+- **Phase 3 (macOS GUI)** — `crates/curator-ffi` (UniFFI 0.31 proc-macros over the
+  core): `Engine.analyze/catalogSize/exportJsonl`, `ProgressListener` callback,
+  `CancelHandle`, `AnalysisSummary`+recursive `FileNode` tree. Cancellation wired into
+  the core (`Error::Cancelled`; `hash_image` polls; `adapter::run` kills the child).
+  SwiftUI app under `macos/` (SwiftPM): tree sidebar, file details+hashes, XML/JSON
+  viewer, batch+intra-file progress bars, Cancel. `macos/build-app.sh` → `Curator.app`.
+  Validated headlessly via `swift run curator-probe`: catalogSize, real hashing progress
+  events, cancellation → `.Cancelled`, adapter-via-uv error → `.Failed`.
 
 **Remaining:**
-- **Phase 3 GUIs** — UniFFI export from core, SwiftUI (macOS) + windows-rs. Not started
-  (can't be run/validated headless).
+- **Phase 3 Windows GUI** — windows-rs over the same `curator-ffi`/core (scaffold only;
+  can't build on macOS).
+- macOS GUI polish: embed the Phase-2 adapter bundle in `Curator.app`, add
+  similarity/submit UI (`POST /similarity`), drag-and-drop, recent-builds list.
 - Windows bundle; macOS codesign/notarization; native-arm64 `unrar`/`7zz`.
 - Web: richer UI (build detail / similarity browse), submission moderation.
 - Skipped: image pHash (validated algo, ~0 yield on retro discs — native formats).

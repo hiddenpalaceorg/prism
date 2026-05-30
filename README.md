@@ -12,9 +12,10 @@ See [`PLAN.md`](PLAN.md) for the full design and rationale.
 ```
 crates/curator-core/   Rust engine: schema, adapter driver, fingerprints, cache, SQLite, DAT/JSON
 crates/curator-cli/    Rust CLI (`curator`)
+crates/curator-ffi/    UniFFI bridge over the core (static lib for native GUIs)
 crates/curator-gui-win/ Windows GUI (windows-rs)         — scaffold
 ps2exe-adapter/        Python (uv): ps2exe → canonical JSON + NDJSON progress
-macos/                 macOS GUI (SwiftUI + UniFFI core) — scaffold
+macos/                 macOS GUI (SwiftUI + UniFFI core) — builds Curator.app
 web/                   Next.js + Postgres listing & similarity service — scaffold (schema done)
 lib/ps2exe/            ps2exe engine (submodule)
 old/                   the previous implementation, archived
@@ -39,7 +40,9 @@ builds/                sample disc images for testing
 | ↳ richer UI, submission moderation | ⬜ |
 | Phase 2 — self-contained macOS adapter bundle (standalone Python + deps + unrar) | ✅ built & validated |
 | ↳ Windows bundle, macOS codesign/notarize, native-arm64 unrar | ⬜ |
-| Phase 3 — native GUIs (UniFFI exports + SwiftUI + windows-rs) | ⬜ scaffold |
+| Phase 3 — UniFFI bridge (`curator-ffi`) + SwiftUI macOS app (tree, details, XML/JSON, progress, cancel) | ✅ built & validated |
+| ↳ macOS GUI: embed adapter bundle, similarity/submit UI, codesign | ⬜ |
+| ↳ Windows GUI (windows-rs) | ⬜ scaffold |
 
 ## Quick start (CLI)
 

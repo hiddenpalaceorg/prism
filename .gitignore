@@ -6,6 +6,10 @@ dist
 target/
 **/*.rs.bk
 
+# SwiftPM (macOS GUI)
+.build/
+/macos/.bindings
+
 # Python / uv
 .venv
 *.pyc
