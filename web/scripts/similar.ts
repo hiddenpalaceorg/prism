@@ -36,6 +36,14 @@ async function main() {
   r.tier3.forEach((x) => console.log(`  ${x.jaccard?.toFixed(3)}  ${x.name}`));
   if (!r.tier3.length) console.log("  (none)");
 
+  console.log("\nTier 4 — shared audio tracks (matched / best Jaccard):");
+  r.audio_neighbors.forEach((x) => console.log(`  ${x.matched_tracks} tracks (best ${x.best.toFixed(3)})  ${x.name}`));
+  if (!r.audio_neighbors.length) console.log("  (none)");
+
+  console.log("\nTier 5 — same exe imports (imphash):");
+  r.tier5_exe.forEach((x) => console.log(`  ${x.name}`));
+  if (!r.tier5_exe.length) console.log("  (none)");
+
   await pool.end();
 }
 

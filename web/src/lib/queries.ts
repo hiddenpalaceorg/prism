@@ -1,8 +1,49 @@
 // Search + similarity queries (the data layer behind the API routes).
 
 import type { Pool } from "pg";
-import { minhashJaccard, arrayLit, type QueryFeatures } from "./fingerprint";
+import { minhashJaccard, setJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
 import type { BuildRecord, SimilarityResult } from "./types";
+
+const AUDIO_MATCH_THRESHOLD = 0.3;
+
+/** Tier-4: builds sharing audio tracks (per-track Jaccard over chroma sub-fp sets). */
+export async function findAudioSimilar(
+  pool: Pool,
+  tracks: AudioTrack[],
+  exclude: string,
+  limit = 20
+) {
+  const perBuild = new Map<
+    string,
+    { sha256: string; name: string; system: string; matched_tracks: number; best: number }
+  >();
+  for (const qt of tracks) {
+    if (!qt.subfp.length) continue;
+    const r = await pool.query(
+      `SELECT a.build_sha256 AS sha256, b.name, b.system, a.subfp
+       FROM audio_fp a JOIN builds b ON b.sha256=a.build_sha256
+       WHERE a.build_sha256<>$2 AND a.subfp && $1::bigint[]`,
+      [arrayLit(qt.subfp), exclude]
+    );
+    // best matching candidate track per build for this query track
+    const bestPerBuild = new Map<string, { name: string; system: string; j: number }>();
+    for (const row of r.rows) {
+      const j = setJaccard(qt.subfp, row.subfp as string[]);
+      if (j < AUDIO_MATCH_THRESHOLD) continue;
+      const prev = bestPerBuild.get(row.sha256);
+      if (!prev || j > prev.j) bestPerBuild.set(row.sha256, { name: row.name, system: row.system, j });
+    }
+    for (const [sha, v] of bestPerBuild) {
+      const e = perBuild.get(sha) || { sha256: sha, name: v.name, system: v.system, matched_tracks: 0, best: 0 };
+      e.matched_tracks += 1;
+      e.best = Math.max(e.best, v.j);
+      perBuild.set(sha, e);
+    }
+  }
+  return [...perBuild.values()]
+    .sort((a, b) => b.matched_tracks - a.matched_tracks || b.best - a.best)
+    .slice(0, limit);
+}
 
 /** Log a similarity check by sha256 (read-only telemetry). */
 export async function logCheck(pool: Pool, sha256: string | null): Promise<void> {
@@ -13,7 +54,7 @@ export async function logCheck(pool: Pool, sha256: string | null): Promise<void>
 /** Fuse Tier 1/2/3 neighbors for a query build's derived features. */
 export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Promise<SimilarityResult> {
   const exclude = q.sha256 || "";
-  const out: SimilarityResult = { tier1_twins: [], tier2: [], tier3: [], tier5_exe: [] };
+  const out: SimilarityResult = { tier1_twins: [], tier2: [], tier3: [], tier5_exe: [], audio_neighbors: [] };
 
   if (q.content_hash) {
     const r = await pool.query(
@@ -68,6 +109,10 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
       [q.imphash, exclude]
     );
     out.tier5_exe = r.rows;
+  }
+
+  if (q.audioTracks.length) {
+    out.audio_neighbors = await findAudioSimilar(pool, q.audioTracks, exclude, limit);
   }
 
   return out;

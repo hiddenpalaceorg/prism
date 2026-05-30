@@ -20,6 +20,9 @@ _MASK = (1 << 63) - 1
 
 # raw CDDA sector = 2352 bytes of 16-bit stereo PCM (no sync/header)
 SECTOR = 2352
+# fingerprint at most the first ~90s of a track (90 * 75 sectors) for speed;
+# a deterministic prefix still matches the same track across builds.
+MAX_FP_BYTES = 90 * 75 * SECTOR
 # data-track sectors start with this 12-byte sync pattern
 DATA_SYNC = b"\x00" + b"\xff" * 10 + b"\x00"
 

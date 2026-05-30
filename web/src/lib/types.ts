@@ -77,4 +77,5 @@ export interface SimilarityResult {
   tier2: SimilarityHit[];
   tier3: SimilarityHit[];
   tier5_exe: { sha256: string; name: string; system: string }[];
+  audio_neighbors: { sha256: string; name: string; system: string; matched_tracks: number; best: number }[];
 }
