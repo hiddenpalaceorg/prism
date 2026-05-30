@@ -45,6 +45,7 @@ impl Cache {
     }
 
     pub fn load(&self, sha256: &str) -> Result<Option<BuildRecord>> {
+        validate_sha256(sha256)?;
         let p = self.json_path(sha256);
         if !p.exists() {
             return Ok(None);
@@ -60,6 +61,16 @@ impl Cache {
         std::fs::write(&jp, json)?;
         std::fs::write(self.xml_path(&record.image.sha256), xml)?;
         Ok(jp)
+    }
+}
+
+/// Reject any caller-supplied key that isn't a bare 64-char lowercase hex sha256,
+/// preventing `../` path traversal when the key is interpolated into a filename.
+fn validate_sha256(sha256: &str) -> Result<()> {
+    if sha256.len() == 64 && sha256.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        Ok(())
+    } else {
+        Err(Error::Other(format!("invalid sha256 key: {sha256:?}")))
     }
 }
 

@@ -113,13 +113,16 @@ fn decode_sha1(hex_str: &str) -> Option<[u8; 20]> {
     v.try_into().ok()
 }
 
-fn digest_of_set(digests: &mut [[u8; 20]]) -> String {
+fn digest_of_set(digests: &mut [[u8; 20]]) -> Option<String> {
+    if digests.is_empty() {
+        return None;
+    }
     digests.sort_unstable();
     let mut h = Sha256::new();
     for d in digests.iter() {
         h.update(d);
     }
-    hex::encode(h.finalize())
+    Some(hex::encode(h.finalize()))
 }
 
 /// Cheap precomputed query features.
@@ -135,8 +138,8 @@ pub fn structural(system: &str, files: &[RawFile]) -> Structural {
         if f.is_dir {
             continue;
         }
-        file_count += 1;
-        total_size += f.size.unwrap_or(0);
+        file_count = file_count.saturating_add(1);
+        total_size = total_size.saturating_add(f.size.unwrap_or(0));
         if let Some(ext) = extension(&f.path) {
             *ext_histogram.entry(ext).or_insert(0) += 1;
         }

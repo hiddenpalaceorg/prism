@@ -194,7 +194,13 @@ impl Analyzer {
                 Err(_) => continue, // cache entry pruned; skip
             };
             // Re-emit compactly, one record per line.
-            let record: BuildRecord = serde_json::from_slice(&bytes)?;
+            let record: BuildRecord = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("skipping unparseable cache entry {path}: {e}");
+                    continue;
+                }
+            };
             serde_json::to_writer(&mut out, &record)?;
             out.write_all(b"\n")?;
             n += 1;
