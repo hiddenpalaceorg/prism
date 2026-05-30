@@ -56,6 +56,7 @@ final class AppModel: ObservableObject {
     @Published var docMode: DocMode = .xml
     @Published var errorMessage: String?
     @Published var catalogCount: UInt64 = 0
+    @Published var recent: [CatalogEntry] = []
 
     // Web service (read-only similarity + submit).
     @Published var similarity: SimilarityResponse?
@@ -98,6 +99,28 @@ final class AppModel: ObservableObject {
 
     func refreshCatalogCount() {
         catalogCount = (try? engine?.catalogSize()) ?? catalogCount
+        recent = (try? engine?.recentBuilds(limit: 25)) ?? recent
+    }
+
+    /// Populate the recent list at launch (builds the engine lazily).
+    func loadRecentAtLaunch() {
+        guard recent.isEmpty, engine == nil else { return }
+        if let e = try? makeEngine() { recent = (try? e.recentBuilds(limit: 25)) ?? [] }
+    }
+
+    /// Reopen a catalogued build from cache (no re-analysis).
+    func openRecent(sha256: String) {
+        guard !isWorking else { return }
+        do {
+            guard let e = try? makeEngine(), let summary = try e.loadBuild(sha256: sha256) else {
+                status = "Build not in cache anymore."
+                return
+            }
+            errorMessage = nil
+            finish(summary: summary)
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+        }
     }
 
     func analyze(url: URL) {
@@ -174,6 +197,14 @@ final class AppModel: ObservableObject {
             }
             isQuerying = false
         }
+    }
+
+    /// Open a build in the web UI's search (exact-hash lookup) in the default browser.
+    func openInWeb(sha256: String) {
+        var comps = URLComponents(url: service.baseURL, resolvingAgainstBaseURL: false)
+        comps?.path = "/"
+        comps?.queryItems = [URLQueryItem(name: "q", value: sha256)]
+        if let url = comps?.url { NSWorkspace.shared.open(url) }
     }
 
     /// Present the native open panel (files or folders) and analyze the choice.

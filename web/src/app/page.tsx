@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface Hit {
   sha256: string;
@@ -16,12 +16,11 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  async function runSearch(e: React.FormEvent) {
-    e.preventDefault();
-    if (!q.trim()) return;
+  const doSearch = useCallback(async (term: string) => {
+    if (!term.trim()) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`);
       const data = await res.json();
       setMode(data.mode ?? "");
       setHits(data.results ?? []);
@@ -29,6 +28,20 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // Deep-link support: /?q=<term> (e.g. a sha256 opened from the macOS app).
+  useEffect(() => {
+    const term = new URLSearchParams(window.location.search).get("q");
+    if (term) {
+      setQ(term);
+      void doSearch(term);
+    }
+  }, [doSearch]);
+
+  function runSearch(e: React.FormEvent) {
+    e.preventDefault();
+    void doSearch(q);
   }
 
   return (

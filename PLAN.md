@@ -62,6 +62,11 @@ ec8de44  Web service: search, similarity, submissions API
   (`POST /api/submissions` with nickname). **Validated live**: recreated the `curator` DB,
   seeded two content-twins, server on :3001 — similarity returned `tier1_twins` matching
   the Swift `CodingKeys`, submit returned `202 {sha256,status:"queued"}` and persisted.
+- **Phase 3 (macOS niceties)** — drag-and-drop onto the window; a recent-builds sidebar
+  (new `Db::list_recent`/`CatalogRow`, FFI `recentBuilds`/`loadBuild`) that reopens a
+  catalogued build from cache without re-analysis; neighbor rows deep-link into the web
+  search (`/?q=<sha256>`; search page now reads the `q` URL param on mount). Validated
+  via the probe against a crafted catalog (recent list + cache reload) and `tsc`.
 
 **Remaining:**
 - **Phase 3 Windows GUI** — windows-rs over the same `curator-ffi`/core (scaffold only;

@@ -347,6 +347,16 @@ uint64_t uniffi_curator_ffi_fn_method_engine_catalog_size(uint64_t ptr, RustCall
 uint64_t uniffi_curator_ffi_fn_method_engine_export_jsonl(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LOAD_BUILD
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LOAD_BUILD
+RustBuffer uniffi_curator_ffi_fn_method_engine_load_build(uint64_t ptr, RustBuffer sha256, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_RECENT_BUILDS
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_RECENT_BUILDS
+RustBuffer uniffi_curator_ffi_fn_method_engine_recent_builds(uint64_t ptr, uint32_t limit, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_INIT_CALLBACK_VTABLE_PROGRESSLISTENER
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_INIT_CALLBACK_VTABLE_PROGRESSLISTENER
 void uniffi_curator_ffi_fn_init_callback_vtable_progresslistener(const UniffiVTableCallbackInterfaceProgressListener* _Nonnull vtable
@@ -639,6 +649,18 @@ uint16_t uniffi_curator_ffi_checksum_method_engine_catalog_size(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_JSONL
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_JSONL
 uint16_t uniffi_curator_ffi_checksum_method_engine_export_jsonl(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LOAD_BUILD
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LOAD_BUILD
+uint16_t uniffi_curator_ffi_checksum_method_engine_load_build(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_RECENT_BUILDS
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_RECENT_BUILDS
+uint16_t uniffi_curator_ffi_checksum_method_engine_recent_builds(void
     
 );
 #endif

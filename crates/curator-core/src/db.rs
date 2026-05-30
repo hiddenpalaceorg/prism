@@ -13,6 +13,17 @@ pub struct Db {
     conn: Connection,
 }
 
+/// A catalog row for listing (recent builds, etc.).
+#[derive(Debug, Clone)]
+pub struct CatalogRow {
+    pub sha256: String,
+    pub name: String,
+    pub system: String,
+    pub file_count: u64,
+    pub total_size: u64,
+    pub analyzed_at: i64,
+}
+
 impl Db {
     pub fn open(data_dir: &Path) -> Result<Self> {
         let conn = Connection::open(data_dir.join("curator.db"))?;
@@ -108,6 +119,25 @@ impl Db {
     pub fn count_builds(&self) -> Result<u64> {
         let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM builds", [], |r| r.get(0))?;
         Ok(n as u64)
+    }
+
+    /// The most recently analyzed builds, newest first.
+    pub fn list_recent(&self, limit: u32) -> Result<Vec<CatalogRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT sha256, name, system, file_count, total_size, analyzed_at
+             FROM builds ORDER BY analyzed_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit], |r| {
+            Ok(CatalogRow {
+                sha256: r.get(0)?,
+                name: r.get(1)?,
+                system: r.get(2)?,
+                file_count: r.get::<_, i64>(3)? as u64,
+                total_size: r.get::<_, i64>(4)? as u64,
+                analyzed_at: r.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Cached JSON paths for every catalogued build, oldest first.
