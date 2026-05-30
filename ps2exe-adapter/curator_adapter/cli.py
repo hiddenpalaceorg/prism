@@ -201,7 +201,9 @@ def _hash_files(reader, manager):
 
 
 def _hash_one(reader, f, rec, size, hbar):
-    md5, sha1, sha256 = hashlib.md5(), hashlib.sha1(), hashlib.sha256()
+    md5 = hashlib.md5(usedforsecurity=False)
+    sha1 = hashlib.sha1(usedforsecurity=False)
+    sha256 = hashlib.sha256()
     read = 0
     # Buffer the file for content-defined chunking when it fits; otherwise hash only.
     buffer_it = size is not None and size <= _CHUNK_CAP
@@ -226,7 +228,8 @@ def _hash_one(reader, f, rec, size, hbar):
         finally:
             with contextlib.suppress(Exception):
                 fh.__exit__(None, None, None) if is_ctx else fh.close()
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("curator-adapter").debug("hash failed for %s: %s", rec["path"], e)
         rec["unreadable"] = True
         return
 
@@ -257,37 +260,37 @@ def analyze(path):
     manager = ProgressManager()
 
     basename = os.path.basename(path)
-    fp = open(path, "rb")
-    parent = mods["directory"](pathlib.Path(path).resolve().parent)
+    with open(path, "rb") as fp:
+        parent = mods["directory"](pathlib.Path(path).resolve().parent)
 
-    readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
-    if not readers:
-        raise SystemExit(f"no readable volume found in {path!r} (unsupported format?)")
+        readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
+        if not readers:
+            raise SystemExit(f"no readable volume found in {path!r} (unsupported format?)")
 
-    fs_readers = [r for r in readers if not isinstance(r, mods["compressed"])]
-    if fs_readers:
-        reader = _choose_primary(fs_readers)
-    else:
-        reader = None
-        for r in readers:
-            reader = _find_filesystem_reader(r, mods, manager)
-            if reader is not None:
-                break
-        if reader is None:
-            reader = _choose_primary(readers)
+        fs_readers = [r for r in readers if not isinstance(r, mods["compressed"])]
+        if fs_readers:
+            reader = _choose_primary(fs_readers)
+        else:
+            reader = None
+            for r in readers:
+                reader = _find_filesystem_reader(r, mods, manager)
+                if reader is not None:
+                    break
+            if reader is None:
+                reader = _choose_primary(readers)
 
-    system = base.get_system_type(reader)
-    processor_class = factory.get_iso_processor_class(system) or generic
-    processor = processor_class(reader, basename, system, manager)
+        system = base.get_system_type(reader)
+        processor_class = factory.get_iso_processor_class(system) or generic
+        processor = processor_class(reader, basename, system, manager)
 
-    info = _gather_info(processor, reader, system, mods)
-    files = _hash_files(reader, manager)
-    media = _scan_audio_tracks(readers, mods, manager)
-    exe_fp = None
-    exe = info.get("exe")
-    if exe and exe.get("filename"):
-        exe_fp = _exe_fingerprint(reader, exe["filename"])
-    return {"info": info, "files": files, "media": media, "exe_fp": exe_fp}
+        info = _gather_info(processor, reader, system, mods)
+        files = _hash_files(reader, manager)
+        media = _scan_audio_tracks(readers, mods, manager)
+        exe_fp = None
+        exe = info.get("exe")
+        if exe and exe.get("filename"):
+            exe_fp = _exe_fingerprint(reader, exe["filename"])
+        return {"info": info, "files": files, "media": media, "exe_fp": exe_fp}
 
 
 def _exe_fingerprint(reader, exe_path):
@@ -391,7 +394,8 @@ def _scan_member_audio(r):
             finally:
                 with contextlib.suppress(Exception):
                     fh.__exit__(None, None, None) if is_ctx else fh.close()
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("curator-adapter").debug("audio read failed for %s: %s", path, e)
             continue
         fp = audio.fingerprint_pcm(raw)
         if fp:
@@ -439,6 +443,8 @@ def _scan_cue_audio(r):
         start = t["start_frame"]
         nxt = tracks[i + 1]["start_frame"] if i + 1 < len(tracks) else None
         length = (nxt - start) * audio.SECTOR if nxt else audio.MAX_FP_BYTES
+        if length <= 0:  # malformed cue with non-monotonic INDEX
+            length = audio.MAX_FP_BYTES
         fh = r.open_file(bin_entry)
         is_ctx = hasattr(fh, "__enter__")
         if is_ctx:
