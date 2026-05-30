@@ -42,6 +42,16 @@ if _osdir:
         if _f.is_file():
             binaries.append((str(_f), f"lib/libarchive/{_osdir}"))
 
+# rarfile (utils/archives.py) shells out to a bundled UnRAR tool when no system
+# 7-Zip/unrar is found, via lib/unrar/<bitness>/UnRAR.exe at the same _MEIPASS-relative
+# path. Only Windows ships a bundled tool (win64, matching our 64-bit builds); off-Windows
+# rarfile finds a system tool. Added as data (an invoked exe, not a linked library).
+if sys.platform == "win32":
+    _unrar = ps2exe / "lib" / "unrar" / "win64"
+    for _f in sorted(_unrar.glob("*")):
+        if _f.is_file():
+            datas.append((str(_f), "lib/unrar/win64"))
+
 a = Analysis(
     ["pyinstaller_entry.py"],
     pathex=[str(here), str(ps2exe)],
