@@ -67,6 +67,9 @@ final class AppModel: ObservableObject {
     private let service = CuratorService()
     private var engine: Engine?
     private var cancelHandle: CancelHandle?
+    /// Dedicated queue for the blocking synchronous FFI `analyze` call, so it
+    /// doesn't occupy a Swift-concurrency cooperative-pool thread.
+    private let analysisQueue = DispatchQueue(label: "curator.analysis")
 
     var selectedNode: DiscNode? { selection.flatMap { nodeIndex[$0] } }
 
@@ -137,10 +140,22 @@ final class AppModel: ObservableObject {
         }
         let path = url.path
 
-        Task.detached(priority: .userInitiated) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
             do {
                 let engine = try await MainActor.run { try self.makeEngine() }
-                let summary = try engine.analyze(path: path, listener: forwarder, cancel: cancel)
+                // Run the blocking FFI call on a dedicated queue, off the
+                // cooperative pool, then hop the result back to the main actor.
+                let summary: AnalysisSummary = try await withCheckedThrowingContinuation { continuation in
+                    self.analysisQueue.async {
+                        do {
+                            let summary = try engine.analyze(path: path, listener: forwarder, cancel: cancel)
+                            continuation.resume(returning: summary)
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
                 await MainActor.run { self.finish(summary: summary) }
             } catch CuratorError.Cancelled {
                 await MainActor.run { self.fail("Cancelled.") }
@@ -155,6 +170,12 @@ final class AppModel: ObservableObject {
     func cancel() {
         cancelHandle?.cancel()
         status = "Cancelling…"
+    }
+
+    /// Surface a drag-and-drop resolution failure to the user.
+    func reportDropFailure(_ message: String) {
+        errorMessage = message
+        status = "Drop failed."
     }
 
     // MARK: - Web service actions

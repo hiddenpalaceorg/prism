@@ -1,12 +1,12 @@
-#!/bin/sh
+#!/bin/bash
 # Build the Rust core + SwiftUI front-end and assemble a launchable Curator.app.
 #
-#   sh macos/build-app.sh [debug|release]   (default: release)
+#   bash macos/build-app.sh [debug|release]   (default: release)
 #
 # The app finds the adapter via CURATOR_ADAPTER_BIN (a Phase-2 bundle) or
 # CURATOR_ADAPTER_DIR (a uv project); set one before launching for dev. A shipped
 # build would embed the Phase-2 bundle inside Curator.app/Contents/Resources.
-set -e
+set -euo pipefail
 
 CFG=${1:-release}
 HERE=$(cd "$(dirname "$0")" && pwd)
