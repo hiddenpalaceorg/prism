@@ -48,11 +48,12 @@ cargo build --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc
 # → target/x86_64-pc-windows-gnu/debug/curator-gui-win.exe  (PE32+ GUI executable)
 ```
 
-## Adapter bundle
+## Adapter binary
 
-On Windows, `python ..\..\ps2exe-adapter\bundle.py` (uv on PATH) produces
-`ps2exe-adapter\dist\bundle\` with a `curator-adapter.cmd` launcher. Copy that `bundle`
-folder next to the exe as `adapter\` and the GUI finds it automatically — no env var,
-no dev tools. Code-signing is out of scope.
+On Windows, `uv run --group dev pyinstaller curator-adapter.spec` (run in
+`ps2exe-adapter\`, uv on PATH) freezes `dist\curator-adapter.exe` — one self-contained
+file. Place it next to the GUI as `adapter\curator-adapter.exe` and the GUI finds it
+automatically — no env var, no dev tools. (CI does this and ships the zip.) Code-signing
+is out of scope.
 
 Shares all logic with the macOS app via `curator-core`; only the shell differs.

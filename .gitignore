@@ -25,5 +25,6 @@ node_modules
 # Sample disc images (large, local test fixtures only)
 /builds
 
-# Adapter bundle output
+# Adapter freeze output (PyInstaller)
 /ps2exe-adapter/dist
+/ps2exe-adapter/build

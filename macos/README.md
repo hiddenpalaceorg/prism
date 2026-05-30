@@ -33,13 +33,11 @@ service at `CURATOR_WEB_URL` (default `http://localhost:3001`).
 ## Build & run
 
 ```sh
-# optional: build the self-contained Python adapter once (embedded into the .app below)
-python ps2exe-adapter/bundle.py
-
-# build the Rust core + assemble the .app (release by default); embeds the bundle if present
+# build the Rust core + freeze the Python adapter (PyInstaller) + assemble the .app.
+# build-app.sh runs the adapter freeze itself; set CURATOR_SKIP_ADAPTER=1 to skip it.
 sh macos/build-app.sh            # or: sh macos/build-app.sh debug
 
-open macos/dist/Curator.app      # self-contained when the bundle was embedded
+open macos/dist/Curator.app      # self-contained: adapter embedded, no uv/Python needed
 ```
 
 Iterate without packaging: `cd macos && CURATOR_ADAPTER_DIR=../ps2exe-adapter swift run CuratorApp`.

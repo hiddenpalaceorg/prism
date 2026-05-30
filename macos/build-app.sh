@@ -70,16 +70,20 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-echo ">> embed adapter bundle (if built)"
-# The app resolves Contents/Resources/adapter/curator-adapter automatically. Build it
-# first with `python ps2exe-adapter/bundle.py`; relocatable, so copying it here works.
-BUNDLE="$ROOT/ps2exe-adapter/dist/bundle"
-if [ -d "$BUNDLE" ] && [ -x "$BUNDLE/curator-adapter" ]; then
-  cp -R "$BUNDLE" "$APP/Contents/Resources/adapter"
-  echo "   embedded $(du -sh "$APP/Contents/Resources/adapter" | cut -f1) adapter — app is self-contained"
+echo ">> build + embed the adapter (PyInstaller one-file)"
+# The app resolves Contents/Resources/adapter/curator-adapter automatically (AppModel).
+# Set CURATOR_SKIP_ADAPTER=1 to skip the ~2-min freeze during Swift-only iteration
+# (the app then falls back to CURATOR_ADAPTER_DIR/_BIN).
+ADAPTER_SRC="$ROOT/ps2exe-adapter"
+if [ "${CURATOR_SKIP_ADAPTER:-0}" = "1" ]; then
+  echo "   skipped (CURATOR_SKIP_ADAPTER=1); app uses CURATOR_ADAPTER_DIR/_BIN"
 else
-  echo "   no bundle at $BUNDLE — app falls back to CURATOR_ADAPTER_DIR/_BIN."
-  echo "   build one with:  python ps2exe-adapter/bundle.py   then re-run this script."
+  ( cd "$ADAPTER_SRC" && uv run --group dev pyinstaller --noconfirm \
+      --workpath build --distpath dist curator-adapter.spec )
+  mkdir -p "$APP/Contents/Resources/adapter"
+  cp "$ADAPTER_SRC/dist/curator-adapter" "$APP/Contents/Resources/adapter/curator-adapter"
+  chmod +x "$APP/Contents/Resources/adapter/curator-adapter"
+  echo "   embedded adapter ($(du -h "$APP/Contents/Resources/adapter/curator-adapter" | cut -f1)) — app is self-contained"
 fi
 
 echo ">> done: $APP"

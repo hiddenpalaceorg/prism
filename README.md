@@ -39,8 +39,8 @@ builds/                sample disc images for testing
 | ↳ text-embedding tier (all-MiniLM-L6-v2 → pgvector cosine) | ✅ built & validated |
 | ↳ build-detail page (`/build/[sha256]`: details, files, similar) + search links | ✅ built & validated (live) |
 | ↳ submission-moderation UI (`/moderate`: list, accept→ingest, reject; `MODERATION_TOKEN`-gated) | ✅ built & validated (live) |
-| Phase 2 — self-contained adapter bundle (`bundle.py`, cross-platform; standalone Python + deps + archive tool) | ✅ built & validated (macOS run; Windows branch reviewed) |
-| ↳ macOS codesign/notarize, native-arm64 unrar | ⬜ (signing out of scope) |
+| Phase 2 — self-contained adapter binary (PyInstaller `curator-adapter.spec`; one ≈60 MB file) | ✅ built & validated (macOS run + CI Windows/macOS) |
+| ↳ macOS codesign/notarize | ⬜ (signing out of scope) |
 | Phase 3 — UniFFI bridge (`curator-ffi`) + SwiftUI macOS app (tree, details, XML/JSON, progress, cancel) | ✅ built & validated |
 | ↳ macOS GUI: embedded self-contained adapter (no env/dev-tools) | ✅ built & validated |
 | ↳ macOS GUI: Find-Similar + Submit wired to web API (neighbors deep-link to web) | ✅ built & validated (live) |
@@ -49,7 +49,7 @@ builds/                sample disc images for testing
 | Phase 3 — Windows GUI (windows-rs: tree, XML view, progress, cancel, open file/folder) | ✅ built (cross-compiled to a PE32+ .exe) |
 | ↳ Windows GUI: Find-Similar + Submit (native WinHTTP → web API) | ✅ built (cross-compiled) |
 | ↳ Windows GUI: recent-builds menu, drag-and-drop, adapter-next-to-exe | ✅ built (cross-compiled) |
-| ↳ Windows adapter bundle (`bundle.py` → `curator-adapter.cmd`) | ✅ (Windows branch reviewed; run on Windows) |
+| ↳ Windows adapter binary (PyInstaller → `curator-adapter.exe` beside the GUI) | ✅ (built in CI on `windows-latest`) |
 
 ## Quick start (CLI)
 
@@ -82,24 +82,24 @@ cd web && npm test                                                  # tlsh vs py
 cd ps2exe-adapter && uv run --with pytest pytest tests/             # audio fingerprint
 ```
 
-CI (`.github/workflows/ci.yml`) runs all of the above on every push/PR, plus a
-`cargo check` of the Windows GUI against `x86_64-pc-windows-gnu` and `tsc --noEmit`.
+CI (`.github/workflows/ci.yml`) runs all of the above on every push/PR, plus native
+Windows and macOS app builds (with the PyInstaller adapter) published as per-commit
+downloads, and `tsc --noEmit`.
 
-## Bundling (no dev toolchain)
+## Packaging (no dev toolchain)
 
-`python ps2exe-adapter/bundle.py` (with `uv` on PATH; cross-platform — macOS or
-Windows) builds a self-contained adapter under `ps2exe-adapter/dist/bundle/`: a
-relocatable standalone CPython 3.10 with the locked deps, the adapter + ps2exe source,
-a bundled archive tool, and a `curator-adapter`/`curator-adapter.cmd` launcher.
-The CLI/GUI uses it with no uv/Python/dev-tools present:
+`cd ps2exe-adapter && uv run --group dev pyinstaller curator-adapter.spec` freezes the
+adapter into a single self-contained `dist/curator-adapter` (≈60 MB; `.exe` on Windows):
+the locked deps, the adapter + ps2exe source, and the vendored libarchive in one binary.
+The CLI/GUI run it with no uv/Python/dev-tools present:
 
 ```sh
-curator --adapter-bin /path/to/bundle/curator-adapter analyze image.bin   # or CURATOR_ADAPTER_BIN
+curator --adapter-bin /path/to/curator-adapter analyze image.bin   # or CURATOR_ADAPTER_BIN
 ```
 
-Remaining for a shippable app: a Windows bundle, macOS code-signing/notarization, and a
-native-arm64 `unrar`/`7zz` (the bundled `unrar` is x86_64, runs via Rosetta). `unrar`
-carries the unRAR license (extraction-only redistribution).
+CI builds this on Windows and macOS and publishes per-commit downloads (the Windows
+`.exe` + adapter, and the adapter-embedded macOS `.app`) — see `.github/workflows/ci.yml`.
+Remaining for a shippable app: macOS code-signing/notarization.
 
 ## Notes
 
