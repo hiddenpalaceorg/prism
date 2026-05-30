@@ -132,6 +132,7 @@ def _peaks(S: np.ndarray):
 
 def fingerprint_pcm(raw: bytes) -> list[int]:
     """Return the constellation sub-fingerprint set for raw 16-bit stereo 44.1kHz PCM."""
+    raw = raw[: len(raw) // 4 * 4]  # whole 4-byte stereo frames only
     if len(raw) < FRAME * DECIM * 4:
         return []
     x = np.frombuffer(raw, dtype="<i2").astype(np.float32)

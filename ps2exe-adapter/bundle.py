@@ -96,6 +96,10 @@ def main():
     for cache in OUT.rglob("__pycache__"):
         shutil.rmtree(cache, ignore_errors=True)
 
+    # Fail the build loudly if pruning removed a dep the adapter actually imports.
+    run([str(bpy), "-c", "import curator_adapter"],
+        env={**env, "PYTHONPATH": str(OUT)})
+
     print(">> launcher")
     write_launcher(OUT)
 
