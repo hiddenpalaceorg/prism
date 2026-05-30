@@ -19,9 +19,13 @@ struct Cli {
     #[arg(long, global = true)]
     data_dir: Option<PathBuf>,
 
-    /// Directory of the uv-managed ps2exe-adapter project.
+    /// Directory of the uv-managed ps2exe-adapter project (development).
     #[arg(long, global = true, default_value = "ps2exe-adapter", env = "CURATOR_ADAPTER_DIR")]
     adapter_dir: String,
+
+    /// Path to a bundled adapter launcher (shipped app; overrides --adapter-dir, no uv needed).
+    #[arg(long, global = true, env = "CURATOR_ADAPTER_BIN")]
+    adapter_bin: Option<String>,
 
     #[command(subcommand)]
     command: Command,
@@ -60,10 +64,11 @@ enum Format {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let analyzer = Analyzer::new(Config {
-        adapter: AdapterCommand::uv(&cli.adapter_dir),
-        data_dir: cli.data_dir.clone(),
-    })
+    let adapter = match &cli.adapter_bin {
+        Some(bin) => AdapterCommand::bin(bin),
+        None => AdapterCommand::uv(&cli.adapter_dir),
+    };
+    let analyzer = Analyzer::new(Config { adapter, data_dir: cli.data_dir.clone() })
     .context("initializing analyzer")?;
 
     match cli.command {

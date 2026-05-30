@@ -20,3 +20,6 @@ node_modules
 
 # Sample disc images (large, local test fixtures only)
 /builds
+
+# Adapter bundle output
+/ps2exe-adapter/dist

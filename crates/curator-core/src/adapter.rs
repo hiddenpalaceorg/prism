@@ -21,7 +21,7 @@ pub struct AdapterCommand {
 }
 
 impl AdapterCommand {
-    /// `uv run --project <adapter_dir> curator-adapter`
+    /// `uv run --project <adapter_dir> curator-adapter` (development).
     pub fn uv(adapter_dir: &str) -> Self {
         AdapterCommand {
             program: "uv".into(),
@@ -32,6 +32,11 @@ impl AdapterCommand {
                 "curator-adapter".into(),
             ],
         }
+    }
+
+    /// A bundled, self-contained adapter launcher (shipped app — no uv/Python needed).
+    pub fn bin(launcher_path: &str) -> Self {
+        AdapterCommand { program: launcher_path.into(), args: vec![] }
     }
 }
 

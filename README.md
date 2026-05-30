@@ -32,11 +32,13 @@ builds/                sample disc images for testing
 | ↳ Tier-4 audio fingerprint (chroma sub-fp sets, numpy; multi-bin + .cue single-bin) | ✅ validated (cross-build EU↔JP) |
 | ↳ Tier-5 exe binary fingerprint (TLSH + imphash; web imphash query) | ✅ built & validated |
 | ↳ web audio-Jaccard query (shared CDDA tracks) | ✅ built & validated |
-| ↳ exe TLSH-distance ranking, image pHash | ⬜ |
+| ↳ exe TLSH-distance ranking (web, validated vs py-tlsh) | ✅ built & validated |
+| ↳ image pHash | ⬜ skipped (validated algorithm; ~0 yield on retro discs) |
 | Phase 4 — web (Next 16/TS/Tailwind): schema, ingester, search/similarity/submission API, search UI | ✅ built & validated |
 | ↳ text-embedding tier (all-MiniLM-L6-v2 → pgvector cosine) | ✅ built & validated |
 | ↳ richer UI, submission moderation | ⬜ |
-| Phase 2 — uv bundling (mac/win, native deps) | ⬜ |
+| Phase 2 — self-contained macOS adapter bundle (standalone Python + deps + unrar) | ✅ built & validated |
+| ↳ Windows bundle, macOS codesign/notarize, native-arm64 unrar | ⬜ |
 | Phase 3 — native GUIs (UniFFI exports + SwiftUI + windows-rs) | ⬜ scaffold |
 
 ## Quick start (CLI)
@@ -61,6 +63,21 @@ cargo run -p curator-cli -- export -o builds.jsonl
 
 Re-analyzing a known image is served from the sha256 cache. Cache + catalog live in
 the platform user-data dir (override with `--data-dir`).
+
+## Bundling (no dev toolchain)
+
+`sh ps2exe-adapter/bundle.sh` builds a self-contained adapter under
+`ps2exe-adapter/dist/bundle/`: a relocatable standalone CPython 3.10 with the locked
+deps, the adapter + ps2exe source, a bundled `unrar`, and a `curator-adapter` launcher.
+The CLI/GUI uses it with no uv/Python/dev-tools present:
+
+```sh
+curator --adapter-bin /path/to/bundle/curator-adapter analyze image.bin   # or CURATOR_ADAPTER_BIN
+```
+
+Remaining for a shippable app: a Windows bundle, macOS code-signing/notarization, and a
+native-arm64 `unrar`/`7zz` (the bundled `unrar` is x86_64, runs via Rosetta). `unrar`
+carries the unRAR license (extraction-only redistribution).
 
 ## Notes
 
