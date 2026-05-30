@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
-import { findSimilar, logCheck } from "@/lib/queries";
+import { findSimilar, findByEmbedding, logCheck } from "@/lib/queries";
+import { embed, toPgVector } from "@/lib/embed";
 import type { BuildRecord } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -24,5 +25,13 @@ export async function POST(request: NextRequest) {
   const q = deriveQueryFeatures(record);
   await logCheck(pool, q.sha256);
   const result = await findSimilar(pool, q);
-  return Response.json({ query: { sha256: q.sha256, name: q.name }, ...result });
+
+  // Tier-text: semantic neighbors via the text embedding.
+  let text_neighbors: Awaited<ReturnType<typeof findByEmbedding>> = [];
+  if (record.text_doc) {
+    const vec = toPgVector(await embed(record.text_doc));
+    text_neighbors = await findByEmbedding(pool, vec, q.sha256 ?? "");
+  }
+
+  return Response.json({ query: { sha256: q.sha256, name: q.name }, ...result, text_neighbors });
 }

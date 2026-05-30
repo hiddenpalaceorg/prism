@@ -31,7 +31,8 @@ builds/                sample disc images for testing
 | ↳ Tier-3 chunk fingerprint (FastCDC + MinHash sketch + sidecar) | ✅ working & validated |
 | ↳ Tiers 4–5 fingerprints (media pHash, exe TLSH/imphash) | ⬜ not yet wired |
 | Phase 4 — web (Next 16/TS/Tailwind): schema, ingester, search/similarity/submission API, search UI | ✅ built & validated |
-| ↳ web text-embedding (pgvector), richer UI, moderation | ⬜ |
+| ↳ text-embedding tier (all-MiniLM-L6-v2 → pgvector cosine) | ✅ built & validated |
+| ↳ richer UI, submission moderation | ⬜ |
 | Phase 2 — uv bundling (mac/win, native deps) | ⬜ |
 | Phase 3 — native GUIs (UniFFI exports + SwiftUI + windows-rs) | ⬜ scaffold |
 
