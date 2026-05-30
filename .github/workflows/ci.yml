@@ -15,37 +15,33 @@ jobs:
           cargo build --workspace
 
   windows-build:
-    name: windows GUI build (exe + adapter)
+    name: windows GUI build (single exe)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive   # ps2exe (the adapter freeze needs it)
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          # gui-win is excluded from the root workspace; it has its own target dir.
-          workspaces: crates/curator-gui-win
-          key: windows-msvc
-      - name: build GUI (release, native MSVC)
-        run: cargo build --release --manifest-path crates/curator-gui-win/Cargo.toml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
       - name: freeze adapter (PyInstaller one-file)
         working-directory: ps2exe-adapter
         run: uv run --group dev pyinstaller --noconfirm curator-adapter.spec
-      - name: package exe + adapter\ (the GUI loads adapter\curator-adapter.exe beside it)
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force out/adapter | Out-Null
-          Copy-Item crates/curator-gui-win/target/release/curator-gui-win.exe out/
-          Copy-Item ps2exe-adapter/dist/curator-adapter.exe out/adapter/curator-adapter.exe
-          Compress-Archive -Path out/* -DestinationPath curator-gui-win.zip -Force
-      - name: upload windows package
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          # gui-win is excluded from the root workspace; it has its own target dir.
+          workspaces: crates/curator-gui-win
+          key: windows-msvc
+      - name: build GUI with the adapter embedded (single self-contained exe)
+        # build.rs embeds $CURATOR_ADAPTER_EXE; the GUI extracts it to TEMP on launch.
+        env:
+          CURATOR_ADAPTER_EXE: ${{ github.workspace }}\ps2exe-adapter\dist\curator-adapter.exe
+        run: cargo build --release --manifest-path crates/curator-gui-win/Cargo.toml
+      - name: upload single exe
         uses: actions/upload-artifact@v4
         with:
           name: curator-gui-win-${{ github.sha }}
-          path: curator-gui-win.zip
+          path: crates/curator-gui-win/target/release/curator-gui-win.exe
           if-no-files-found: error
 
   macos-build:
@@ -99,8 +95,8 @@ jobs:
           set -euo pipefail
           token=$(openssl rand -hex 6)
           mkdir out
-          # Both downloads are zips: Windows = curator-gui-win.exe + adapter\; macOS = the .app.
-          cp dl/curator-gui-win-*/curator-gui-win.zip "out/Curator-win-${token}.zip"
+          # Windows is a single self-contained .exe (adapter embedded); macOS is the .app zip.
+          cp dl/curator-gui-win-*/curator-gui-win.exe "out/Curator-win-${token}.exe"
           cp dl/Curator-macos-*/Curator-app.zip        "out/Curator-mac-${token}.zip"
           ls -la out
       - name: publish per-branch draft release (rolling; hidden from /releases, no git tag)

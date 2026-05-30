@@ -55,6 +55,7 @@ final class AppModel: ObservableObject {
     @Published var counters: [CounterState] = []
     @Published var docMode: DocMode = .xml
     @Published var errorMessage: String?
+    @Published var showingError = false
     @Published var catalogCount: UInt64 = 0
     @Published var recent: [CatalogEntry] = []
 
@@ -282,6 +283,9 @@ final class AppModel: ObservableObject {
         } else {
             errorMessage = message
             status = "Failed."
+            // Adapter failures are often long multi-line tracebacks; surface them in a
+            // dismissable dialog rather than only as a truncated status-bar line.
+            showingError = true
         }
     }
 }

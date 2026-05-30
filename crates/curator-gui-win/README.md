@@ -50,10 +50,16 @@ cargo build --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc
 
 ## Adapter binary
 
-On Windows, `uv run --group dev pyinstaller curator-adapter.spec` (run in
-`ps2exe-adapter\`, uv on PATH) freezes `dist\curator-adapter.exe` — one self-contained
-file. Place it next to the GUI as `adapter\curator-adapter.exe` and the GUI finds it
-automatically — no env var, no dev tools. (CI does this and ships the zip.) Code-signing
-is out of scope.
+The adapter is a PyInstaller one-file build: `uv run --group dev pyinstaller
+curator-adapter.spec` (run in `ps2exe-adapter\`, uv on PATH) freezes
+`dist\curator-adapter.exe`. CI builds it, then builds the GUI with
+`CURATOR_ADAPTER_EXE` pointing at it, so `build.rs` **embeds the adapter inside
+`curator-gui-win.exe`** — the shipped download is a single self-contained file that
+extracts the adapter to `%TEMP%\curator\` on first launch.
+
+Resolution order at runtime: `CURATOR_ADAPTER_BIN` → `adapter\curator-adapter*` beside
+the exe → the embedded copy → `CURATOR_ADAPTER_DIR` → the dev `ps2exe-adapter` uv project.
+So a plain `cargo build` (no `CURATOR_ADAPTER_EXE`) still works for dev via the sibling /
+dir / uv fallbacks. Code-signing is out of scope.
 
 Shares all logic with the macOS app via `curator-core`; only the shell differs.

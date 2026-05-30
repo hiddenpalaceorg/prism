@@ -49,7 +49,7 @@ builds/                sample disc images for testing
 | Phase 3 — Windows GUI (windows-rs: tree, XML view, progress, cancel, open file/folder) | ✅ built (cross-compiled to a PE32+ .exe) |
 | ↳ Windows GUI: Find-Similar + Submit (native WinHTTP → web API) | ✅ built (cross-compiled) |
 | ↳ Windows GUI: recent-builds menu, drag-and-drop, adapter-next-to-exe | ✅ built (cross-compiled) |
-| ↳ Windows adapter binary (PyInstaller → `curator-adapter.exe` beside the GUI) | ✅ (built in CI on `windows-latest`) |
+| ↳ Windows adapter binary (PyInstaller, embedded into a single `curator-gui-win.exe`) | ✅ (built in CI on `windows-latest`) |
 
 ## Quick start (CLI)
 
@@ -97,8 +97,9 @@ The CLI/GUI run it with no uv/Python/dev-tools present:
 curator --adapter-bin /path/to/curator-adapter analyze image.bin   # or CURATOR_ADAPTER_BIN
 ```
 
-CI builds this on Windows and macOS and publishes per-commit downloads (the Windows
-`.exe` + adapter, and the adapter-embedded macOS `.app`) — see `.github/workflows/ci.yml`.
+CI builds this on Windows and macOS and publishes per-branch downloads: a single
+self-contained Windows `.exe` (the adapter embedded, extracted to `%TEMP%` on launch) and
+the adapter-embedded macOS `.app` — see `.github/workflows/ci.yml`.
 Remaining for a shippable app: macOS code-signing/notarization.
 
 ## Notes
