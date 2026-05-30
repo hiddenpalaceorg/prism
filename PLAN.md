@@ -3,21 +3,81 @@
 A ground-up rewrite. **No old code is reused** — only concepts. The sole external
 dependency carried forward is **ps2exe** (latest), used as the ISO/container engine.
 
-## Status (see README.md for the up-to-date table)
+## Progress log & resume guide (updated 2026-05-29)
 
-- **Phase 0** ✅ old code in `old/`; Cargo workspace + uv adapter + dirs scaffolded.
-- **Phase 1** ✅ working end-to-end incl. **nested archive→disc recursion** (zip/7z)
-  and **Tier-3 chunking** (FastCDC + blake3 in adapter → MinHash sketch + binary
-  sidecar in core): Rust image hashing → uv/ps2exe adapter (JSON + NDJSON progress) →
-  composites + structural + sketch + tree → DAT/JSON → sha256 cache → SQLite catalog →
-  `export` (JSONL). Live CLI progress. Validated: zip/raw of the same disc yield
-  identical `content_hash` *and* identical sketches; lineage ranks above unrelated.
-  - ⬜ remaining: Tier-4 (media pHash) + Tier-5 (exe TLSH/imphash) in the pass.
-- **Phase 4 data layer** ✅ validated against Postgres: schema (`web/db/schema.sql`),
-  Node **ingester** (`web/scripts/ingest.mjs`) and **multi-tier similarity** query
-  (`web/scripts/similar.mjs`) cluster the Sonic CD lineage correctly (Tier 1 twins,
-  Tier 2/3 Jaccard). ⬜ remaining: pgvector text embedding, API routes, Next.js UI.
-- **Phases 2–3** ⬜ scaffolded: GUI build plans (`macos/`, `crates/curator-gui-win/`).
+Work lives on branch **`drx/new`** (9 commits; not yet merged/pushed). README.md has
+the live status table. Commit rules: ≤5–7 word messages, **no AI attribution**
+(`~/.claude/settings.json` → `attribution: {commit:"",pr:""}`).
+
+**Commits so far (newest first):**
+```
+a93cdf8  Add self-contained adapter bundle script
+108e3c0  Add cue-sheet audio track extraction
+7adc6b0  Add exe TLSH-distance ranking (web)
+b4f2386  Add web audio-Jaccard similarity query
+88c52ea  Add Tier-5 exe binary fingerprinting
+19241d9  Add audio chroma fingerprinting (Tier 4)
+8715dda  Add pgvector text-embedding similarity tier
+ec8de44  Web service: search, similarity, submissions API
+8770fca  Rewrite curator: rust core, web similarity
+```
+
+**Done & validated on real discs:**
+- **Phase 0** — old code in `old/`; Cargo workspace (`crates/curator-core|cli|gui-win`),
+  uv adapter (`ps2exe-adapter/`), `macos/`, `web/`. Rust pinned to `stable` via
+  `rust-toolchain.toml` (1.77 was too old for current crates).
+- **Phase 1** — desktop pipeline: Rust image hash → uv/ps2exe adapter (canonical JSON +
+  NDJSON progress) → composites + structural + Tier-3 chunk sketch + tree → DAT/JSON →
+  sha256 cache → SQLite catalog → `export` (JSONL). Live `indicatif` progress.
+  **Nested archive→disc recursion** (zip/7z) works.
+- **Fingerprint tiers** (all captured in the one pass): T1 content-id (`content_hash`,
+  `filtered_content_hash`), T2 whole-file set, T3 FastCDC+blake3 chunks → MinHash
+  sketch + `.chunks` sidecar, T4 audio (chroma sub-fp sets; multi-bin **and** `.cue`
+  single-bin), T5 exe (TLSH + imphash). Self-contained audio/TLSH algos (numpy/JS) —
+  no libchromaprint/libtlsh.
+- **Phase 4 web** — Next 16 / React 19 / Tailwind 4 / TS. `web/db/schema.sql` (pgvector
+  + pg_trgm + intarray), TS ingester (`scripts/ingest.ts`), API routes
+  (`/api/search`, `/api/similarity`, `/api/submissions[/:sha256]`), search UI.
+  Similarity fuses T1/T2/T3 + audio-Jaccard + exe-imphash + exe-TLSH-distance +
+  pgvector text embedding (all-MiniLM-L6-v2). Validated: USA↔Alt 34/34 audio @1.0;
+  EU↔JP 8 shared tracks (diff content); text-embed lineage 0.80 vs unrelated 0.43;
+  JS TLSH diff == py-tlsh (0/14/310).
+- **Phase 2 (macOS)** — `ps2exe-adapter/bundle.sh` → self-contained bundle (standalone
+  CPython 3.10 + locked deps + ps2exe src + bundled `unrar` + launcher), ~14 MB tar.
+  Rust CLI runs it via `--adapter-bin`/`CURATOR_ADAPTER_BIN` with no uv/dev-python.
+
+**Remaining:**
+- **Phase 3 GUIs** — UniFFI export from core, SwiftUI (macOS) + windows-rs. Not started
+  (can't be run/validated headless).
+- Windows bundle; macOS codesign/notarization; native-arm64 `unrar`/`7zz`.
+- Web: richer UI (build detail / similarity browse), submission moderation.
+- Skipped: image pHash (validated algo, ~0 yield on retro discs — native formats).
+- Audio fp is alignment-sensitive (matches identical audio 1.0, same-song-diff-master
+  ~0.5); offset-tolerant matching is future work.
+
+**Gotchas / constraints (resume-critical):**
+- **Python 3.10 only** — pathlab uses `pathlib._Accessor`, removed in 3.11.
+- **pycdlib pinned 1.14** — 1.16 breaks ps2exe's patches (empty directories).
+- ps2exe's manifest is incomplete — adapter adds `psutil`, `bitarray`, `inflate64`,
+  plus `fastcdc`,`blake3`,`py-tlsh` for our tiers.
+- ps2exe `utils/archives.py` requires a **7z/unrar tool at import**; mac fallback ships
+  none → bundle provides `unrar`.
+- `pyisotools` pulls **PySide6 (~1.1 GB)** + pyinstaller/pylint — bundle prunes them
+  (keep chardet/requests etc.; pyisotools imports chardet at runtime).
+- uv-managed CPython is locked down — bundle bootstraps pip via `get-pip.py`.
+- Postgres dev DB `curator_test`: `pg_trgm`,`vector`(0.8),`intarray` available; **no
+  smlar** (use intarray `&&` + JS Jaccard). Server was on :3001 in dev (:3000 taken).
+- `lib/ps2exe` submodule has local uncommitted edits; parent commits do **not** bump it.
+- `builds/` (7.8 GB sample discs) and `ps2exe-adapter/dist/` are gitignored.
+
+**Resume commands:**
+```sh
+cd ps2exe-adapter && uv sync && cd ..                 # adapter dev env
+cargo run -p curator-cli -- --adapter-dir "$PWD/ps2exe-adapter" analyze <img>
+cd web && npm install && createdb curator && psql curator -f db/schema.sql
+DATABASE_URL=postgres:///curator npm run ingest -- builds.jsonl   # then npm run dev
+sh ps2exe-adapter/bundle.sh                            # build the self-contained bundle
+```
 
 ## Decisions (locked)
 
