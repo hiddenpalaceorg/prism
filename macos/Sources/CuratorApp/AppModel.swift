@@ -24,6 +24,12 @@ enum DocMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Which detail-pane tab is showing. Defaults to `.overview` on load; selecting a file
+/// in the sidebar switches to `.selection`. XML/JSON live under `.document` (opt-in).
+enum DetailTab: Hashable {
+    case overview, selection, document, similar
+}
+
 /// Forwards UniFFI progress callbacks (delivered on a background thread) to a main-actor sink.
 final class ProgressForwarder: ProgressListener, @unchecked Sendable {
     enum Update {
@@ -47,6 +53,8 @@ final class ProgressForwarder: ProgressListener, @unchecked Sendable {
 @MainActor
 final class AppModel: ObservableObject {
     @Published var summary: AnalysisSummary?
+    @Published var record: RecordDoc?
+    @Published var detailTab: DetailTab = .overview
     @Published var rootNodes: [DiscNode] = []
     @Published var nodeIndex: [UUID: DiscNode] = [:]
     @Published var selection: UUID?
@@ -260,6 +268,8 @@ final class AppModel: ObservableObject {
 
     private func finish(summary: AnalysisSummary) {
         self.summary = summary
+        record = RecordDoc.decode(summary.json)
+        detailTab = .overview
         rootNodes = summary.tree.map(DiscNode.init)
         var idx: [UUID: DiscNode] = [:]
         rootNodes.forEach { $0.index(into: &idx) }
