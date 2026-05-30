@@ -1,11 +1,16 @@
-# Windows-only; excluded from the root workspace. Build explicitly on Windows:
-#   cargo build --manifest-path crates/curator-gui-win/Cargo.toml
+# Windows-only; excluded from the root workspace. Build/check explicitly:
+#   cargo build  --manifest-path crates/curator-gui-win/Cargo.toml            (on Windows)
+#   cargo check  --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc-windows-gnu
 [package]
 name = "curator-gui-win"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Curator native Windows GUI (windows-rs) — scaffold."
+description = "Curator native Windows GUI (windows-rs)."
+
+[[bin]]
+name = "curator-gui-win"
+path = "src/main.rs"
 
 [dependencies]
 curator-core = { path = "../curator-core" }
@@ -13,8 +18,12 @@ curator-core = { path = "../curator-core" }
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Controls",
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
 ] }
