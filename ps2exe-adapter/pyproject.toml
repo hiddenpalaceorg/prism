@@ -29,6 +29,11 @@ curator-adapter = "curator_adapter.cli:main"
 [dependency-groups]
 dev = ["pytest>=8"]
 
+[tool.pytest.ini_options]
+# Put the adapter root on sys.path so `import curator_adapter` resolves from the
+# source tree without installing the project (CI runs numpy-only, --no-project).
+pythonpath = ["."]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
