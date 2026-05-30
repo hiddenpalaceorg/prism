@@ -57,18 +57,40 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var catalogCount: UInt64 = 0
 
+    // Web service (read-only similarity + submit).
+    @Published var similarity: SimilarityResponse?
+    @Published var isQuerying = false
+    @Published var serviceMessage: String?
+    @Published var showingSubmitSheet = false
+
+    private let service = CuratorService()
     private var engine: Engine?
     private var cancelHandle: CancelHandle?
 
     var selectedNode: DiscNode? { selection.flatMap { nodeIndex[$0] } }
 
-    /// Resolve the adapter location from the environment, else dev defaults.
+    /// Resolve the adapter: explicit env override → embedded Phase-2 bundle → dev dir.
+    private func resolveAdapter() -> (dir: String?, bin: String?) {
+        let env = ProcessInfo.processInfo.environment
+        if let bin = env["CURATOR_ADAPTER_BIN"] { return (nil, bin) }
+        // Shipped app: Curator.app/Contents/Resources/adapter/curator-adapter
+        if let res = Bundle.main.resourceURL {
+            let launcher = res.appendingPathComponent("adapter/curator-adapter")
+            if FileManager.default.isExecutableFile(atPath: launcher.path) {
+                return (nil, launcher.path)
+            }
+        }
+        return (env["CURATOR_ADAPTER_DIR"] ?? "../ps2exe-adapter", nil)
+    }
+
     private func makeEngine() throws -> Engine {
         if let engine { return engine }
-        let env = ProcessInfo.processInfo.environment
-        let bin = env["CURATOR_ADAPTER_BIN"]
-        let dir = env["CURATOR_ADAPTER_DIR"] ?? "../ps2exe-adapter"
-        let e = try Engine(adapterDir: bin == nil ? dir : nil, adapterBin: bin, dataDir: env["CURATOR_DATA_DIR"])
+        let (dir, bin) = resolveAdapter()
+        let e = try Engine(
+            adapterDir: dir,
+            adapterBin: bin,
+            dataDir: ProcessInfo.processInfo.environment["CURATOR_DATA_DIR"]
+        )
         engine = e
         catalogCount = (try? e.catalogSize()) ?? 0
         return e
@@ -112,6 +134,48 @@ final class AppModel: ObservableObject {
         status = "Cancelling…"
     }
 
+    // MARK: - Web service actions
+
+    /// Query the web service for builds similar to the loaded one.
+    func findSimilar() {
+        guard let summary, !isQuerying else { return }
+        let json = summary.json
+        isQuerying = true
+        similarity = nil
+        serviceMessage = "Querying \(service.baseURL.host ?? "service")…"
+        Task {
+            do {
+                let resp = try await service.findSimilar(recordJSON: json)
+                similarity = resp
+                serviceMessage = resp.isEmpty
+                    ? "No similar builds found."
+                    : "Neighbors across \(resp.sections.count) tier(s)."
+            } catch {
+                serviceMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+            isQuerying = false
+        }
+    }
+
+    /// Submit the loaded build to the moderation queue under `nickname`.
+    func submit(nickname: String) {
+        guard let summary, !isQuerying else { return }
+        let json = summary.json
+        let nick = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !nick.isEmpty else { return }
+        isQuerying = true
+        serviceMessage = "Submitting…"
+        Task {
+            do {
+                let r = try await service.submit(recordJSON: json, nickname: nick)
+                serviceMessage = "Submitted \(r.sha256.prefix(12))… — \(r.status)."
+            } catch {
+                serviceMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+            isQuerying = false
+        }
+    }
+
     /// Present the native open panel (files or folders) and analyze the choice.
     func openDialog() {
         guard !isWorking else { return }
@@ -153,6 +217,8 @@ final class AppModel: ObservableObject {
         counters = []
         isWorking = false
         cancelHandle = nil
+        similarity = nil
+        serviceMessage = nil
         status = "\(summary.fromCache ? "Loaded from cache" : "Analyzed") — \(summary.system), \(summary.fileCount) files, \(humanSize(summary.totalSize))."
         refreshCatalogCount()
     }

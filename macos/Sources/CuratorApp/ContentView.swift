@@ -18,9 +18,16 @@ struct ContentView: View {
                 if model.isWorking {
                     Button(role: .cancel) { model.cancel() } label: { Label("Cancel", systemImage: "stop.circle") }
                 }
+                if model.summary != nil {
+                    Button { model.findSimilar() } label: { Label("Find Similar", systemImage: "sparkle.magnifyingglass") }
+                        .disabled(model.isQuerying)
+                    Button { model.showingSubmitSheet = true } label: { Label("Submit", systemImage: "square.and.arrow.up") }
+                        .disabled(model.isQuerying)
+                }
             }
         }
         .safeAreaInset(edge: .bottom) { StatusBar() }
+        .sheet(isPresented: $model.showingSubmitSheet) { SubmitSheet() }
     }
 }
 
@@ -66,6 +73,8 @@ struct DetailView: View {
                         .tabItem { Label("Selection", systemImage: "info.circle") }
                     DocumentView(summary: summary)
                         .tabItem { Label("Document", systemImage: "doc.text") }
+                    SimilarityView()
+                        .tabItem { Label("Similar", systemImage: "sparkle.magnifyingglass") }
                 }
                 .padding(.top, 6)
             } else {
@@ -149,6 +158,94 @@ struct DocumentView: View {
     }
 }
 
+// MARK: - Similarity
+
+struct SimilarityView: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { model.findSimilar() } label: { Label("Find Similar", systemImage: "sparkle.magnifyingglass") }
+                    .disabled(model.isQuerying)
+                Button { model.showingSubmitSheet = true } label: { Label("Submit…", systemImage: "square.and.arrow.up") }
+                    .disabled(model.isQuerying)
+                if model.isQuerying { ProgressView().controlSize(.small) }
+                Spacer()
+            }
+            .padding(8)
+            Divider()
+
+            if let sim = model.similarity, !sim.isEmpty {
+                List {
+                    ForEach(sim.sections, id: \.0) { title, neighbors in
+                        Section(title) {
+                            ForEach(neighbors) { NeighborRow(neighbor: $0) }
+                        }
+                    }
+                }
+            } else {
+                ContentUnavailableViewCompat(
+                    title: "Similar builds",
+                    systemImage: "sparkle.magnifyingglass",
+                    message: model.serviceMessage
+                        ?? "Query the web service for builds that share content, files, chunks, audio, executables, or descriptions."
+                )
+            }
+        }
+    }
+}
+
+struct NeighborRow: View {
+    let neighbor: SimilarNeighbor
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(neighbor.name ?? neighbor.sha256).lineLimit(1)
+                Text(neighbor.sha256).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            if let system = neighbor.system { Tag(text: system) }
+            if let score = neighbor.scoreText {
+                Text(score).font(.caption.monospaced().bold()).foregroundStyle(.tint)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+struct SubmitSheet: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var nickname = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Submit build").font(.headline)
+            Text("Adds this build to the moderation queue. A nickname is attached for attribution.")
+                .font(.callout).foregroundStyle(.secondary)
+            TextField("Nickname", text: $nickname)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(send)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Submit") { send() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(nickname.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    private func send() {
+        model.submit(nickname: nickname)
+        dismiss()
+    }
+}
+
 // MARK: - Status bar (progress)
 
 struct StatusBar: View {
@@ -166,9 +263,12 @@ struct StatusBar: View {
                 }
             }
             HStack {
-                if model.isWorking { ProgressView().controlSize(.small) }
+                if model.isWorking || model.isQuerying { ProgressView().controlSize(.small) }
                 Text(model.status).font(.callout).foregroundStyle(.secondary)
                 Spacer()
+                if let msg = model.serviceMessage {
+                    Text(msg).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
                 if let err = model.errorMessage {
                     Text(err).font(.caption).foregroundStyle(.red).lineLimit(1)
                 }

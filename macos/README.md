@@ -25,15 +25,21 @@ producing a static lib the app links. It exposes:
   `CancelHandle` the core polls — image hashing unwinds promptly and the adapter
   subprocess is killed on cancel.
 
+The app finds the adapter in this order: `CURATOR_ADAPTER_BIN` →
+`Curator.app/Contents/Resources/adapter/curator-adapter` (embedded) →
+`CURATOR_ADAPTER_DIR` → `../ps2exe-adapter` (dev). Similarity/submit talk to the web
+service at `CURATOR_WEB_URL` (default `http://localhost:3001`).
+
 ## Build & run
 
 ```sh
-# 1) build the Rust core + assemble the .app (release by default)
+# optional: build the self-contained Python adapter once (embedded into the .app below)
+sh ps2exe-adapter/bundle.sh
+
+# build the Rust core + assemble the .app (release by default); embeds the bundle if present
 sh macos/build-app.sh            # or: sh macos/build-app.sh debug
 
-# 2) launch — point it at the adapter (dev: the uv project; shipped: a Phase-2 bundle)
-CURATOR_ADAPTER_DIR="$PWD/ps2exe-adapter" open macos/dist/Curator.app
-#   or CURATOR_ADAPTER_BIN=/path/to/bundle/curator-adapter
+open macos/dist/Curator.app      # self-contained when the bundle was embedded
 ```
 
 Iterate without packaging: `cd macos && CURATOR_ADAPTER_DIR=../ps2exe-adapter swift run CuratorApp`.
@@ -46,14 +52,20 @@ cd macos && swift run curator-probe
 # → catalogSize ✓, progress callbacks fire, cancellation → .Cancelled, errors → .Failed
 ```
 
+## Done
+
+- Analyze (files/folders) → tree + details + XML/JSON, live progress, working Cancel.
+- **Embedded adapter** — `build-app.sh` copies a Phase-2 bundle into
+  `Resources/adapter`; the app runs with no dev toolchain and no env var.
+- **Find Similar** → `POST /api/similarity`; tiered neighbors (content / files / chunks /
+  audio / exe / text) rendered in the Similar tab.
+- **Submit** → `POST /api/submissions` with a nickname (moderation queue).
+
 ## Remaining for a shippable app
 
-- Embed the Phase-2 adapter bundle in `Curator.app/Contents/Resources` and resolve it
-  by default (no env var).
 - Code-signing + notarization (needs a Developer ID).
-- "Find similar" → `POST /similarity` and "Submit build" → the web service (the record
-  already carries every tier the API needs).
 - Drag-and-drop and a recent-builds list backed by the local catalog.
+- Open the neighbor rows into a web build-detail page.
 
 ## Notes
 

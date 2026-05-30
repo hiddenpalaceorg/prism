@@ -55,12 +55,19 @@ ec8de44  Web service: search, similarity, submissions API
   viewer, batch+intra-file progress bars, Cancel. `macos/build-app.sh` → `Curator.app`.
   Validated headlessly via `swift run curator-probe`: catalogSize, real hashing progress
   events, cancellation → `.Cancelled`, adapter-via-uv error → `.Failed`.
+- **Phase 3 (macOS polish)** — app embeds the Phase-2 adapter bundle (build-app.sh copies
+  it into `Curator.app/Contents/Resources/adapter`; resolved by `Bundle.main` so it runs
+  with no env var / dev tools — verified the relocated launcher analyzes). Find-Similar
+  (`POST /api/similarity`, tiered neighbors in a Similar tab) + Submit
+  (`POST /api/submissions` with nickname). **Validated live**: recreated the `curator` DB,
+  seeded two content-twins, server on :3001 — similarity returned `tier1_twins` matching
+  the Swift `CodingKeys`, submit returned `202 {sha256,status:"queued"}` and persisted.
 
 **Remaining:**
 - **Phase 3 Windows GUI** — windows-rs over the same `curator-ffi`/core (scaffold only;
   can't build on macOS).
-- macOS GUI polish: embed the Phase-2 adapter bundle in `Curator.app`, add
-  similarity/submit UI (`POST /similarity`), drag-and-drop, recent-builds list.
+- macOS GUI polish: codesign/notarize, drag-and-drop, recent-builds list, open neighbors
+  into a web build-detail page.
 - Windows bundle; macOS codesign/notarization; native-arm64 `unrar`/`7zz`.
 - Web: richer UI (build detail / similarity browse), submission moderation.
 - Skipped: image pHash (validated algo, ~0 yield on retro discs — native formats).

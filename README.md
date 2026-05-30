@@ -41,7 +41,9 @@ builds/                sample disc images for testing
 | Phase 2 — self-contained macOS adapter bundle (standalone Python + deps + unrar) | ✅ built & validated |
 | ↳ Windows bundle, macOS codesign/notarize, native-arm64 unrar | ⬜ |
 | Phase 3 — UniFFI bridge (`curator-ffi`) + SwiftUI macOS app (tree, details, XML/JSON, progress, cancel) | ✅ built & validated |
-| ↳ macOS GUI: embed adapter bundle, similarity/submit UI, codesign | ⬜ |
+| ↳ macOS GUI: embedded self-contained adapter (no env/dev-tools) | ✅ built & validated |
+| ↳ macOS GUI: Find-Similar + Submit wired to web API | ✅ built & validated (live) |
+| ↳ macOS GUI: codesign/notarize, drag-and-drop, recent builds | ⬜ |
 | ↳ Windows GUI (windows-rs) | ⬜ scaffold |
 
 ## Quick start (CLI)
