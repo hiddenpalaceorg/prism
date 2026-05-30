@@ -200,6 +200,9 @@ pub struct MediaFp {
     pub phash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chromaprint: Option<String>,
+    /// Acoustic sub-fingerprint set for audio tracks (Jaccard-comparable).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_fp: Vec<u64>,
 }
 
 /// Tier-5 executable binary-similarity fingerprint.

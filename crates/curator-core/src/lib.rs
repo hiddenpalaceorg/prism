@@ -127,7 +127,17 @@ impl Analyzer {
             structural,
             text_doc,
             contents,
-            media: Vec::new(),
+            media: raw
+                .media
+                .iter()
+                .map(|m| schema::MediaFp {
+                    path: m.path.clone(),
+                    kind: m.kind.clone(),
+                    phash: None,
+                    chromaprint: None,
+                    audio_fp: m.audio_fp.clone(),
+                })
+                .collect(),
             exe_fp: None,
             sketch,
         };

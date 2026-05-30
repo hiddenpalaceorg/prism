@@ -29,7 +29,8 @@ builds/                sample disc images for testing
 | Phase 1 — adapter → core → CLI (analyze, cache, catalog, export) | ✅ working |
 | ↳ nested archive→disc recursion (bin/cue inside zip/7z) | ✅ working |
 | ↳ Tier-3 chunk fingerprint (FastCDC + MinHash sketch + sidecar) | ✅ working & validated |
-| ↳ Tiers 4–5 fingerprints (media pHash, exe TLSH/imphash) | ⬜ not yet wired |
+| ↳ Tier-4 audio fingerprint (chroma sub-fingerprint sets, numpy; no libchromaprint) | ✅ desktop, validated |
+| ↳ Tier-5 exe (TLSH/imphash), image pHash, web audio-query | ⬜ |
 | Phase 4 — web (Next 16/TS/Tailwind): schema, ingester, search/similarity/submission API, search UI | ✅ built & validated |
 | ↳ text-embedding tier (all-MiniLM-L6-v2 → pgvector cosine) | ✅ built & validated |
 | ↳ richer UI, submission moderation | ⬜ |
