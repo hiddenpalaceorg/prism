@@ -44,9 +44,9 @@ ec8de44  Web service: search, similarity, submissions API
   pgvector text embedding (all-MiniLM-L6-v2). Validated: USA↔Alt 34/34 audio @1.0;
   EU↔JP 8 shared tracks (diff content); text-embed lineage 0.80 vs unrelated 0.43;
   JS TLSH diff == py-tlsh (0/14/310).
-- **Phase 2** — `ps2exe-adapter/bundle.py` (cross-platform, replaced bundle.sh) →
-  self-contained bundle (standalone CPython 3.10 + locked deps + ps2exe src + archive
-  tool + launcher). macOS launcher `curator-adapter`, Windows `curator-adapter.cmd`.
+- **Phase 2** — `ps2exe-adapter/curator-adapter.spec` (PyInstaller, replaced bundle.py) →
+  one self-contained `curator-adapter` binary (≈60 MB: frozen CPython 3.10 + locked deps
+  + ps2exe src + vendored libarchive). Built per-OS in CI; no get-pip, no copied tree.
   Rust CLI/GUIs run it via `--adapter-bin`/`CURATOR_ADAPTER_BIN` (or auto: `adapter\`
   next to the exe). Validated end-to-end on macOS (relocated launcher analyzes);
   ~179 MB (numpy/cryptography/PIL). Gotcha: discover the *managed* python with
@@ -100,8 +100,7 @@ ec8de44  Web service: search, similarity, submissions API
 
 **Remaining (all environment-bound, not doable here):**
 - Code-signing/notarization (macOS Developer ID, Windows Authenticode) — explicitly out of scope.
-- Run `bundle.py` *on Windows* once to produce that platform's bundle (logic verified on macOS).
-- native-arm64 `unrar`/`7zz` for the macOS bundle (currently x86_64 via Rosetta).
+- A standalone archive tool (`unrar`/`7zz`) for `.rar`/`.7z` inputs is not frozen in; libarchive (zip/etc.) is.
 - Tier-3 TLSH/LSH are linear scans (fine at current scale; need a forest/index to scale).
 - Skipped by design: image pHash (validated algo, ~0 yield on retro discs — native formats).
 - Audio fp is **offset-tolerant** (Shazam-style constellation of peak-pairs keyed by Δt;
@@ -131,7 +130,7 @@ cd ps2exe-adapter && uv sync && cd ..                 # adapter dev env
 cargo run -p curator-cli -- --adapter-dir "$PWD/ps2exe-adapter" analyze <img>
 cd web && npm install && createdb curator && psql curator -f db/schema.sql
 DATABASE_URL=postgres:///curator npm run ingest -- builds.jsonl   # then npm run dev
-sh ps2exe-adapter/bundle.sh                            # build the self-contained bundle
+cd ps2exe-adapter && uv run --group dev pyinstaller curator-adapter.spec   # freeze the adapter
 ```
 
 ## Decisions (locked)

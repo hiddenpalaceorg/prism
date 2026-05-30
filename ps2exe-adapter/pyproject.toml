@@ -27,7 +27,7 @@ dependencies = [
 curator-adapter = "curator_adapter.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pyinstaller==6.20.0"]
 
 [tool.pytest.ini_options]
 # Put the adapter root on sys.path so `import curator_adapter` resolves from the
