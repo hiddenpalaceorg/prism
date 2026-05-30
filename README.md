@@ -38,7 +38,7 @@ builds/                sample disc images for testing
 | Phase 4 — web (Next 16/TS/Tailwind): schema, ingester, search/similarity/submission API, search UI | ✅ built & validated |
 | ↳ text-embedding tier (all-MiniLM-L6-v2 → pgvector cosine) | ✅ built & validated |
 | ↳ build-detail page (`/build/[sha256]`: details, files, similar) + search links | ✅ built & validated (live) |
-| ↳ submission-moderation UI (`/moderate`: list, accept→ingest, reject) | ✅ built & validated (live) |
+| ↳ submission-moderation UI (`/moderate`: list, accept→ingest, reject; `MODERATION_TOKEN`-gated) | ✅ built & validated (live) |
 | Phase 2 — self-contained adapter bundle (`bundle.py`, cross-platform; standalone Python + deps + archive tool) | ✅ built & validated (macOS run; Windows branch reviewed) |
 | ↳ macOS codesign/notarize, native-arm64 unrar | ⬜ (signing out of scope) |
 | Phase 3 — UniFFI bridge (`curator-ffi`) + SwiftUI macOS app (tree, details, XML/JSON, progress, cancel) | ✅ built & validated |

@@ -1,13 +1,17 @@
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { enqueueSubmission, listSubmissions } from "@/lib/queries";
+import { isModerator, moderationToken } from "@/lib/auth";
 import type { BuildRecord } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// GET /api/submissions?status=queued — the moderation queue.
+// GET /api/submissions?status=queued — the moderation queue. Gated when a token is set.
 export async function GET(request: NextRequest) {
+  if (moderationToken() && !isModerator(request)) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
   const status = request.nextUrl.searchParams.get("status") ?? undefined;
   const items = await listSubmissions(getPool(), status);
   return Response.json({ submissions: items });

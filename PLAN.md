@@ -102,7 +102,7 @@ ec8de44  Web service: search, similarity, submissions API
 - Code-signing/notarization (macOS Developer ID, Windows Authenticode) — explicitly out of scope.
 - Run `bundle.py` *on Windows* once to produce that platform's bundle (logic verified on macOS).
 - native-arm64 `unrar`/`7zz` for the macOS bundle (currently x86_64 via Rosetta).
-- Submission moderation has no auth gate; Tier-3 TLSH/LSH are linear scans (fine at current scale).
+- Tier-3 TLSH/LSH are linear scans (fine at current scale; need a forest/index to scale).
 - Skipped by design: image pHash (validated algo, ~0 yield on retro discs — native formats).
 - Audio fp is **offset-tolerant** (Shazam-style constellation of peak-pairs keyed by Δt;
   freq bins coarsened `>>2` for sub-frame robustness). Validated on synthetic PCM:

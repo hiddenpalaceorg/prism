@@ -22,17 +22,36 @@ export default function Moderate() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string>("");
+  const [token, setToken] = useState<string>("");
+
+  // Remember the moderation token locally so it isn't retyped each visit.
+  useEffect(() => {
+    setToken(localStorage.getItem("curator-mod-token") ?? "");
+  }, []);
+  function saveToken(t: string) {
+    setToken(t);
+    localStorage.setItem("curator-mod-token", t);
+  }
+  const authHeaders = useCallback(
+    (extra: Record<string, string> = {}) => (token ? { ...extra, "x-moderation-token": token } : extra),
+    [token],
+  );
 
   const load = useCallback(async (s: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/submissions${s ? `?status=${s}` : ""}`);
+      const res = await fetch(`/api/submissions${s ? `?status=${s}` : ""}`, { headers: authHeaders() });
+      if (res.status === 401) {
+        setItems([]);
+        setNote("Unauthorized — enter a valid moderation token.");
+        return;
+      }
       const data = await res.json();
       setItems(data.submissions ?? []);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authHeaders]);
 
   useEffect(() => {
     void load(status);
@@ -44,7 +63,7 @@ export default function Moderate() {
     try {
       const res = await fetch(`/api/submissions/${sha256}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ action }),
       });
       const data = await res.json();
@@ -67,7 +86,16 @@ export default function Moderate() {
         Review contributor submissions. Accepting ingests the build into the catalog.
       </p>
 
-      <div className="mt-5 flex gap-2">
+      <input
+        type="password"
+        value={token}
+        onChange={(e) => saveToken(e.target.value)}
+        onBlur={() => load(status)}
+        placeholder="moderation token (x-moderation-token)"
+        className="mt-5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900"
+      />
+
+      <div className="mt-4 flex gap-2">
         {FILTERS.map((f) => (
           <button
             key={f || "all"}
