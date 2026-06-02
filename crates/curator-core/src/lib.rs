@@ -272,11 +272,47 @@ impl Analyzer {
     }
 }
 
-/// Recursively collect every regular file under `root`, depth-first, sorted for a
-/// deterministic order. Symlinks are skipped (avoids cycles). Unreadable directories
-/// are silently skipped. Backs the GUIs' folder import, which then tries to analyze
-/// each file and skips those that don't parse.
-pub fn list_files_recursive(root: &Path) -> Vec<PathBuf> {
+/// Extensions ps2exe skips when walking a tree — mirrors `is_path_allowed` in
+/// `lib/ps2exe/utils/common.py` (the source of truth; keep in sync). Folder import
+/// uses this so it doesn't waste time hashing obvious non-discs, and so descriptor /
+/// sidecar files (`.cue`/`.ccd`/`.sub`/…) don't import as duplicates of the disc
+/// they belong to.
+const NON_DISC_EXTENSIONS: &[&str] = &[
+    "html", "htm", "jpeg", "jpg", "png", "bmp", "gif", "tif", "txt", "pdf", "dat", "json", "sfv",
+    "sha1", "md5", "par2", "cue", "ccd", "sub", "gdi", "cdi", "raw", "c2", "subcode", "fulltoc",
+    "wav", "mp3", "avi", "exe", "nfo", "part", "dctmp", "state",
+];
+
+/// Console-specific metadata blobs ps2exe always ignores (also from `is_path_allowed`).
+const IGNORED_FILENAMES: &[&str] = &["ip.bin", "ss.bin", "pfi.bin", "dmi.bin"];
+
+/// Whether `path`'s name looks like a disc image/container worth handing to the
+/// adapter (vs. an obvious non-disc the adapter would reject anyway).
+fn looks_importable(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else { return false };
+    let lower = name.to_ascii_lowercase();
+    if IGNORED_FILENAMES.contains(&lower.as_str()) {
+        return false;
+    }
+    // `Data####` split-dump metadata (e.g. Data0001), matched at the end of the name.
+    if lower.len() >= 8 {
+        let (head, tail) = lower.split_at(lower.len() - 4);
+        if tail.bytes().all(|b| b.is_ascii_digit()) && head.ends_with("data") {
+            return false;
+        }
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => !NON_DISC_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()),
+        None => true, // extensionless files (e.g. a bare track) are worth a try
+    }
+}
+
+/// Recursively collect importable files under `root`, depth-first, sorted for a
+/// deterministic order. Non-disc files (per ps2exe's blocklist) and symlinks are
+/// skipped; unreadable directories are silently skipped. Backs the GUIs' folder
+/// import, which then tries to analyze each returned file and skips any that don't
+/// parse. (Single-file "Open" bypasses this filter — it tries whatever you pick.)
+pub fn list_importable_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -284,8 +320,8 @@ pub fn list_files_recursive(root: &Path) -> Vec<PathBuf> {
         for entry in entries.flatten() {
             match entry.file_type() {
                 Ok(ft) if ft.is_dir() => stack.push(entry.path()),
-                Ok(ft) if ft.is_file() => out.push(entry.path()),
-                _ => {} // symlinks / specials: skip
+                Ok(ft) if ft.is_file() && looks_importable(&entry.path()) => out.push(entry.path()),
+                _ => {} // dirs handled above; symlinks / specials / non-disc files: skip
             }
         }
     }
@@ -295,25 +331,30 @@ pub fn list_files_recursive(root: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod walk_tests {
-    use super::list_files_recursive;
+    use super::list_importable_files;
 
     #[test]
-    fn recurses_files_skips_dirs_and_is_sorted() {
+    fn recurses_disc_files_skips_non_discs_and_is_sorted() {
         let root = std::env::temp_dir().join(format!("curator-walk-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("sub/deep")).unwrap();
+        // disc-like — kept
         std::fs::write(root.join("b.iso"), b"x").unwrap();
         std::fs::write(root.join("a.zip"), b"x").unwrap();
         std::fs::write(root.join("sub/c.bin"), b"x").unwrap();
-        std::fs::write(root.join("sub/deep/d.cue"), b"x").unwrap();
+        std::fs::write(root.join("sub/deep/game.chd"), b"x").unwrap();
+        // non-disc / sidecar / metadata — skipped per ps2exe's blocklist
+        std::fs::write(root.join("disc.cue"), b"x").unwrap();
+        std::fs::write(root.join("readme.txt"), b"x").unwrap();
+        std::fs::write(root.join("scan.jpg"), b"x").unwrap();
+        std::fs::write(root.join("IP.BIN"), b"x").unwrap(); // case-insensitive
+        std::fs::write(root.join("Data0001"), b"x").unwrap();
 
-        let files = list_files_recursive(&root);
-        let rel: Vec<String> = files
+        let rel: Vec<String> = list_importable_files(&root)
             .iter()
             .map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/"))
             .collect();
-        // Every regular file, no directories, deterministic (sorted) order.
-        assert_eq!(rel, ["a.zip", "b.iso", "sub/c.bin", "sub/deep/d.cue"]);
+        assert_eq!(rel, ["a.zip", "b.iso", "sub/c.bin", "sub/deep/game.chd"]);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -322,7 +363,7 @@ mod walk_tests {
     fn missing_root_yields_empty() {
         let root = std::env::temp_dir().join("curator-walk-nope-zzz");
         let _ = std::fs::remove_dir_all(&root);
-        assert!(list_files_recursive(&root).is_empty());
+        assert!(list_importable_files(&root).is_empty());
     }
 }
 

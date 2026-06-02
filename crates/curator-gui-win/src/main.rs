@@ -1006,7 +1006,7 @@ mod app {
         for p in paths {
             let path = std::path::Path::new(&p);
             if path.is_dir() {
-                for f in curator_core::list_files_recursive(path) {
+                for f in curator_core::list_importable_files(path) {
                     out.push(f.to_string_lossy().into_owned());
                 }
             } else if path.is_file() {
