@@ -115,6 +115,14 @@ CREATE TABLE audio_fp (
 CREATE INDEX idx_audio_build ON audio_fp(build_sha256);
 CREATE INDEX idx_audio_gin   ON audio_fp USING gin (subfp);
 
+-- corpus audio-hash frequency for IDF / stop-hash weighting (audio similarity).
+-- doc_count = number of distinct builds whose audio contains the hash; a hash in
+-- nearly every build (CDDA bass, adjacent-frame peaks) gets idf≈0 and washes out.
+CREATE TABLE audio_idf (
+    hash       BIGINT PRIMARY KEY,
+    doc_count  BIGINT NOT NULL
+);
+
 -- ── exe binary similarity ──────────────────────────────────────────────────────
 CREATE TABLE exe_fp (
     build_sha256 TEXT PRIMARY KEY REFERENCES builds(sha256) ON DELETE CASCADE,

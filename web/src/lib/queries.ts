@@ -1,21 +1,44 @@
 // Search + similarity queries (the data layer behind the API routes).
 
 import type { Pool } from "pg";
-import { minhashJaccard, setJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
+import { minhashJaccard, setJaccard, weightedSetJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
 import { tlshDiff } from "./tlsh";
 import type { BuildRecord, SimilarityResult } from "./types";
 import type { FusedBuild, TierKey } from "./tiers";
 
-const AUDIO_MATCH_THRESHOLD = 0.3;
+// Calibrated for the IDF-weighted scale below (not plain Jaccard): on the
+// reference corpus, genuine audio siblings score ≥0.85 (regional variants,
+// proto lineages) while unrelated builds top out around 0.47. 0.55 sits in that
+// gap — it keeps real matches and drops the low-entropy "all music looks alike".
+const AUDIO_MATCH_THRESHOLD = 0.55;
 const TLSH_MAX_DISTANCE = 120; // below this ≈ similar executable
 
-/** Audio: builds sharing audio tracks (per-track Jaccard over chroma sub-fp sets). */
+/**
+ * Per-hash IDF over the audio corpus: idf(h) = ln((N+1)/(df(h)+1)), where N is
+ * the number of builds with audio and df the builds containing the hash. A hash
+ * in every build → idf≈0; a hash unseen in the corpus (a novel query) → max idf.
+ */
+async function loadAudioIdf(pool: Pool): Promise<(h: string) => number> {
+  const [{ rows: nrows }, { rows: dfrows }] = await Promise.all([
+    pool.query("SELECT count(DISTINCT build_sha256)::int AS n FROM audio_fp"),
+    pool.query("SELECT hash::text AS h, doc_count::int AS df FROM audio_idf"),
+  ]);
+  const n = (nrows[0]?.n as number) ?? 0;
+  const df = new Map<string, number>();
+  for (const row of dfrows) df.set(row.h as string, row.df as number);
+  // df 0 (a hash absent from the corpus, e.g. a novel query build) falls out as
+  // ln((N+1)/1) = max idf; a hash in all N builds falls out as ln(1) = 0.
+  return (h: string) => Math.log((n + 1) / ((df.get(h) ?? 0) + 1));
+}
+
+/** Audio: builds sharing audio tracks (per-track IDF-weighted Jaccard over chroma sub-fp sets). */
 export async function findAudioSimilar(
   pool: Pool,
   tracks: AudioTrack[],
   exclude: string,
   limit = 20
 ) {
+  const idf = await loadAudioIdf(pool);
   const perBuild = new Map<
     string,
     { sha256: string; name: string; system: string; matched_tracks: number; best: number }
@@ -31,7 +54,7 @@ export async function findAudioSimilar(
     // best matching candidate track per build for this query track
     const bestPerBuild = new Map<string, { name: string; system: string; j: number }>();
     for (const row of r.rows) {
-      const j = setJaccard(qt.subfp, row.subfp as string[]);
+      const j = weightedSetJaccard(qt.subfp, row.subfp as string[], idf);
       if (j < AUDIO_MATCH_THRESHOLD) continue;
       const prev = bestPerBuild.get(row.sha256);
       if (!prev || j > prev.j) bestPerBuild.set(row.sha256, { name: row.name, system: row.system, j });
