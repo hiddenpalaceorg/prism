@@ -19,7 +19,7 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
 }
 
 // POST /api/submissions/<sha256> { action: "accept" | "reject" } — moderate.
-// Accept ingests the stored record into the catalog, then marks it accepted.
+// Accept ingests the stored record into the library, then marks it accepted.
 export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   if (!isModerator(request)) {
     return moderationToken()

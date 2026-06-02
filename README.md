@@ -1,8 +1,8 @@
 # Curator
 
-Disc-image analysis and cataloging for game preservation, rebuilt from scratch.
+Disc-image analysis and storing for game preservation, rebuilt from scratch.
 A Rust core drives the Python **ps2exe** engine to parse images/containers, produces
-a checksummed DAT + JSON per disc, builds a local catalog, and feeds a web service
+a checksummed DAT + JSON per disc, builds a local library, and feeds a web service
 for searchable listings and "similar builds" discovery.
 
 See [`PLAN.md`](PLAN.md) for the full design and rationale.
@@ -27,7 +27,7 @@ builds/                sample disc images for testing
 | Area | State |
 |---|---|
 | Phase 0 — workspace + move old code | ✅ done |
-| Phase 1 — adapter → core → CLI (analyze, cache, catalog, export) | ✅ working |
+| Phase 1 — adapter → core → CLI (analyze, cache, library, export) | ✅ working |
 | ↳ nested archive→disc recursion (bin/cue inside zip/7z) | ✅ working |
 | ↳ Chunk fingerprint (FastCDC + MinHash signature + sidecar) | ✅ working & validated |
 | ↳ Audio fingerprint (Shazam-style constellation peak-pairs, numpy; offset-tolerant) | ✅ validated (cross-build EU↔JP; offset-robust) |
@@ -66,12 +66,12 @@ cargo run -p curator-cli -- --adapter-dir "$PWD/ps2exe-adapter" analyze path/to/
 # JSON, to a file
 cargo run -p curator-cli -- --adapter-dir "$PWD/ps2exe-adapter" analyze image.bin -f json -o out.json
 
-# catalog stats / export the catalog for the web ingester
+# library stats / export the library for the web ingester
 cargo run -p curator-cli -- stats
 cargo run -p curator-cli -- export -o builds.jsonl
 ```
 
-Re-analyzing a known image is served from the sha256 cache. Cache + catalog live in
+Re-analyzing a known image is served from the sha256 cache. Cache + library live in
 the platform user-data dir (override with `--data-dir`).
 
 ## Tests

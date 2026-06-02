@@ -706,43 +706,43 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func analyze(path: String, listener: ProgressListener, cancel: CancelHandle?) throws  -> AnalysisSummary
     
     /**
-     * Number of builds in the local catalog.
-     */
-    func catalogSize() throws  -> UInt64
-    
-    /**
-     * Distinct systems in the catalog (for the browser's filter control).
-     */
-    func catalogSystems() throws  -> [String]
-    
-    /**
-     * Export the catalog as a portable `.zip` bundle (`manifest.json` +
+     * Export the library as a portable `.zip` bundle (`manifest.json` +
      * `builds.jsonl`) to `out_path` — the format to copy between machines and
      * ingest into the web service. Returns the number of records written.
      */
     func exportBundle(outPath: String) throws  -> UInt64
     
     /**
-     * Export the catalog as JSON Lines to `out_path` (the desktop→web feed). Returns
+     * Export the library as JSON Lines to `out_path` (the desktop→web feed). Returns
      * the number of records written.
      */
     func exportJsonl(outPath: String) throws  -> UInt64
     
     /**
-     * Reload a catalogued build from cache by sha256 (no adapter run). `None` if absent.
+     * Number of builds in the local library.
+     */
+    func librarySize() throws  -> UInt64
+    
+    /**
+     * Distinct systems in the library (for the browser's filter control).
+     */
+    func librarySystems() throws  -> [String]
+    
+    /**
+     * Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
      */
     func loadBuild(sha256: String) throws  -> AnalysisSummary?
     
     /**
      * The most recently analyzed builds, newest first.
      */
-    func recentBuilds(limit: UInt32) throws  -> [CatalogEntry]
+    func recentBuilds(limit: UInt32) throws  -> [LibraryEntry]
     
     /**
-     * Search/browse the catalog: `search` matches name or system, `system` filters
+     * Search/browse the library: `search` matches name or system, `system` filters
      * to one, sorted by `sort` (descending when `descending`), paged by limit/offset.
      */
-    func searchCatalog(search: String?, system: String?, sort: CatalogSort, descending: Bool, limit: UInt32, offset: UInt32) throws  -> [CatalogEntry]
+    func searchLibrary(search: String?, system: String?, sort: LibrarySort, descending: Bool, limit: UInt32, offset: UInt32) throws  -> [LibraryEntry]
     
 }
 /**
@@ -790,7 +790,7 @@ open class Engine: EngineProtocol, @unchecked Sendable {
     /**
      * Build an engine. Supply *either* `adapter_bin` (a bundled launcher; preferred
      * in a shipped app) *or* `adapter_dir` (a uv project, for development). `data_dir`
-     * overrides the platform cache/catalog location.
+     * overrides the platform cache/library location.
      */
 public convenience init(adapterDir: String?, adapterBin: String?, dataDir: String?)throws  {
     let handle =
@@ -832,29 +832,7 @@ open func analyze(path: String, listener: ProgressListener, cancel: CancelHandle
 }
     
     /**
-     * Number of builds in the local catalog.
-     */
-open func catalogSize()throws  -> UInt64  {
-    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
-    uniffi_curator_ffi_fn_method_engine_catalog_size(
-            self.uniffiCloneHandle(),$0
-    )
-})
-}
-    
-    /**
-     * Distinct systems in the catalog (for the browser's filter control).
-     */
-open func catalogSystems()throws  -> [String]  {
-    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
-    uniffi_curator_ffi_fn_method_engine_catalog_systems(
-            self.uniffiCloneHandle(),$0
-    )
-})
-}
-    
-    /**
-     * Export the catalog as a portable `.zip` bundle (`manifest.json` +
+     * Export the library as a portable `.zip` bundle (`manifest.json` +
      * `builds.jsonl`) to `out_path` — the format to copy between machines and
      * ingest into the web service. Returns the number of records written.
      */
@@ -868,7 +846,7 @@ open func exportBundle(outPath: String)throws  -> UInt64  {
 }
     
     /**
-     * Export the catalog as JSON Lines to `out_path` (the desktop→web feed). Returns
+     * Export the library as JSON Lines to `out_path` (the desktop→web feed). Returns
      * the number of records written.
      */
 open func exportJsonl(outPath: String)throws  -> UInt64  {
@@ -881,7 +859,29 @@ open func exportJsonl(outPath: String)throws  -> UInt64  {
 }
     
     /**
-     * Reload a catalogued build from cache by sha256 (no adapter run). `None` if absent.
+     * Number of builds in the local library.
+     */
+open func librarySize()throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+    uniffi_curator_ffi_fn_method_engine_library_size(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Distinct systems in the library (for the browser's filter control).
+     */
+open func librarySystems()throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+    uniffi_curator_ffi_fn_method_engine_library_systems(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
      */
 open func loadBuild(sha256: String)throws  -> AnalysisSummary?  {
     return try  FfiConverterOptionTypeAnalysisSummary.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
@@ -895,8 +895,8 @@ open func loadBuild(sha256: String)throws  -> AnalysisSummary?  {
     /**
      * The most recently analyzed builds, newest first.
      */
-open func recentBuilds(limit: UInt32)throws  -> [CatalogEntry]  {
-    return try  FfiConverterSequenceTypeCatalogEntry.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+open func recentBuilds(limit: UInt32)throws  -> [LibraryEntry]  {
+    return try  FfiConverterSequenceTypeLibraryEntry.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
     uniffi_curator_ffi_fn_method_engine_recent_builds(
             self.uniffiCloneHandle(),
         FfiConverterUInt32.lower(limit),$0
@@ -905,16 +905,16 @@ open func recentBuilds(limit: UInt32)throws  -> [CatalogEntry]  {
 }
     
     /**
-     * Search/browse the catalog: `search` matches name or system, `system` filters
+     * Search/browse the library: `search` matches name or system, `system` filters
      * to one, sorted by `sort` (descending when `descending`), paged by limit/offset.
      */
-open func searchCatalog(search: String?, system: String?, sort: CatalogSort, descending: Bool, limit: UInt32, offset: UInt32)throws  -> [CatalogEntry]  {
-    return try  FfiConverterSequenceTypeCatalogEntry.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
-    uniffi_curator_ffi_fn_method_engine_search_catalog(
+open func searchLibrary(search: String?, system: String?, sort: LibrarySort, descending: Bool, limit: UInt32, offset: UInt32)throws  -> [LibraryEntry]  {
+    return try  FfiConverterSequenceTypeLibraryEntry.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+    uniffi_curator_ffi_fn_method_engine_search_library(
             self.uniffiCloneHandle(),
         FfiConverterOptionString.lower(search),
         FfiConverterOptionString.lower(system),
-        FfiConverterTypeCatalogSort_lower(sort),
+        FfiConverterTypeLibrarySort_lower(sort),
         FfiConverterBool.lower(descending),
         FfiConverterUInt32.lower(limit),
         FfiConverterUInt32.lower(offset),$0
@@ -1076,85 +1076,6 @@ public func FfiConverterTypeAnalysisSummary_lower(_ value: AnalysisSummary) -> R
 
 
 /**
- * A catalog entry for the recent-builds list and the catalog browser.
- */
-public struct CatalogEntry: Equatable, Hashable {
-    public var sha256: String
-    public var name: String
-    public var system: String
-    public var fileCount: UInt64
-    public var totalSize: UInt64
-    /**
-     * Unix seconds of last analysis.
-     */
-    public var analyzedAt: Int64
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(sha256: String, name: String, system: String, fileCount: UInt64, totalSize: UInt64, 
-        /**
-         * Unix seconds of last analysis.
-         */analyzedAt: Int64) {
-        self.sha256 = sha256
-        self.name = name
-        self.system = system
-        self.fileCount = fileCount
-        self.totalSize = totalSize
-        self.analyzedAt = analyzedAt
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CatalogEntry: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCatalogEntry: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CatalogEntry {
-        return
-            try CatalogEntry(
-                sha256: FfiConverterString.read(from: &buf), 
-                name: FfiConverterString.read(from: &buf), 
-                system: FfiConverterString.read(from: &buf), 
-                fileCount: FfiConverterUInt64.read(from: &buf), 
-                totalSize: FfiConverterUInt64.read(from: &buf), 
-                analyzedAt: FfiConverterInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CatalogEntry, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.sha256, into: &buf)
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterString.write(value.system, into: &buf)
-        FfiConverterUInt64.write(value.fileCount, into: &buf)
-        FfiConverterUInt64.write(value.totalSize, into: &buf)
-        FfiConverterInt64.write(value.analyzedAt, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCatalogEntry_lift(_ buf: RustBuffer) throws -> CatalogEntry {
-    return try FfiConverterTypeCatalogEntry.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCatalogEntry_lower(_ value: CatalogEntry) -> RustBuffer {
-    return FfiConverterTypeCatalogEntry.lower(value)
-}
-
-
-/**
  * One node of the on-disc filesystem tree (recursive via `children`).
  */
 public struct FileNode: Equatable, Hashable {
@@ -1238,78 +1159,67 @@ public func FfiConverterTypeFileNode_lower(_ value: FileNode) -> RustBuffer {
     return FfiConverterTypeFileNode.lower(value)
 }
 
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 /**
- * Column the catalog browser sorts on.
+ * A library entry for the recent-builds list and the library browser.
  */
+public struct LibraryEntry: Equatable, Hashable {
+    public var sha256: String
+    public var name: String
+    public var system: String
+    public var fileCount: UInt64
+    public var totalSize: UInt64
+    /**
+     * Unix seconds of last analysis.
+     */
+    public var analyzedAt: Int64
 
-public enum CatalogSort: Equatable, Hashable {
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sha256: String, name: String, system: String, fileCount: UInt64, totalSize: UInt64, 
+        /**
+         * Unix seconds of last analysis.
+         */analyzedAt: Int64) {
+        self.sha256 = sha256
+        self.name = name
+        self.system = system
+        self.fileCount = fileCount
+        self.totalSize = totalSize
+        self.analyzedAt = analyzedAt
+    }
+
     
-    case name
-    case system
-    case files
-    case size
-    case date
 
-
-
-
-
+    
 }
 
 #if compiler(>=6)
-extension CatalogSort: Sendable {}
+extension LibraryEntry: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeCatalogSort: FfiConverterRustBuffer {
-    typealias SwiftType = CatalogSort
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CatalogSort {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .name
-        
-        case 2: return .system
-        
-        case 3: return .files
-        
-        case 4: return .size
-        
-        case 5: return .date
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
+public struct FfiConverterTypeLibraryEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LibraryEntry {
+        return
+            try LibraryEntry(
+                sha256: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                system: FfiConverterString.read(from: &buf), 
+                fileCount: FfiConverterUInt64.read(from: &buf), 
+                totalSize: FfiConverterUInt64.read(from: &buf), 
+                analyzedAt: FfiConverterInt64.read(from: &buf)
+        )
     }
 
-    public static func write(_ value: CatalogSort, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .name:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .system:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .files:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .size:
-            writeInt(&buf, Int32(4))
-        
-        
-        case .date:
-            writeInt(&buf, Int32(5))
-        
-        }
+    public static func write(_ value: LibraryEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sha256, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.system, into: &buf)
+        FfiConverterUInt64.write(value.fileCount, into: &buf)
+        FfiConverterUInt64.write(value.totalSize, into: &buf)
+        FfiConverterInt64.write(value.analyzedAt, into: &buf)
     }
 }
 
@@ -1317,17 +1227,16 @@ public struct FfiConverterTypeCatalogSort: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCatalogSort_lift(_ buf: RustBuffer) throws -> CatalogSort {
-    return try FfiConverterTypeCatalogSort.lift(buf)
+public func FfiConverterTypeLibraryEntry_lift(_ buf: RustBuffer) throws -> LibraryEntry {
+    return try FfiConverterTypeLibraryEntry.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeCatalogSort_lower(_ value: CatalogSort) -> RustBuffer {
-    return FfiConverterTypeCatalogSort.lower(value)
+public func FfiConverterTypeLibraryEntry_lower(_ value: LibraryEntry) -> RustBuffer {
+    return FfiConverterTypeLibraryEntry.lower(value)
 }
-
 
 
 public enum CuratorError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
@@ -1408,6 +1317,97 @@ public func FfiConverterTypeCuratorError_lift(_ buf: RustBuffer) throws -> Curat
 public func FfiConverterTypeCuratorError_lower(_ value: CuratorError) -> RustBuffer {
     return FfiConverterTypeCuratorError.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Column the library browser sorts on.
+ */
+
+public enum LibrarySort: Equatable, Hashable {
+    
+    case name
+    case system
+    case files
+    case size
+    case date
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LibrarySort: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLibrarySort: FfiConverterRustBuffer {
+    typealias SwiftType = LibrarySort
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LibrarySort {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .name
+        
+        case 2: return .system
+        
+        case 3: return .files
+        
+        case 4: return .size
+        
+        case 5: return .date
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LibrarySort, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .name:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .system:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .files:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .size:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .date:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLibrarySort_lift(_ buf: RustBuffer) throws -> LibrarySort {
+    return try FfiConverterTypeLibrarySort.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLibrarySort_lower(_ value: LibrarySort) -> RustBuffer {
+    return FfiConverterTypeLibrarySort.lower(value)
+}
+
 
 
 
@@ -1822,31 +1822,6 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeCatalogEntry: FfiConverterRustBuffer {
-    typealias SwiftType = [CatalogEntry]
-
-    public static func write(_ value: [CatalogEntry], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeCatalogEntry.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CatalogEntry] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [CatalogEntry]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeCatalogEntry.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeFileNode: FfiConverterRustBuffer {
     typealias SwiftType = [FileNode]
 
@@ -1864,6 +1839,31 @@ fileprivate struct FfiConverterSequenceTypeFileNode: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFileNode.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeLibraryEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [LibraryEntry]
+
+    public static func write(_ value: [LibraryEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeLibraryEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [LibraryEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [LibraryEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeLibraryEntry.read(from: &buf))
         }
         return seq
     }
@@ -1893,31 +1893,31 @@ private let initializationResult: InitializationResult = {
     if (uniffi_curator_ffi_checksum_method_engine_analyze() != 11313) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_catalog_size() != 48424) {
+    if (uniffi_curator_ffi_checksum_method_engine_export_bundle() != 38085) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_catalog_systems() != 8937) {
+    if (uniffi_curator_ffi_checksum_method_engine_export_jsonl() != 34610) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_export_bundle() != 11349) {
+    if (uniffi_curator_ffi_checksum_method_engine_library_size() != 11031) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_export_jsonl() != 15472) {
+    if (uniffi_curator_ffi_checksum_method_engine_library_systems() != 32687) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_load_build() != 2108) {
+    if (uniffi_curator_ffi_checksum_method_engine_load_build() != 6979) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_recent_builds() != 52827) {
+    if (uniffi_curator_ffi_checksum_method_engine_recent_builds() != 34130) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_search_catalog() != 34125) {
+    if (uniffi_curator_ffi_checksum_method_engine_search_library() != 55098) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_constructor_cancelhandle_new() != 13737) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_constructor_engine_new() != 50646) {
+    if (uniffi_curator_ffi_checksum_constructor_engine_new() != 35085) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_progresslistener_on_batch() != 4925) {

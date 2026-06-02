@@ -20,7 +20,7 @@ producing a static lib the app links. It exposes:
 
 - `Engine.analyze(path, listener, cancel)` → `AnalysisSummary` (sha256, system, title,
   file/size counts, the file `tree`, and the pretty `xml`/`json` documents).
-- `Engine.catalogSize()`, `Engine.exportJsonl(outPath)`.
+- `Engine.librarySize()`, `Engine.exportJsonl(outPath)`.
 - `ProgressListener` callback interface (batch + intra-file counters) and a
   `CancelHandle` the core polls — image hashing unwinds promptly and the adapter
   subprocess is killed on cancel.
@@ -47,14 +47,14 @@ Validate the bridge headlessly (no display needed):
 ```sh
 cargo build -p curator-ffi
 cd macos && swift run curator-probe
-# → catalogSize ✓, progress callbacks fire, cancellation → .Cancelled, errors → .Failed
+# → librarySize ✓, progress callbacks fire, cancellation → .Cancelled, errors → .Failed
 ```
 
 ## Done
 
 - Analyze (files/folders, **open dialog or drag-and-drop**) → tree + details + XML/JSON,
   live progress, working Cancel.
-- **Recent builds** — the sidebar lists the local catalog; clicking one reopens it from
+- **Recent builds** — the sidebar lists the local library; clicking one reopens it from
   cache (no re-analysis).
 - **Embedded adapter** — `build-app.sh` copies a Phase-2 bundle into
   `Resources/adapter`; the app runs with no dev toolchain and no env var.

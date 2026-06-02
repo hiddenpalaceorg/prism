@@ -65,18 +65,18 @@ final class AppModel: ObservableObject {
     @Published var docMode: DocMode = .xml
     @Published var errorMessage: String?
     @Published var showingError = false
-    @Published var catalogCount: UInt64 = 0
-    @Published var recent: [CatalogEntry] = []
+    @Published var libraryCount: UInt64 = 0
+    @Published var recent: [LibraryEntry] = []
 
-    // Catalog browser (searchable + sortable list of every analyzed build).
-    @Published var catalogResults: [CatalogEntry] = []
-    @Published var catalogSearch = ""
-    @Published var catalogSystemFilter = ""        // "" = all systems
-    @Published var catalogSystems: [String] = []
-    @Published var catalogSort: CatalogSort = .date
-    @Published var catalogSortDescending = true
+    // Library browser (searchable + sortable list of every analyzed build).
+    @Published var libraryResults: [LibraryEntry] = []
+    @Published var librarySearch = ""
+    @Published var librarySystemFilter = ""        // "" = all systems
+    @Published var librarySystems: [String] = []
+    @Published var librarySort: LibrarySort = .date
+    @Published var librarySortDescending = true
     /// Upper bound on rows pulled into the browser at once.
-    private let catalogPageLimit: UInt32 = 10_000
+    private let libraryPageLimit: UInt32 = 10_000
 
     // Web service (read-only similarity + submit).
     @Published var similarity: SimilarityResponse?
@@ -116,47 +116,47 @@ final class AppModel: ObservableObject {
             dataDir: ProcessInfo.processInfo.environment["CURATOR_DATA_DIR"]
         )
         engine = e
-        catalogCount = (try? e.catalogSize()) ?? 0
+        libraryCount = (try? e.librarySize()) ?? 0
         return e
     }
 
-    func refreshCatalogCount() {
-        catalogCount = (try? engine?.catalogSize()) ?? catalogCount
+    func refreshLibraryCount() {
+        libraryCount = (try? engine?.librarySize()) ?? libraryCount
         recent = (try? engine?.recentBuilds(limit: 25)) ?? recent
     }
 
     /// Build the engine, then load the systems filter + current result page.
     /// Safe to call repeatedly (e.g. each time the browser appears).
-    func loadCatalogAtLaunch() {
+    func loadLibraryAtLaunch() {
         guard (try? makeEngine()) != nil else { return }
-        catalogSystems = (try? engine?.catalogSystems()) ?? catalogSystems
-        refreshCatalog()
+        librarySystems = (try? engine?.librarySystems()) ?? librarySystems
+        refreshLibrary()
     }
 
-    /// Re-run the catalog query for the current search / filter / sort.
-    func refreshCatalog() {
+    /// Re-run the library query for the current search / filter / sort.
+    func refreshLibrary() {
         guard let e = try? makeEngine() else { return }
-        let q = catalogSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        catalogResults = (try? e.searchCatalog(
+        let q = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        libraryResults = (try? e.searchLibrary(
             search: q.isEmpty ? nil : q,
-            system: catalogSystemFilter.isEmpty ? nil : catalogSystemFilter,
-            sort: catalogSort,
-            descending: catalogSortDescending,
-            limit: catalogPageLimit,
+            system: librarySystemFilter.isEmpty ? nil : librarySystemFilter,
+            sort: librarySort,
+            descending: librarySortDescending,
+            limit: libraryPageLimit,
             offset: 0
         )) ?? []
     }
 
     /// Header click: same column flips direction; a new column resets to a sensible
     /// default (text ascending, counts/dates descending).
-    func sortCatalog(by column: CatalogSort) {
-        if catalogSort == column {
-            catalogSortDescending.toggle()
+    func sortLibrary(by column: LibrarySort) {
+        if librarySort == column {
+            librarySortDescending.toggle()
         } else {
-            catalogSort = column
-            catalogSortDescending = !(column == .name || column == .system)
+            librarySort = column
+            librarySortDescending = !(column == .name || column == .system)
         }
-        refreshCatalog()
+        refreshLibrary()
     }
 
     /// Populate the recent list at launch (builds the engine lazily).
@@ -165,7 +165,7 @@ final class AppModel: ObservableObject {
         if let e = try? makeEngine() { recent = (try? e.recentBuilds(limit: 25)) ?? [] }
     }
 
-    /// Reopen a catalogued build from cache (no re-analysis).
+    /// Reopen a stored build from cache (no re-analysis).
     func openRecent(sha256: String) {
         guard !isWorking else { return }
         do {
@@ -274,7 +274,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Open a build's detail page in the web catalog in the default browser.
+    /// Open a build's detail page in the web library in the default browser.
     func openInWeb(sha256: String) {
         let url = service.baseURL.appendingPathComponent("build").appendingPathComponent(sha256)
         NSWorkspace.shared.open(url)
@@ -293,13 +293,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Export the whole local catalog to a single `.zip` to copy to the server
-    /// machine and ingest. The export runs off the main thread (a big catalog is
+    /// Export the whole local library to a single `.zip` to copy to the server
+    /// machine and ingest. The export runs off the main thread (a big library is
     /// slow); the FFI call goes on the same dedicated queue as `analyze`.
-    func exportCatalog() {
+    func exportLibrary() {
         guard !isWorking else { return }
         let panel = NSSavePanel()
-        panel.title = "Export Catalog for Upload"
+        panel.title = "Export Library for Upload"
         panel.prompt = "Export"
         panel.nameFieldStringValue = "collection.curator.zip"
         panel.allowedContentTypes = [.zip]
@@ -308,7 +308,7 @@ final class AppModel: ObservableObject {
 
         isWorking = true
         errorMessage = nil
-        status = "Exporting catalog…"
+        status = "Exporting library…"
 
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
@@ -326,7 +326,7 @@ final class AppModel: ObservableObject {
                 await MainActor.run {
                     self.isWorking = false
                     self.status = count == 0
-                        ? "Catalog is empty — analyze a disc first."
+                        ? "Library is empty — analyze a disc first."
                         : "Exported \(count) builds → \(outPath)"
                 }
             } catch {
@@ -373,7 +373,7 @@ final class AppModel: ObservableObject {
         similarity = nil
         serviceMessage = nil
         status = "\(summary.fromCache ? "Loaded from cache" : "Analyzed") — \(summary.system), \(summary.fileCount) files, \(humanSize(summary.totalSize))."
-        refreshCatalogCount()
+        refreshLibraryCount()
     }
 
     private func fail(_ message: String) {

@@ -16,7 +16,7 @@ struct CuratorApp: App {
                     .keyboardShortcut("o", modifiers: .command)
                     .disabled(model.isWorking)
                 Divider()
-                Button("Export Catalog for Upload…") { model.exportCatalog() }
+                Button("Export Library for Upload…") { model.exportLibrary() }
                     .keyboardShortcut("e", modifiers: .command)
                     .disabled(model.isWorking)
             }

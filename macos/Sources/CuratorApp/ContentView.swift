@@ -12,7 +12,7 @@ struct ContentView: View {
         } detail: {
             DetailView()
         }
-        .onAppear { model.loadCatalogAtLaunch() }
+        .onAppear { model.loadLibraryAtLaunch() }
         .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
             guard !model.isWorking, let provider = providers.first else { return false }
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
@@ -113,65 +113,65 @@ struct SidebarView: View {
                 ContentUnavailableViewCompat(
                     title: "No image loaded",
                     systemImage: "opticaldisc",
-                    message: "Browse the catalog on the right, or open — or drag in — a disc image, container, or folder."
+                    message: "Browse the library on the right, or open — or drag in — a disc image, container, or folder."
                 )
             }
         }
     }
 }
 
-// MARK: - Catalog browser (searchable + sortable list of every analyzed build)
+// MARK: - Library browser (searchable + sortable list of every analyzed build)
 
 /// Fixed column widths shared by the header and rows so they line up. The title
 /// column flexes to fill the rest.
-private enum CatalogCol {
+private enum LibraryCol {
     static let system: CGFloat = 130
     static let files: CGFloat = 64
     static let size: CGFloat = 88
     static let date: CGFloat = 130
 }
 
-struct CatalogBrowser: View {
+struct LibraryBrowser: View {
     @EnvironmentObject var model: AppModel
 
-    private var filtering: Bool { !model.catalogSearch.isEmpty || !model.catalogSystemFilter.isEmpty }
+    private var filtering: Bool { !model.librarySearch.isEmpty || !model.librarySystemFilter.isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search title or system", text: $model.catalogSearch)
+                TextField("Search title or system", text: $model.librarySearch)
                     .textFieldStyle(.plain)
-                    .onChange(of: model.catalogSearch) { _ in model.refreshCatalog() }
+                    .onChange(of: model.librarySearch) { _ in model.refreshLibrary() }
                 Divider().frame(height: 16)
-                Picker("", selection: $model.catalogSystemFilter) {
+                Picker("", selection: $model.librarySystemFilter) {
                     Text("All systems").tag("")
-                    ForEach(model.catalogSystems, id: \.self) { Text($0).tag($0) }
+                    ForEach(model.librarySystems, id: \.self) { Text($0).tag($0) }
                 }
                 .labelsHidden()
                 .frame(width: 180)
-                .onChange(of: model.catalogSystemFilter) { _ in model.refreshCatalog() }
+                .onChange(of: model.librarySystemFilter) { _ in model.refreshLibrary() }
             }
             .padding(8)
             Divider()
-            CatalogHeader()
+            LibraryHeader()
             Divider()
-            if model.catalogResults.isEmpty {
+            if model.libraryResults.isEmpty {
                 Spacer()
                 ContentUnavailableViewCompat(
-                    title: filtering ? "No matches" : "Catalog is empty",
+                    title: filtering ? "No matches" : "Library is empty",
                     systemImage: "tray",
                     message: filtering
                         ? "Try a different search or system filter."
-                        : "Analyze or import discs to populate the catalog."
+                        : "Analyze or import discs to populate the library."
                 )
                 Spacer()
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(model.catalogResults, id: \.sha256) { e in
+                        ForEach(model.libraryResults, id: \.sha256) { e in
                             Button { model.openRecent(sha256: e.sha256) } label: {
-                                CatalogRow(entry: e)
+                                LibraryRow(entry: e)
                             }
                             .buttonStyle(.plain)
                             Divider()
@@ -180,26 +180,26 @@ struct CatalogBrowser: View {
                 }
             }
             HStack {
-                Text("\(model.catalogResults.count) build\(model.catalogResults.count == 1 ? "" : "s")")
+                Text("\(model.libraryResults.count) build\(model.libraryResults.count == 1 ? "" : "s")")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
             .padding(.horizontal, 12).padding(.vertical, 4)
         }
-        .onAppear { model.loadCatalogAtLaunch() }
+        .onAppear { model.loadLibraryAtLaunch() }
     }
 }
 
-struct CatalogHeader: View {
+struct LibraryHeader: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
         HStack(spacing: 12) {
             sortButton("Title", .name).frame(maxWidth: .infinity, alignment: .leading)
-            sortButton("System", .system).frame(width: CatalogCol.system, alignment: .leading)
-            sortButton("Files", .files).frame(width: CatalogCol.files, alignment: .trailing)
-            sortButton("Size", .size).frame(width: CatalogCol.size, alignment: .trailing)
-            sortButton("Analyzed", .date).frame(width: CatalogCol.date, alignment: .trailing)
+            sortButton("System", .system).frame(width: LibraryCol.system, alignment: .leading)
+            sortButton("Files", .files).frame(width: LibraryCol.files, alignment: .trailing)
+            sortButton("Size", .size).frame(width: LibraryCol.size, alignment: .trailing)
+            sortButton("Analyzed", .date).frame(width: LibraryCol.date, alignment: .trailing)
         }
         .font(.caption.bold())
         .foregroundStyle(.secondary)
@@ -207,12 +207,12 @@ struct CatalogHeader: View {
     }
 
     @ViewBuilder
-    private func sortButton(_ label: String, _ column: CatalogSort) -> some View {
-        Button { model.sortCatalog(by: column) } label: {
+    private func sortButton(_ label: String, _ column: LibrarySort) -> some View {
+        Button { model.sortLibrary(by: column) } label: {
             HStack(spacing: 2) {
                 Text(label)
-                if model.catalogSort == column {
-                    Image(systemName: model.catalogSortDescending ? "chevron.down" : "chevron.up")
+                if model.librarySort == column {
+                    Image(systemName: model.librarySortDescending ? "chevron.down" : "chevron.up")
                         .font(.system(size: 8, weight: .bold))
                 }
             }
@@ -222,21 +222,21 @@ struct CatalogHeader: View {
     }
 }
 
-struct CatalogRow: View {
-    let entry: CatalogEntry
+struct LibraryRow: View {
+    let entry: LibraryEntry
 
     var body: some View {
         HStack(spacing: 12) {
             Text(entry.name).lineLimit(1).truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(entry.system).foregroundStyle(.secondary)
-                .frame(width: CatalogCol.system, alignment: .leading)
+                .frame(width: LibraryCol.system, alignment: .leading)
             Text("\(entry.fileCount)").foregroundStyle(.secondary).monospacedDigit()
-                .frame(width: CatalogCol.files, alignment: .trailing)
+                .frame(width: LibraryCol.files, alignment: .trailing)
             Text(humanSize(entry.totalSize)).foregroundStyle(.secondary).monospacedDigit()
-                .frame(width: CatalogCol.size, alignment: .trailing)
+                .frame(width: LibraryCol.size, alignment: .trailing)
             Text(relativeDate(entry.analyzedAt)).foregroundStyle(.secondary)
-                .frame(width: CatalogCol.date, alignment: .trailing)
+                .frame(width: LibraryCol.date, alignment: .trailing)
         }
         .lineLimit(1)
         .padding(.horizontal, 12).padding(.vertical, 5)
@@ -277,7 +277,7 @@ struct DetailView: View {
                 }
                 .padding(.top, 6)
             } else {
-                CatalogBrowser()
+                LibraryBrowser()
             }
         }
     }
@@ -507,7 +507,7 @@ struct NeighborRow: View {
                 NSPasteboard.general.setString(neighbor.sha256, forType: .string)
             }
         }
-        .help("Open \(neighbor.sha256) in the web catalog")
+        .help("Open \(neighbor.sha256) in the web library")
     }
 }
 
@@ -568,7 +568,7 @@ struct StatusBar: View {
                 if let err = model.errorMessage {
                     Text(err).font(.caption).foregroundStyle(.red).lineLimit(1)
                 }
-                Text("catalog: \(model.catalogCount)").font(.caption).foregroundStyle(.tertiary)
+                Text("library: \(model.libraryCount)").font(.caption).foregroundStyle(.tertiary)
             }
         }
         .padding(8)

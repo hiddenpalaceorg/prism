@@ -30,7 +30,7 @@ ec8de44  Web service: search, similarity, submissions API
   `rust-toolchain.toml` (1.77 was too old for current crates).
 - **Phase 1** — desktop pipeline: Rust image hash → uv/ps2exe adapter (canonical JSON +
   NDJSON progress) → composites + structural + chunk signature + tree → DAT/JSON →
-  sha256 cache → SQLite catalog → `export` (JSONL). Live `indicatif` progress.
+  sha256 cache → SQLite library → `export` (JSONL). Live `indicatif` progress.
   **Nested archive→disc recursion** (zip/7z) works.
 - **Fingerprint tiers** (all captured in the one pass): T1 content-id (`content_hash`,
   `filtered_content_hash`), T2 whole-file set, T3 FastCDC+blake3 chunks (**streamed**,
@@ -53,12 +53,12 @@ ec8de44  Web service: search, similarity, submissions API
   ~179 MB (numpy/cryptography/PIL). Gotcha: discover the *managed* python with
   `VIRTUAL_ENV` stripped, else `uv python find` returns the project `.venv` (broken).
 - **Phase 3 (macOS GUI)** — `crates/curator-ffi` (UniFFI 0.31 proc-macros over the
-  core): `Engine.analyze/catalogSize/exportJsonl`, `ProgressListener` callback,
+  core): `Engine.analyze/librarySize/exportJsonl`, `ProgressListener` callback,
   `CancelHandle`, `AnalysisSummary`+recursive `FileNode` tree. Cancellation wired into
   the core (`Error::Cancelled`; `hash_image` polls; `adapter::run` kills the child).
   SwiftUI app under `macos/` (SwiftPM): tree sidebar, file details+hashes, XML/JSON
   viewer, batch+intra-file progress bars, Cancel. `macos/build-app.sh` → `Curator.app`.
-  Validated headlessly via `swift run curator-probe`: catalogSize, real hashing progress
+  Validated headlessly via `swift run curator-probe`: librarySize, real hashing progress
   events, cancellation → `.Cancelled`, adapter-via-uv error → `.Failed`.
 - **Phase 3 (macOS polish)** — app embeds the Phase-2 adapter bundle (build-app.sh copies
   it into `Curator.app/Contents/Resources/adapter`; resolved by `Bundle.main` so it runs
@@ -68,10 +68,10 @@ ec8de44  Web service: search, similarity, submissions API
   seeded two content-twins, server on :3001 — similarity returned `identical_content` matching
   the Swift `CodingKeys`, submit returned `202 {sha256,status:"queued"}` and persisted.
 - **Phase 3 (macOS niceties)** — drag-and-drop onto the window; a recent-builds sidebar
-  (new `Db::list_recent`/`CatalogRow`, FFI `recentBuilds`/`loadBuild`) that reopens a
-  catalogued build from cache without re-analysis; neighbor rows deep-link into the web
+  (new `Db::list_recent`/`LibraryRow`, FFI `recentBuilds`/`loadBuild`) that reopens a
+  stored build from cache without re-analysis; neighbor rows deep-link into the web
   search (`/?q=<sha256>`; search page now reads the `q` URL param on mount). Validated
-  via the probe against a crafted catalog (recent list + cache reload) and `tsc`.
+  via the probe against a crafted library (recent list + cache reload) and `tsc`.
 
 - **Phase 3 (Windows GUI)** — `crates/curator-gui-win`: a Win32 windows-rs app calling
   `curator-core` in-process (TreeView + XML edit + progress/status bars; File▸Open
@@ -81,7 +81,7 @@ ec8de44  Web service: search, similarity, submissions API
   Find-Similar (`POST /api/similarity`) + Submit (nickname modal → `POST
   /api/submissions`) use native **WinHTTP**; request/response shapes match the
   live-validated macOS client. `CURATOR_WEB_URL` overrides the base URL. At parity with
-  macOS: **Open Recent** menu (catalog → cache reload), **drag-and-drop** (panes
+  macOS: **Open Recent** menu (library → cache reload), **drag-and-drop** (panes
   subclassed to forward `WM_DROPFILES`), and adapter resolution
   (`CURATOR_ADAPTER_BIN` → `adapter\` next to exe → `CURATOR_ADAPTER_DIR` → dev uv).
 - **Phase 3 (web build-detail)** — `/build/[sha256]` page + `GET /api/build/[sha256]`
@@ -91,7 +91,7 @@ ec8de44  Web service: search, similarity, submissions API
 - **Phase 4 (moderation)** — `/moderate` page + `GET /api/submissions[?status=]` and
   `POST /api/submissions/[sha256] {action}`; accept reuses the extracted
   `src/lib/ingest.ts` (`ingestRecord`, shared with the bulk CLI ingester) to ingest into
-  the catalog, reject just marks status. Validated live: submit→queue→accept ingests
+  the library, reject just marks status. Validated live: submit→queue→accept ingests
   builds/files/fileset, reject stays out.
 
 - **Tests + CI** — `cargo test` (10 core/schema tests: composite invariance, structural,
@@ -248,7 +248,7 @@ Rendered two ways: **XML DAT** (Redump/No-Intro `<datafile>` style) and **JSON**
 
 Opening a folder: recursively scan and treat **each disc image/archive as its own
 build** (batch → accumulates into the local DB). If the folder contains no
-recognizable images, fall back to cataloging the folder itself as a filesystem.
+recognizable images, fall back to storing the folder itself as a filesystem.
 
 ## Phases
 
@@ -294,7 +294,7 @@ recognizable images, fall back to cataloging the folder itself as a filesystem.
   uploaded → accepted/rejected) syncs back and shows in the list column.
 
 **Phase 3.5 — Export bridge (bulk contribute path)**
-- `curator export --out builds.json[l]`: dump the local SQLite catalog to a JSON
+- `curator export --out builds.json[l]`: dump the local SQLite library to a JSON
   bundle (one canonical build record each — no precomputed vectors; the server
   derives all indexes). Bulk sibling of the GUI's per-build submit; the web ingester
   only ever reads these bundles.

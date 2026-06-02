@@ -11,7 +11,7 @@ Excluded from the root workspace so non-Windows `cargo build` skips it.
 - Classic Win32 window: a `SysTreeView32` of the analyzed filesystem on the left, a
   read-only multiline edit with the DAT/XML on the right, a progress bar + status bar.
 - **File ▸ Open Image…** (`GetOpenFileNameW`), **Open Folder…** (`SHBrowseForFolderW`),
-  and **Open Recent** (the local catalog; reopens from cache, no re-analysis).
+  and **Open Recent** (the local library; reopens from cache, no re-analysis).
 - **Drag-and-drop** a file/folder onto the window (the panes are subclassed to forward
   `WM_DROPFILES`).
 - Adapter resolution: `CURATOR_ADAPTER_BIN` → `adapter\curator-adapter*` next to the exe

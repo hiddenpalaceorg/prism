@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Curator core: disc fingerprinting, cache, catalog, and DAT/JSON rendering."
+description = "Curator core: disc fingerprinting, cache, library, and DAT/JSON rendering."
 
 [dependencies]
 serde.workspace = true

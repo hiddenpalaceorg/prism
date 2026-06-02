@@ -165,32 +165,32 @@ impl Analyzer {
         Ok(Analysis { record, from_cache: false, json_path })
     }
 
-    /// Number of builds in the local catalog.
-    pub fn catalog_size(&self) -> Result<u64> {
+    /// Number of builds in the local library.
+    pub fn library_size(&self) -> Result<u64> {
         self.db.count_builds()
     }
 
     /// The most recently analyzed builds, newest first.
-    pub fn recent_builds(&self, limit: u32) -> Result<Vec<db::CatalogRow>> {
+    pub fn recent_builds(&self, limit: u32) -> Result<Vec<db::LibraryRow>> {
         self.db.list_recent(limit)
     }
 
-    /// Search/browse the catalog (name+system substring, optional system filter,
-    /// sortable, paged). Backs the catalog browser in the GUIs.
-    pub fn search_catalog(
+    /// Search/browse the library (name+system substring, optional system filter,
+    /// sortable, paged). Backs the library browser in the GUIs.
+    pub fn search_library(
         &self,
         search: Option<&str>,
         system: Option<&str>,
-        sort: db::CatalogSort,
+        sort: db::LibrarySort,
         desc: bool,
         limit: u32,
         offset: u32,
-    ) -> Result<Vec<db::CatalogRow>> {
+    ) -> Result<Vec<db::LibraryRow>> {
         self.db.search_builds(search, system, sort, desc, limit, offset)
     }
 
-    /// Distinct systems in the catalog (for the browser's filter control).
-    pub fn catalog_systems(&self) -> Result<Vec<String>> {
+    /// Distinct systems in the library (for the browser's filter control).
+    pub fn library_systems(&self) -> Result<Vec<String>> {
         self.db.list_systems()
     }
 
@@ -206,7 +206,7 @@ impl Analyzer {
         }
     }
 
-    /// Export the catalog as JSON Lines (one canonical build record per line) — the
+    /// Export the library as JSON Lines (one canonical build record per line) — the
     /// bulk desktop→web contribute feed. Returns the number of records written.
     pub fn export_jsonl<W: std::io::Write>(&self, mut out: W) -> Result<u64> {
         let mut n = 0;
@@ -230,7 +230,7 @@ impl Analyzer {
         Ok(n)
     }
 
-    /// Export the catalog as a portable bundle: a ZIP holding `builds.jsonl` (the
+    /// Export the library as a portable bundle: a ZIP holding `builds.jsonl` (the
     /// JSON-Lines feed) plus a self-describing `manifest.json`. This is the format
     /// to copy between machines and ingest into the web service; it's
     /// double-clickable on macOS/Windows. Returns the number of records written.

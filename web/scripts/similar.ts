@@ -1,4 +1,4 @@
-// Find builds similar to a catalogued one (CLI smoke test of the similarity tiers).
+// Find builds similar to a stored one (CLI smoke test of the similarity tiers).
 // Usage: npm run similar -- <sha256>   (env DATABASE_URL)
 
 import pg from "pg";

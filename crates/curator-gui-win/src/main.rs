@@ -29,7 +29,7 @@ mod app {
     use std::sync::{Arc, Mutex};
 
     use curator_core::adapter::AdapterCommand;
-    use curator_core::db::CatalogSort;
+    use curator_core::db::LibrarySort;
     use curator_core::{render, Analyzer, BuildRecord, Config, Event, Node, ProgressObserver};
 
     use windows::core::{w, PCWSTR, PWSTR, Result};
@@ -477,9 +477,9 @@ mod app {
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN, w!("&Open Image…\tCtrl+O"));
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_FOLDER, w!("Open &Folder…"));
         let _ = AppendMenuW(file, MF_POPUP, recent.0 as usize, w!("Open &Recent"));
-        let _ = AppendMenuW(file, MF_STRING, IDM_BROWSE, w!("&Browse Catalog…\tCtrl+B"));
+        let _ = AppendMenuW(file, MF_STRING, IDM_BROWSE, w!("&Browse Library…\tCtrl+B"));
         let _ = AppendMenuW(file, MF_SEPARATOR, 0, PCWSTR::null());
-        let _ = AppendMenuW(file, MF_STRING, IDM_EXPORT, w!("&Export Catalog for Upload…"));
+        let _ = AppendMenuW(file, MF_STRING, IDM_EXPORT, w!("&Export Library for Upload…"));
         let _ = AppendMenuW(file, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(file, MF_STRING, IDM_EXIT, w!("E&xit"));
         let analysis = CreatePopupMenu().unwrap_or_default();
@@ -543,8 +543,8 @@ mod app {
                     set_status(hwnd, "Cancelling…");
                 }
             }
-            IDM_EXPORT => export_catalog(hwnd),
-            IDM_BROWSE => browse_catalog_cmd(hwnd),
+            IDM_EXPORT => export_library(hwnd),
+            IDM_BROWSE => browse_library_cmd(hwnd),
             IDM_SIMILAR => find_similar(hwnd),
             IDM_SUBMIT => submit_build(hwnd),
             IDM_VIEW_OVERVIEW => set_view(hwnd, DocView::Overview),
@@ -895,7 +895,7 @@ mod app {
         let _ = CloseClipboard();
     }
 
-    /// Build the analyzer (catalog + cache) on demand. Returns false if it can't open.
+    /// Build the analyzer (library + cache) on demand. Returns false if it can't open.
     unsafe fn ensure_analyzer(st: &AppState) -> bool {
         let mut g = st.analyzer.lock().unwrap();
         if g.is_none() {
@@ -907,7 +907,7 @@ mod app {
         true
     }
 
-    /// Repopulate the File ▸ Open Recent submenu from the local catalog.
+    /// Repopulate the File ▸ Open Recent submenu from the local library.
     unsafe fn refresh_recent(hwnd: HWND) {
         let Some(st) = state(hwnd) else { return };
         if !ensure_analyzer(st) {
@@ -934,7 +934,7 @@ mod app {
         }
     }
 
-    /// Reopen a catalogued build from cache (no re-analysis).
+    /// Reopen a stored build from cache (no re-analysis).
     unsafe fn open_recent(hwnd: HWND, idx: usize) {
         let sha = {
             let Some(st) = state(hwnd) else { return };
@@ -945,8 +945,8 @@ mod app {
         }
     }
 
-    /// Load a catalogued build from cache by sha256 and display it (no re-analysis).
-    /// Shared by the Recent menu and the catalog browser.
+    /// Load a stored build from cache by sha256 and display it (no re-analysis).
+    /// Shared by the Recent menu and the library browser.
     unsafe fn open_sha256(hwnd: HWND, sha: &str) {
         // A single `&mut AppState`, scoped so it is dropped before `display_build` (which
         // re-derives its own &mut); holding two simultaneously would be aliasing UB.
@@ -1457,30 +1457,30 @@ mod app {
         });
     }
 
-    /// Export the whole local catalog to a single `.zip` the user can copy to the
-    /// server machine and ingest. Runs off the UI thread (a big catalog is slow).
-    unsafe fn export_catalog(hwnd: HWND) {
+    /// Export the whole local library to a single `.zip` the user can copy to the
+    /// server machine and ingest. Runs off the UI thread (a big library is slow).
+    unsafe fn export_library(hwnd: HWND) {
         let Some(st) = state(hwnd) else { return };
         if st.working {
             set_status(hwnd, "Busy — wait for the current analysis to finish.");
             return;
         }
         if !ensure_analyzer(st) {
-            set_status(hwnd, "Catalog unavailable.");
+            set_status(hwnd, "Library unavailable.");
             return;
         }
         let analyzer = st.analyzer.clone();
         let Some(path) = pick_save_file(hwnd) else { return };
-        set_status(hwnd, "Exporting catalog…");
+        set_status(hwnd, "Exporting library…");
         let hwnd_i = hwnd.0 as isize;
         std::thread::spawn(move || {
             let text = match analyzer.lock().unwrap().as_ref() {
                 Some(a) => match a.export_bundle(std::path::Path::new(&path)) {
-                    Ok(0) => "Catalog is empty — analyze a disc first.".to_string(),
+                    Ok(0) => "Library is empty — analyze a disc first.".to_string(),
                     Ok(n) => format!("Exported {n} builds → {path}"),
                     Err(e) => format!("Export failed: {e}"),
                 },
-                None => "Catalog unavailable.".to_string(),
+                None => "Library unavailable.".to_string(),
             };
             post_service_result(hwnd_i, text);
         });
@@ -1825,7 +1825,7 @@ mod app {
         String::from_utf16_lossy(&buf[..n as usize])
     }
 
-    // ---- catalog browser (modal: search + sortable list of every analyzed build) ----
+    // ---- library browser (modal: search + sortable list of every analyzed build) ----
 
     const IDC_BROWSE_SEARCH: usize = 200;
     const IDC_BROWSE_COMBO: usize = 201;
@@ -1841,15 +1841,15 @@ mod app {
         rows: Vec<String>,
         /// Systems shown in the filter combo (combo index 0 = "All systems").
         systems: Vec<String>,
-        sort: CatalogSort,
+        sort: LibrarySort,
         desc: bool,
         result: Option<String>,
         done: bool,
     }
 
-    /// File ▸ Browse Catalog. Opens the modal browser; if the user picks a build,
+    /// File ▸ Browse Library. Opens the modal browser; if the user picks a build,
     /// loads it from cache into the main window.
-    unsafe fn browse_catalog_cmd(hwnd: HWND) {
+    unsafe fn browse_library_cmd(hwnd: HWND) {
         let analyzer = {
             let Some(st) = state(hwnd) else { return };
             if st.working {
@@ -1857,18 +1857,18 @@ mod app {
                 return;
             }
             if !ensure_analyzer(st) {
-                set_status(hwnd, "Catalog unavailable.");
+                set_status(hwnd, "Library unavailable.");
                 return;
             }
             st.analyzer.clone()
         };
-        if let Some(sha) = browse_catalog(hwnd, analyzer) {
+        if let Some(sha) = browse_library(hwnd, analyzer) {
             open_sha256(hwnd, &sha);
         }
     }
 
     /// Run the modal browser; returns the chosen build's sha256, if any.
-    unsafe fn browse_catalog(owner: HWND, analyzer: Arc<Mutex<Option<Analyzer>>>) -> Option<String> {
+    unsafe fn browse_library(owner: HWND, analyzer: Arc<Mutex<Option<Analyzer>>>) -> Option<String> {
         let hinstance = GetModuleHandleW(None).ok()?;
         let class = w!("CuratorBrowse");
         let wc = WNDCLASSW {
@@ -1885,7 +1885,7 @@ mod app {
             .lock()
             .unwrap()
             .as_ref()
-            .and_then(|a| a.catalog_systems().ok())
+            .and_then(|a| a.library_systems().ok())
             .unwrap_or_default();
 
         let mut bs = BrowseState {
@@ -1895,7 +1895,7 @@ mod app {
             list: HWND::default(),
             rows: Vec::new(),
             systems,
-            sort: CatalogSort::Date,
+            sort: LibrarySort::Date,
             desc: true,
             result: None,
             done: false,
@@ -1904,7 +1904,7 @@ mod app {
         let dlg = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class,
-            w!("Browse Catalog"),
+            w!("Browse Library"),
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -1949,7 +1949,7 @@ mod app {
         }
     }
 
-    /// Re-run the catalog query for the current search/filter/sort and repopulate.
+    /// Re-run the library query for the current search/filter/sort and repopulate.
     unsafe fn browse_refresh(bs_ptr: *mut BrowseState) {
         let Some(bs) = bs_ptr.as_mut() else { return };
         let query = read_edit_text(bs.search);
@@ -1962,7 +1962,7 @@ mod app {
             .unwrap()
             .as_ref()
             .and_then(|a| {
-                a.search_catalog(
+                a.search_library(
                     if query.is_empty() { None } else { Some(query) },
                     system,
                     bs.sort,
@@ -1982,7 +1982,7 @@ mod app {
         }
     }
 
-    unsafe fn browse_insert_row(list: HWND, i: i32, r: &curator_core::db::CatalogRow) {
+    unsafe fn browse_insert_row(list: HWND, i: i32, r: &curator_core::db::LibraryRow) {
         let cells = [
             r.name.clone(),
             r.system.clone(),
@@ -2119,17 +2119,17 @@ mod app {
                         } else if nmhdr.hwndFrom == bs.list && nmhdr.code == LVN_COLUMNCLICK as u32 {
                             let nlv = &*(lparam.0 as *const NMLISTVIEW);
                             let col = match nlv.iSubItem {
-                                0 => CatalogSort::Name,
-                                1 => CatalogSort::System,
-                                2 => CatalogSort::Files,
-                                3 => CatalogSort::Size,
-                                _ => CatalogSort::Date,
+                                0 => LibrarySort::Name,
+                                1 => LibrarySort::System,
+                                2 => LibrarySort::Files,
+                                3 => LibrarySort::Size,
+                                _ => LibrarySort::Date,
                             };
                             if bs.sort == col {
                                 bs.desc = !bs.desc;
                             } else {
                                 bs.sort = col;
-                                bs.desc = !matches!(col, CatalogSort::Name | CatalogSort::System);
+                                bs.desc = !matches!(col, LibrarySort::Name | LibrarySort::System);
                             }
                             refresh = true;
                         }
