@@ -235,9 +235,9 @@ pub struct Engine {
     // The analyzer holds a single rusqlite connection (Send, !Sync); a Mutex makes the
     // engine shareable. Analyses serialize through it, which is fine for a desktop app.
     inner: Mutex<Analyzer>,
-    // A second connection used only for library reads, so the browser can query while
-    // an import holds `inner` for the whole batch (WAL makes the reads concurrent).
-    reader: Mutex<curator_core::db::Db>,
+    // Lock-free read side (own DB connection + record cache) so the browser can query
+    // and open builds while an import holds `inner` (WAL makes the reads concurrent).
+    reader: Mutex<curator_core::Reader>,
 }
 
 #[uniffi::export]
@@ -323,8 +323,9 @@ impl Engine {
     }
 
     /// Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
+    /// Uses the reader, so it works while an import holds the writer.
     pub fn load_build(&self, sha256: String) -> Result<Option<AnalysisSummary>, CuratorError> {
-        match self.inner.lock().unwrap_or_else(|e| e.into_inner()).load_cached(&sha256)? {
+        match self.reader.lock().unwrap_or_else(|e| e.into_inner()).load_cached(&sha256)? {
             Some(analysis) => Ok(Some(build_summary(&analysis)?)),
             None => Ok(None),
         }

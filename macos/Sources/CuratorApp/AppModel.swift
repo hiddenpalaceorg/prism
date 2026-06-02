@@ -169,14 +169,18 @@ final class AppModel: ObservableObject {
 
     /// Reopen a stored build from cache (no re-analysis).
     func openRecent(sha256: String) {
-        guard !isWorking else { return }
+        // No `guard !isWorking`: loadBuild uses the reader, so opening works during an
+        // import. Use `show` (not `finish`) so it doesn't clear the import's state.
         do {
             guard let e = try? makeEngine(), let summary = try e.loadBuild(sha256: sha256) else {
                 status = "Build not in cache anymore."
                 return
             }
             errorMessage = nil
-            finish(summary: summary)
+            show(summary: summary)
+            if !isWorking {
+                status = "\(summary.fromCache ? "Loaded from cache" : "Analyzed") — \(summary.system), \(summary.fileCount) files, \(humanSize(summary.totalSize))."
+            }
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
         }
@@ -443,7 +447,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func finish(summary: AnalysisSummary) {
+    /// Display a build in the detail pane. Pure view state — does NOT touch
+    /// isWorking/cancelHandle, so it's safe to call while an import runs.
+    private func show(summary: AnalysisSummary) {
         self.summary = summary
         record = RecordDoc.decode(summary.json)
         detailTab = .overview
@@ -452,11 +458,15 @@ final class AppModel: ObservableObject {
         rootNodes.forEach { $0.index(into: &idx) }
         nodeIndex = idx
         selection = nil
+        similarity = nil
+        serviceMessage = nil
+    }
+
+    private func finish(summary: AnalysisSummary) {
+        show(summary: summary)
         counters = []
         isWorking = false
         cancelHandle = nil
-        similarity = nil
-        serviceMessage = nil
         status = "\(summary.fromCache ? "Loaded from cache" : "Analyzed") — \(summary.system), \(summary.fileCount) files, \(humanSize(summary.totalSize))."
         refreshLibraryCount()
     }

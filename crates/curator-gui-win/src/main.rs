@@ -29,8 +29,8 @@ mod app {
     use std::sync::{Arc, Mutex};
 
     use curator_core::adapter::AdapterCommand;
-    use curator_core::db::{Db, LibrarySort};
-    use curator_core::{render, Analyzer, BuildRecord, Config, Event, Node, ProgressObserver};
+    use curator_core::db::LibrarySort;
+    use curator_core::{render, Analyzer, BuildRecord, Config, Event, Node, ProgressObserver, Reader};
 
     use windows::core::{w, PCWSTR, PWSTR, Result};
     use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
@@ -170,9 +170,9 @@ mod app {
         lib_systems: Vec<String>,
         lib_sort: LibrarySort,
         lib_desc: bool,
-        /// Second DB connection for library reads, so the browser stays responsive
-        /// while an import holds the analyzer (WAL makes the reads concurrent).
-        reader: Option<Db>,
+        /// Lock-free read side (own DB connection + record cache), so browsing *and*
+        /// opening a build work while an import holds the analyzer (WAL → concurrent).
+        reader: Option<Reader>,
     }
 
     /// Construction config passed through `CreateWindowExW`'s lpParam.
@@ -1107,14 +1107,14 @@ mod app {
     /// Load a stored build from cache by sha256 and display it (no re-analysis).
     /// Shared by the Recent menu and the library browser.
     unsafe fn open_sha256(hwnd: HWND, sha: &str) {
+        // Load via the reader (own connection + cache), not the analyzer — so this works
+        // mid-import without bailing on `working` or blocking on the import's writer lock.
+        ensure_reader(hwnd);
         // A single `&mut AppState`, scoped so it is dropped before `display_build` (which
         // re-derives its own &mut); holding two simultaneously would be aliasing UB.
         let loaded = {
             let Some(st) = state(hwnd) else { return };
-            if st.working || !ensure_analyzer(st) {
-                return;
-            }
-            st.analyzer.lock().unwrap().as_ref().and_then(|a| a.load_cached(sha).ok().flatten())
+            st.reader.as_ref().and_then(|r| r.load_cached(sha).ok().flatten())
         };
         match loaded {
             Some(analysis) => {
