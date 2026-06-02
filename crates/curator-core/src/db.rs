@@ -50,6 +50,10 @@ impl LibrarySort {
 impl Db {
     pub fn open(data_dir: &Path) -> Result<Self> {
         let conn = Connection::open(data_dir.join("curator.db"))?;
+        // WAL lets a reader connection (the GUIs' library browser) query while the
+        // writer (an in-progress import) commits, instead of serializing on one lock.
+        // busy_timeout rides out the brief moments a writer holds the file.
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
         let db = Db { conn };
         db.migrate()?;
         Ok(db)

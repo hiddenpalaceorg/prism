@@ -38,6 +38,7 @@ pub struct Analyzer {
     cache: Cache,
     db: Db,
     adapter: AdapterCommand,
+    data_dir: PathBuf,
 }
 
 /// Result of [`Analyzer::analyze`].
@@ -60,7 +61,14 @@ impl Analyzer {
         };
         let cache = Cache::open(Some(&data_dir))?;
         let db = Db::open(&data_dir)?;
-        Ok(Analyzer { cache, db, adapter: config.adapter })
+        Ok(Analyzer { cache, db, adapter: config.adapter, data_dir })
+    }
+
+    /// Open a second connection to the same library DB for reads — for a GUI's
+    /// library browser, so its queries run concurrently with an in-progress import
+    /// (which holds the writer) instead of blocking on it. See WAL in [`Db::open`].
+    pub fn open_reader(&self) -> Result<Db> {
+        Db::open(&self.data_dir)
     }
 
     /// Analyze one image/container. Idempotent: a known sha256 is served from cache.

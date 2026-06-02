@@ -232,9 +232,12 @@ impl ProgressObserver for ListenerObserver {
 /// The analysis engine. Construct once; methods are thread-safe.
 #[derive(uniffi::Object)]
 pub struct Engine {
-    // The library holds a single rusqlite connection (Send, !Sync); a Mutex makes the
+    // The analyzer holds a single rusqlite connection (Send, !Sync); a Mutex makes the
     // engine shareable. Analyses serialize through it, which is fine for a desktop app.
     inner: Mutex<Analyzer>,
+    // A second connection used only for library reads, so the browser can query while
+    // an import holds `inner` for the whole batch (WAL makes the reads concurrent).
+    reader: Mutex<curator_core::db::Db>,
 }
 
 #[uniffi::export]
@@ -253,7 +256,8 @@ impl Engine {
             None => AdapterCommand::uv(adapter_dir.as_deref().unwrap_or("ps2exe-adapter")),
         };
         let inner = Analyzer::new(Config { adapter, data_dir: data_dir.map(PathBuf::from) })?;
-        Ok(Arc::new(Engine { inner: Mutex::new(inner) }))
+        let reader = inner.open_reader()?;
+        Ok(Arc::new(Engine { inner: Mutex::new(inner), reader: Mutex::new(reader) }))
     }
 
     /// Analyze one image/container/folder. Served from cache when the sha256 is known.
@@ -276,7 +280,7 @@ impl Engine {
 
     /// The most recently analyzed builds, newest first.
     pub fn recent_builds(&self, limit: u32) -> Result<Vec<LibraryEntry>, CuratorError> {
-        let rows = self.inner.lock().unwrap_or_else(|e| e.into_inner()).recent_builds(limit)?;
+        let rows = self.reader.lock().unwrap_or_else(|e| e.into_inner()).list_recent(limit)?;
         Ok(rows.into_iter().map(entry_from_row).collect())
     }
 
@@ -291,7 +295,9 @@ impl Engine {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<LibraryEntry>, CuratorError> {
-        let rows = self.inner.lock().unwrap_or_else(|e| e.into_inner()).search_library(
+        // Reads go through the dedicated reader connection so the browser stays
+        // responsive while an import holds the writer.
+        let rows = self.reader.lock().unwrap_or_else(|e| e.into_inner()).search_builds(
             search.as_deref(),
             system.as_deref(),
             sort.into(),
@@ -304,7 +310,7 @@ impl Engine {
 
     /// Distinct systems in the library (for the browser's filter control).
     pub fn library_systems(&self) -> Result<Vec<String>, CuratorError> {
-        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).library_systems()?)
+        Ok(self.reader.lock().unwrap_or_else(|e| e.into_inner()).list_systems()?)
     }
 
     /// Recursively list every file under `root`, sorted. Used by folder import:

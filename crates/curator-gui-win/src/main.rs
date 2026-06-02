@@ -29,7 +29,7 @@ mod app {
     use std::sync::{Arc, Mutex};
 
     use curator_core::adapter::AdapterCommand;
-    use curator_core::db::LibrarySort;
+    use curator_core::db::{Db, LibrarySort};
     use curator_core::{render, Analyzer, BuildRecord, Config, Event, Node, ProgressObserver};
 
     use windows::core::{w, PCWSTR, PWSTR, Result};
@@ -102,6 +102,7 @@ mod app {
     const WM_APP_DONE: u32 = WM_APP + 2;
     const WM_APP_SERVICE: u32 = WM_APP + 3; // similarity / submit result (boxed String)
     const WM_APP_IMPORT_DONE: u32 = WM_APP + 4; // batch folder-import summary (boxed String)
+    const WM_APP_LIB_REFRESH: u32 = WM_APP + 5; // a build was imported — refresh library mode
 
     const STATUS_H: i32 = 22;
     const PROGRESS_H: i32 = 16;
@@ -153,6 +154,22 @@ mod app {
         /// The "Recent" submenu and the sha256s backing its items (by position).
         recent_menu: HMENU,
         recent: Vec<String>,
+
+        // ---- library mode (in-app browser; non-modal, usable during import) ----
+        /// When true, the main pane shows the library list instead of the build tree/doc.
+        library_mode: bool,
+        lib_search: HWND,
+        lib_combo: HWND,
+        lib_list: HWND,
+        /// sha256 backing each library row, by index.
+        lib_rows: Vec<String>,
+        /// Systems in the filter combo (combo index 0 = "All systems").
+        lib_systems: Vec<String>,
+        lib_sort: LibrarySort,
+        lib_desc: bool,
+        /// Second DB connection for library reads, so the browser stays responsive
+        /// while an import holds the analyzer (WAL makes the reads concurrent).
+        reader: Option<Db>,
     }
 
     /// Construction config passed through `CreateWindowExW`'s lpParam.
@@ -293,7 +310,15 @@ mod app {
                     LRESULT(0)
                 }
                 WM_COMMAND => {
-                    on_command(hwnd, (wparam.0 & 0xffff) as usize);
+                    let id = (wparam.0 & 0xffff) as usize;
+                    let code = ((wparam.0 >> 16) & 0xffff) as u32;
+                    if (id == IDC_LIB_SEARCH && code == EN_CHANGE)
+                        || (id == IDC_LIB_COMBO && code == CBN_SELCHANGE)
+                    {
+                        refresh_library(hwnd);
+                    } else {
+                        on_command(hwnd, id);
+                    }
                     LRESULT(0)
                 }
                 WM_NOTIFY => {
@@ -314,6 +339,13 @@ mod app {
                 }
                 WM_APP_IMPORT_DONE => {
                     on_import_done(hwnd, lparam);
+                    LRESULT(0)
+                }
+                WM_APP_LIB_REFRESH => {
+                    // An item was imported; if the library is on screen, reflect it live.
+                    if state(hwnd).map(|st| st.library_mode).unwrap_or(false) {
+                        refresh_library(hwnd);
+                    }
                     LRESULT(0)
                 }
                 WM_DROPFILES => {
@@ -427,15 +459,55 @@ mod app {
         )
         .unwrap_or_default();
 
+        // Library-mode controls (search box + system filter + list); hidden until the
+        // user switches to library mode. They overlay the same content area as the tree/doc.
+        let lib_search = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("EDIT"),
+            PCWSTR::null(),
+            WINDOW_STYLE(child.0 | WS_BORDER.0 | ES_AUTOHSCROLL as u32),
+            0, 0, 0, 0, hwnd,
+            HMENU(IDC_LIB_SEARCH as *mut core::ffi::c_void), hinst, None,
+        )
+        .unwrap_or_default();
+        let lib_combo = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("COMBOBOX"),
+            PCWSTR::null(),
+            WINDOW_STYLE(child.0 | WS_VSCROLL.0 | CBS_DROPDOWNLIST as u32),
+            0, 0, 0, 0, hwnd,
+            HMENU(IDC_LIB_COMBO as *mut core::ffi::c_void), hinst, None,
+        )
+        .unwrap_or_default();
+        let lib_list = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("SysListView32"),
+            PCWSTR::null(),
+            WINDOW_STYLE(child.0 | (LVS_REPORT | LVS_SINGLESEL) as u32),
+            0, 0, 0, 0, hwnd,
+            HMENU(IDC_LIB_LIST as *mut core::ffi::c_void), hinst, None,
+        )
+        .unwrap_or_default();
+        let _ = SendMessageW(
+            lib_list,
+            LVM_SETEXTENDEDLISTVIEWSTYLE,
+            WPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as usize),
+            LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as isize),
+        );
+        lib_add_columns(lib_list);
+        for h in [lib_search, lib_combo, lib_list] {
+            let _ = ShowWindow(h, SW_HIDE);
+        }
+
         let font = GetStockObject(DEFAULT_GUI_FONT);
-        for h in [tree, edit, list, status] {
+        for h in [tree, edit, list, status, lib_search, lib_combo, lib_list] {
             SendMessageW(h, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
         }
 
         // Drag-and-drop: the panes cover the client area, so accept drops on them and
         // subclass them to forward WM_DROPFILES to the main window.
         DragAcceptFiles(hwnd, true);
-        for h in [tree, edit, list] {
+        for h in [tree, edit, list, lib_list] {
             DragAcceptFiles(h, true);
             let _ = SetWindowSubclass(h, Some(drop_subclass), 1, 0);
         }
@@ -465,6 +537,15 @@ mod app {
                 .unwrap_or_else(|_| "http://localhost:3001".to_string()),
             recent_menu,
             recent: Vec::new(),
+            library_mode: false,
+            lib_search,
+            lib_combo,
+            lib_list,
+            lib_rows: Vec::new(),
+            lib_systems: Vec::new(),
+            lib_sort: LibrarySort::Date,
+            lib_desc: true,
+            reader: None,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(st) as isize);
 
@@ -528,6 +609,13 @@ mod app {
         );
         let _ = MoveWindow(st.progress, 0, content_h, w, PROGRESS_H, true);
         let _ = MoveWindow(st.status, 0, content_h + PROGRESS_H, w, STATUS_H, true);
+
+        // Library mode overlays the same content area: search + filter on top, list below.
+        let (pad, top_h, combo_w) = (6, 22, 200);
+        let _ = MoveWindow(st.lib_search, pad, pad, (w - combo_w - pad * 3).max(80), top_h, true);
+        let _ = MoveWindow(st.lib_combo, w - combo_w - pad, pad, combo_w, 240, true);
+        let list_y = pad + top_h + pad;
+        let _ = MoveWindow(st.lib_list, pad, list_y, (w - pad * 2).max(0), (content_h - list_y - pad).max(0), true);
     }
 
     unsafe fn on_command(hwnd: HWND, id: usize) {
@@ -549,7 +637,7 @@ mod app {
                 }
             }
             IDM_EXPORT => export_library(hwnd),
-            IDM_BROWSE => browse_library_cmd(hwnd),
+            IDM_BROWSE => show_library(hwnd),
             IDM_SIMILAR => find_similar(hwnd),
             IDM_SUBMIT => submit_build(hwnd),
             IDM_VIEW_OVERVIEW => set_view(hwnd, DocView::Overview),
@@ -694,7 +782,7 @@ mod app {
         while let Some(ev) = queue.pop_front() {
             match ev {
                 UiEvent::Batch { index, total, name } => {
-                    set_status(hwnd, &format!("Item {}/{}: {}", index + 1, total, name));
+                    set_status(hwnd, &format!("Importing {} of {}: {}", index + 1, total, name));
                 }
                 UiEvent::Open { id, label, total } => {
                     if let Some(t) = total {
@@ -758,9 +846,33 @@ mod app {
             st.doc_overview = overview_sections(&done.record);
             st.selected_sections = Vec::new();
             st.view = DocView::Overview;
+            st.library_mode = false; // opening a build leaves library mode
         }
-        apply_view(hwnd);
+        apply_mode(hwnd);
         set_status(hwnd, &msg);
+    }
+
+    /// Switch the main pane between build view (tree + document) and library view
+    /// (search + sortable list), then re-lay-out. Library reads use a separate DB
+    /// connection, so this stays usable while an import runs.
+    unsafe fn apply_mode(hwnd: HWND) {
+        let lib = state(hwnd).map(|st| st.library_mode).unwrap_or(false);
+        if let Some(st) = state(hwnd) {
+            let _ = ShowWindow(st.tree, if lib { SW_HIDE } else { SW_SHOW });
+            let _ = ShowWindow(st.lib_search, if lib { SW_SHOW } else { SW_HIDE });
+            let _ = ShowWindow(st.lib_combo, if lib { SW_SHOW } else { SW_HIDE });
+            let _ = ShowWindow(st.lib_list, if lib { SW_SHOW } else { SW_HIDE });
+            if lib {
+                let _ = ShowWindow(st.edit, SW_HIDE);
+                let _ = ShowWindow(st.list, SW_HIDE);
+            }
+        }
+        if !lib {
+            apply_view(hwnd); // restores edit/list per the active document view
+        }
+        if let Some(st) = state(hwnd) {
+            layout(hwnd, st);
+        }
     }
 
     /// Show the control for the active view (ListView for Overview/Selection, EDIT for
@@ -842,6 +954,8 @@ mod app {
         let (from, code) = (nmhdr.hwndFrom, nmhdr.code);
         let mut selection_changed = false;
         let mut copied: Option<String> = None;
+        let mut open_sha: Option<String> = None;
+        let mut lib_resort = false;
         if let Some(st) = state(hwnd) {
             if from == st.tree && code == TVN_SELCHANGEDW {
                 let tv = &*(lparam.0 as *const NMTREEVIEWW);
@@ -856,10 +970,37 @@ mod app {
                 if nia.iItem >= 0 {
                     copied = Some(list_value(st.list, nia.iItem));
                 }
+            } else if from == st.lib_list && code == NM_DBLCLK as u32 {
+                let nia = &*(lparam.0 as *const NMITEMACTIVATE);
+                if nia.iItem >= 0 {
+                    open_sha = st.lib_rows.get(nia.iItem as usize).cloned();
+                }
+            } else if from == st.lib_list && code == LVN_COLUMNCLICK as u32 {
+                let nlv = &*(lparam.0 as *const NMLISTVIEW);
+                let col = match nlv.iSubItem {
+                    0 => LibrarySort::Name,
+                    1 => LibrarySort::System,
+                    2 => LibrarySort::Files,
+                    3 => LibrarySort::Size,
+                    _ => LibrarySort::Date,
+                };
+                if st.lib_sort == col {
+                    st.lib_desc = !st.lib_desc;
+                } else {
+                    st.lib_sort = col;
+                    st.lib_desc = !matches!(col, LibrarySort::Name | LibrarySort::System);
+                }
+                lib_resort = true;
             }
         }
         if selection_changed {
             apply_view(hwnd);
+        }
+        if lib_resort {
+            refresh_library(hwnd);
+        }
+        if let Some(sha) = open_sha {
+            open_sha256(hwnd, &sha); // leaves library mode and shows the build
         }
         if let Some(value) = copied {
             if !value.is_empty() {
@@ -1043,24 +1184,27 @@ mod app {
 
         std::thread::spawn(move || {
             let total = files.len() as u64;
-            let mut guard = analyzer.lock().unwrap();
-            if guard.is_none() {
-                match Analyzer::new(Config { adapter, data_dir }) {
-                    Ok(a) => *guard = Some(a),
-                    Err(e) => {
-                        post_import_done(hwnd_i, format!("Import failed: {e}"));
-                        return;
+            // Create the analyzer once, then release the lock so it isn't held across
+            // the whole batch.
+            {
+                let mut guard = analyzer.lock().unwrap();
+                if guard.is_none() {
+                    match Analyzer::new(Config { adapter, data_dir }) {
+                        Ok(a) => *guard = Some(a),
+                        Err(e) => {
+                            post_import_done(hwnd_i, format!("Import failed: {e}"));
+                            return;
+                        }
                     }
                 }
             }
-            let analyzer_ref = guard.as_ref().unwrap();
             let (mut imported, mut skipped, mut cancelled) = (0u64, 0u64, false);
             for (i, path) in files.iter().enumerate() {
                 if cancel.load(Ordering::SeqCst) {
                     cancelled = true;
                     break;
                 }
-                // "Item i/N: name" status line; the per-file hashing bar follows.
+                // "Importing i/N: name" status line; the per-file hashing bar follows.
                 events
                     .lock()
                     .unwrap()
@@ -1073,8 +1217,27 @@ mod app {
                 );
                 let obs: Arc<dyn ProgressObserver> =
                     Arc::new(WinObserver { hwnd: hwnd_i, events: events.clone(), cancel: cancel.clone() });
-                match analyzer_ref.analyze(path, obs) {
-                    Ok(_) => imported += 1,
+                // Lock only for this one analysis, so library reads (separate connection)
+                // and the message pump aren't blocked for the whole batch. Each analyze
+                // persists its build before returning, so progress is saved per item.
+                let result = {
+                    let guard = analyzer.lock().unwrap();
+                    match guard.as_ref() {
+                        Some(a) => a.analyze(path, obs),
+                        None => continue,
+                    }
+                };
+                match result {
+                    Ok(_) => {
+                        imported += 1;
+                        // Reflect the just-saved item in library mode, live.
+                        let _ = PostMessageW(
+                            HWND(hwnd_i as *mut core::ffi::c_void),
+                            WM_APP_LIB_REFRESH,
+                            WPARAM(0),
+                            LPARAM(0),
+                        );
+                    }
                     Err(curator_core::Error::Cancelled) => {
                         cancelled = true;
                         break;
@@ -1966,113 +2129,80 @@ mod app {
         String::from_utf16_lossy(&buf[..n as usize])
     }
 
-    // ---- library browser (modal: search + sortable list of every analyzed build) ----
+    // ---- library mode (in-app, non-modal browser; usable during import) ----
 
-    const IDC_BROWSE_SEARCH: usize = 200;
-    const IDC_BROWSE_COMBO: usize = 201;
-    const IDC_BROWSE_LIST: usize = 202;
+    const IDC_LIB_SEARCH: usize = 200;
+    const IDC_LIB_COMBO: usize = 201;
+    const IDC_LIB_LIST: usize = 202;
 
-    /// State for the modal browser window (UI thread only).
-    struct BrowseState {
-        analyzer: Arc<Mutex<Option<Analyzer>>>,
-        search: HWND,
-        combo: HWND,
-        list: HWND,
-        /// sha256 backing each ListView row, by index.
-        rows: Vec<String>,
-        /// Systems shown in the filter combo (combo index 0 = "All systems").
-        systems: Vec<String>,
-        sort: LibrarySort,
-        desc: bool,
-        result: Option<String>,
-        done: bool,
+    /// Switch the main window into library mode and populate it.
+    unsafe fn show_library(hwnd: HWND) {
+        ensure_reader(hwnd);
+        if let Some(st) = state(hwnd) {
+            st.library_mode = true;
+        }
+        populate_systems_combo(hwnd);
+        refresh_library(hwnd);
+        apply_mode(hwnd);
     }
 
-    /// File ▸ Browse Library. Opens the modal browser; if the user picks a build,
-    /// loads it from cache into the main window.
-    unsafe fn browse_library_cmd(hwnd: HWND) {
-        let analyzer = {
-            let Some(st) = state(hwnd) else { return };
-            if st.working {
-                set_status(hwnd, "Busy — wait for the current analysis to finish.");
-                return;
-            }
-            if !ensure_analyzer(st) {
-                set_status(hwnd, "Library unavailable.");
-                return;
-            }
-            st.analyzer.clone()
+    /// Lazily open the read-only DB connection used by the browser (separate from the
+    /// analyzer, so queries don't block on an in-progress import).
+    unsafe fn ensure_reader(hwnd: HWND) {
+        let Some(st) = state(hwnd) else { return };
+        if st.reader.is_some() {
+            return;
+        }
+        if !ensure_analyzer(st) {
+            return;
+        }
+        st.reader = st.analyzer.lock().unwrap().as_ref().and_then(|a| a.open_reader().ok());
+    }
+
+    /// Fill the system-filter combo from the library (resets selection to "All").
+    unsafe fn populate_systems_combo(hwnd: HWND) {
+        let Some(st) = state(hwnd) else { return };
+        let systems = st.reader.as_ref().and_then(|r| r.list_systems().ok()).unwrap_or_default();
+        let _ = SendMessageW(st.lib_combo, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
+        let mut all = wide("All systems");
+        let _ = SendMessageW(st.lib_combo, CB_ADDSTRING, WPARAM(0), LPARAM(all.as_mut_ptr() as isize));
+        for s in &systems {
+            let mut sw = wide(s);
+            let _ = SendMessageW(st.lib_combo, CB_ADDSTRING, WPARAM(0), LPARAM(sw.as_mut_ptr() as isize));
+        }
+        let _ = SendMessageW(st.lib_combo, CB_SETCURSEL, WPARAM(0), LPARAM(0));
+        st.lib_systems = systems;
+    }
+
+    /// Re-run the library query for the current search/filter/sort and repopulate the list.
+    unsafe fn refresh_library(hwnd: HWND) {
+        let Some(st) = state(hwnd) else { return };
+        let rows = {
+            let Some(reader) = st.reader.as_ref() else { return };
+            let q = read_edit_text(st.lib_search);
+            let q = q.trim().to_string();
+            let sel = SendMessageW(st.lib_combo, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0;
+            let system = if sel <= 0 { None } else { st.lib_systems.get((sel - 1) as usize).cloned() };
+            reader
+                .search_builds(
+                    if q.is_empty() { None } else { Some(q.as_str()) },
+                    system.as_deref(),
+                    st.lib_sort,
+                    st.lib_desc,
+                    10_000,
+                    0,
+                )
+                .unwrap_or_default()
         };
-        if let Some(sha) = browse_library(hwnd, analyzer) {
-            open_sha256(hwnd, &sha);
+        let _ = SendMessageW(st.lib_list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+        st.lib_rows.clear();
+        for (i, r) in rows.iter().enumerate() {
+            lib_insert_row(st.lib_list, i as i32, r);
+            st.lib_rows.push(r.sha256.clone());
         }
     }
 
-    /// Run the modal browser; returns the chosen build's sha256, if any.
-    unsafe fn browse_library(owner: HWND, analyzer: Arc<Mutex<Option<Analyzer>>>) -> Option<String> {
-        let hinstance = GetModuleHandleW(None).ok()?;
-        let class = w!("CuratorBrowse");
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(browse_proc),
-            hInstance: hinstance.into(),
-            lpszClassName: class,
-            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            hbrBackground: HBRUSH(6 as *mut core::ffi::c_void), // COLOR_WINDOW + 1
-            ..Default::default()
-        };
-        RegisterClassW(&wc); // idempotent enough for a one-window app
-
-        let systems = analyzer
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|a| a.library_systems().ok())
-            .unwrap_or_default();
-
-        let mut bs = BrowseState {
-            analyzer,
-            search: HWND::default(),
-            combo: HWND::default(),
-            list: HWND::default(),
-            rows: Vec::new(),
-            systems,
-            sort: LibrarySort::Date,
-            desc: true,
-            result: None,
-            done: false,
-        };
-
-        let dlg = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            class,
-            w!("Browse Library"),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            760,
-            500,
-            owner,
-            None,
-            hinstance,
-            Some(&mut bs as *mut BrowseState as *const core::ffi::c_void),
-        )
-        .ok()?;
-
-        let _ = EnableWindow(owner, false);
-        let mut msg = MSG::default();
-        while !bs.done && GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            if !IsDialogMessageW(dlg, &msg).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
-        let _ = EnableWindow(owner, true);
-        let _ = SetForegroundWindow(owner);
-        let _ = DestroyWindow(dlg);
-        bs.result.take()
-    }
-
-    unsafe fn browse_add_columns(list: HWND) {
+    unsafe fn lib_add_columns(list: HWND) {
         for (idx, title, cx) in [
             (0i32, w!("Title"), 320i32),
             (1, w!("System"), 120),
@@ -2090,40 +2220,7 @@ mod app {
         }
     }
 
-    /// Re-run the library query for the current search/filter/sort and repopulate.
-    unsafe fn browse_refresh(bs_ptr: *mut BrowseState) {
-        let Some(bs) = bs_ptr.as_mut() else { return };
-        let query = read_edit_text(bs.search);
-        let query = query.trim();
-        let sel = SendMessageW(bs.combo, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0;
-        let system = if sel <= 0 { None } else { bs.systems.get((sel - 1) as usize).map(|s| s.as_str()) };
-        let rows = bs
-            .analyzer
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|a| {
-                a.search_library(
-                    if query.is_empty() { None } else { Some(query) },
-                    system,
-                    bs.sort,
-                    bs.desc,
-                    10_000,
-                    0,
-                )
-                .ok()
-            })
-            .unwrap_or_default();
-
-        let _ = SendMessageW(bs.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
-        bs.rows.clear();
-        for (i, r) in rows.iter().enumerate() {
-            browse_insert_row(bs.list, i as i32, r);
-            bs.rows.push(r.sha256.clone());
-        }
-    }
-
-    unsafe fn browse_insert_row(list: HWND, i: i32, r: &curator_core::db::LibraryRow) {
+    unsafe fn lib_insert_row(list: HWND, i: i32, r: &curator_core::db::LibraryRow) {
         let cells = [
             r.name.clone(),
             r.system.clone(),
@@ -2155,141 +2252,6 @@ mod app {
         chrono::DateTime::from_timestamp(secs, 0)
             .map(|d| d.format("%Y-%m-%d").to_string())
             .unwrap_or_default()
-    }
-
-    extern "system" fn browse_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        unsafe {
-            match msg {
-                WM_CREATE => {
-                    let cs = lparam.0 as *const CREATESTRUCTW;
-                    let bs_ptr = (*cs).lpCreateParams as *mut BrowseState;
-                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, bs_ptr as isize);
-                    let hinst = (*cs).hInstance;
-
-                    let search = CreateWindowExW(
-                        WINDOW_EX_STYLE(0),
-                        w!("EDIT"),
-                        PCWSTR::null(),
-                        WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-                        0, 0, 0, 0, hwnd,
-                        HMENU(IDC_BROWSE_SEARCH as *mut core::ffi::c_void), hinst, None,
-                    )
-                    .unwrap_or_default();
-                    let combo = CreateWindowExW(
-                        WINDOW_EX_STYLE(0),
-                        w!("COMBOBOX"),
-                        PCWSTR::null(),
-                        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
-                        0, 0, 0, 0, hwnd,
-                        HMENU(IDC_BROWSE_COMBO as *mut core::ffi::c_void), hinst, None,
-                    )
-                    .unwrap_or_default();
-                    let list = CreateWindowExW(
-                        WINDOW_EX_STYLE(0),
-                        w!("SysListView32"),
-                        PCWSTR::null(),
-                        WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE((LVS_REPORT | LVS_SINGLESEL) as u32),
-                        0, 0, 0, 0, hwnd,
-                        HMENU(IDC_BROWSE_LIST as *mut core::ffi::c_void), hinst, None,
-                    )
-                    .unwrap_or_default();
-                    let _ = SendMessageW(
-                        list,
-                        LVM_SETEXTENDEDLISTVIEWSTYLE,
-                        WPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as usize),
-                        LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as isize),
-                    );
-                    browse_add_columns(list);
-                    let font = GetStockObject(DEFAULT_GUI_FONT);
-                    for h in [search, combo, list] {
-                        SendMessageW(h, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
-                    }
-
-                    if let Some(bs) = bs_ptr.as_mut() {
-                        bs.search = search;
-                        bs.combo = combo;
-                        bs.list = list;
-                        let mut all = wide("All systems");
-                        let _ = SendMessageW(combo, CB_ADDSTRING, WPARAM(0), LPARAM(all.as_mut_ptr() as isize));
-                        for s in &bs.systems {
-                            let mut sw = wide(s);
-                            let _ = SendMessageW(combo, CB_ADDSTRING, WPARAM(0), LPARAM(sw.as_mut_ptr() as isize));
-                        }
-                        let _ = SendMessageW(combo, CB_SETCURSEL, WPARAM(0), LPARAM(0));
-                    }
-                    browse_refresh(bs_ptr);
-                    LRESULT(0)
-                }
-                WM_SIZE => {
-                    let bs_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut BrowseState;
-                    if let Some(bs) = bs_ptr.as_ref() {
-                        let w = (lparam.0 & 0xffff) as i32;
-                        let h = ((lparam.0 >> 16) & 0xffff) as i32;
-                        let (pad, top_h, combo_w) = (8i32, 24i32, 200i32);
-                        let _ = MoveWindow(bs.search, pad, pad, (w - combo_w - pad * 3).max(80), top_h, true);
-                        let _ = MoveWindow(bs.combo, w - combo_w - pad, pad, combo_w, 240, true);
-                        let list_y = pad + top_h + pad;
-                        let _ = MoveWindow(bs.list, pad, list_y, (w - pad * 2).max(0), (h - list_y - pad).max(0), true);
-                    }
-                    LRESULT(0)
-                }
-                WM_COMMAND => {
-                    let id = (wparam.0 & 0xffff) as usize;
-                    let code = ((wparam.0 >> 16) & 0xffff) as u32;
-                    let bs_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut BrowseState;
-                    if (id == IDC_BROWSE_SEARCH && code == EN_CHANGE)
-                        || (id == IDC_BROWSE_COMBO && code == CBN_SELCHANGE)
-                    {
-                        browse_refresh(bs_ptr);
-                    }
-                    LRESULT(0)
-                }
-                WM_NOTIFY => {
-                    let nmhdr = &*(lparam.0 as *const NMHDR);
-                    let bs_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut BrowseState;
-                    let mut refresh = false;
-                    if let Some(bs) = bs_ptr.as_mut() {
-                        if nmhdr.hwndFrom == bs.list && nmhdr.code == NM_DBLCLK as u32 {
-                            let nia = &*(lparam.0 as *const NMITEMACTIVATE);
-                            if nia.iItem >= 0 {
-                                if let Some(sha) = bs.rows.get(nia.iItem as usize).cloned() {
-                                    bs.result = Some(sha);
-                                    bs.done = true;
-                                }
-                            }
-                        } else if nmhdr.hwndFrom == bs.list && nmhdr.code == LVN_COLUMNCLICK as u32 {
-                            let nlv = &*(lparam.0 as *const NMLISTVIEW);
-                            let col = match nlv.iSubItem {
-                                0 => LibrarySort::Name,
-                                1 => LibrarySort::System,
-                                2 => LibrarySort::Files,
-                                3 => LibrarySort::Size,
-                                _ => LibrarySort::Date,
-                            };
-                            if bs.sort == col {
-                                bs.desc = !bs.desc;
-                            } else {
-                                bs.sort = col;
-                                bs.desc = !matches!(col, LibrarySort::Name | LibrarySort::System);
-                            }
-                            refresh = true;
-                        }
-                    }
-                    if refresh {
-                        browse_refresh(bs_ptr);
-                    }
-                    LRESULT(0)
-                }
-                WM_CLOSE => {
-                    let bs_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut BrowseState;
-                    if let Some(bs) = bs_ptr.as_mut() {
-                        bs.done = true;
-                    }
-                    LRESULT(0)
-                }
-                _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-            }
-        }
     }
 
     /// Bridges core progress to the UI thread: queues an event and pokes the window.
