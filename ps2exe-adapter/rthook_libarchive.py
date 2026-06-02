@@ -16,14 +16,18 @@
 import os
 import sys
 
+# macOS is intentionally absent: it ships a native libarchive that libarchive-c loads via
+# find_library('archive'), so no env var is needed — and the spec doesn't bundle one there
+# (the vendored macosx dylib is x86_64-only and would crash on Apple Silicon).
 if hasattr(sys, "_MEIPASS") and not os.environ.get("LIBARCHIVE"):
     if sys.platform == "win32":
         _osdir = "win64" if sys.maxsize > 2**32 else "win32"
         _oslib = "libarchive.dll"
-    elif sys.platform == "darwin":
-        _osdir, _oslib = "macosx", "libarchive.dylib"
-    else:
+    elif sys.platform == "linux":
         _osdir, _oslib = "linux", "libarchive.so"
-    _path = os.path.join(sys._MEIPASS, "lib", "libarchive", _osdir, _oslib)
-    if os.path.exists(_path):
-        os.environ["LIBARCHIVE"] = _path
+    else:
+        _osdir = _oslib = None
+    if _osdir:
+        _path = os.path.join(sys._MEIPASS, "lib", "libarchive", _osdir, _oslib)
+        if os.path.exists(_path):
+            os.environ["LIBARCHIVE"] = _path

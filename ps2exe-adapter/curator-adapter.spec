@@ -31,8 +31,10 @@ for dep in ("pycdlib", "pyisotools"):
 # ps2exe (utils/archives.py) loads libarchive from <ps2exe>/lib/libarchive/<os>/ via the
 # LIBARCHIVE env var when `import libarchive` can't find a system copy. When frozen,
 # __file__ resolves under sys._MEIPASS, so placing the lib at the same relative path lets
-# that logic find it. macOS finds the system libarchive, so this only matters off-mac.
-_osdir = {"win32": "win64", "darwin": "macosx", "linux": "linux"}.get(sys.platform)
+# that logic find it. macOS is deliberately excluded: it ships a native libarchive that
+# libarchive-c finds via find_library('archive'), and the vendored macosx dylib is
+# x86_64-only — bundling it would force a load that fails on Apple Silicon (arm64).
+_osdir = {"win32": "win64", "linux": "linux"}.get(sys.platform)
 if _osdir:
     # Bundle the whole dir, not just libarchive.* — it ships the sibling libraries
     # (libcrypto, liblzma, libzstd, libbz2, …) that libarchive dlopen's at load time.
