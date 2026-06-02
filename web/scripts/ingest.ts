@@ -13,7 +13,7 @@ import { spawn, execFileSync } from "node:child_process";
 import readline from "node:readline";
 import type { Readable } from "node:stream";
 import pg from "pg";
-import { ingestRecordTx } from "../src/lib/ingest";
+import { ingestRecordTx, refreshAudioIdf } from "../src/lib/ingest";
 import type { BuildRecord } from "../src/lib/types";
 
 // What this importer understands. A bundle whose manifest disagrees is rejected
@@ -116,6 +116,9 @@ async function main() {
       }
     }
     await done;
+    // Corpus-wide step: recompute audio-hash frequencies once, after all the
+    // per-record inserts, so the audio similarity tier can IDF-weight matches.
+    if (n > 0) await refreshAudioIdf(pool);
   } finally {
     await pool.end();
   }

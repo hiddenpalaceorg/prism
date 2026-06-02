@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { submissionStatus, setSubmissionStatus } from "@/lib/queries";
-import { ingestRecord } from "@/lib/ingest";
+import { ingestRecord, refreshAudioIdf } from "@/lib/ingest";
 import { isModerator, moderationToken } from "@/lib/auth";
 import { isSha256 } from "@/lib/validate";
 import type { BuildRecord } from "@/lib/types";
@@ -64,6 +64,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
       "UPDATE submission_queue SET status='accepted', reviewed_at=now() WHERE sha256=$1",
       [sha256]
     );
+    // Keep the audio-hash corpus frequencies in step with the new build so the
+    // similarity tier's IDF weighting stays accurate; atomic with the accept.
+    await refreshAudioIdf(c);
     await c.query("COMMIT");
   } catch {
     await c.query("ROLLBACK");

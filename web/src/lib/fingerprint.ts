@@ -86,6 +86,31 @@ export function setJaccard(a: Array<string | number>, b: Array<string | number>)
   return inter / (A.size + B.size - inter);
 }
 
+/**
+ * IDF-weighted Jaccard: sum(weight over A∩B) / sum(weight over A∪B). A hash that
+ * occurs in nearly every build gets weight≈0, so it neither helps the
+ * intersection nor inflates the union — unlike plain setJaccard, where a shared
+ * low-entropy "background" set makes unrelated builds look similar.
+ */
+export function weightedSetJaccard(
+  a: Array<string | number>,
+  b: Array<string | number>,
+  weight: (h: string) => number
+): number {
+  if (!a.length || !b.length) return 0;
+  const A = new Set(a.map(String));
+  const B = new Set(b.map(String));
+  let inter = 0;
+  let union = 0;
+  for (const x of A) {
+    const w = weight(x);
+    union += w;
+    if (B.has(x)) inter += w;
+  }
+  for (const x of B) if (!A.has(x)) union += weight(x);
+  return union > 0 ? inter / union : 0;
+}
+
 export interface AudioTrack {
   track: string;
   subfp: string[];

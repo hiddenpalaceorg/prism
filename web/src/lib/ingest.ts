@@ -134,6 +134,23 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
   }
 }
 
+/**
+ * Recompute the audio-hash corpus frequencies (audio_idf) from audio_fp. df is
+ * build-level (distinct builds containing each hash), which is what the IDF
+ * weighting in the similarity query needs. Cheap to recompute wholesale, and
+ * recomputing avoids the double-counting an incremental upsert would hit when a
+ * build is re-ingested. Run after a bulk import or a moderation accept.
+ */
+export async function refreshAudioIdf(db: Queryable): Promise<void> {
+  await db.query("TRUNCATE audio_idf");
+  await db.query(
+    `INSERT INTO audio_idf (hash, doc_count)
+     SELECT h, count(DISTINCT build_sha256)
+     FROM (SELECT build_sha256, unnest(subfp) AS h FROM audio_fp) t
+     GROUP BY h`
+  );
+}
+
 /** Ingest one record atomically on a dedicated client (all-or-nothing). */
 export async function ingestRecordTx(pool: Pool, rec: BuildRecord): Promise<void> {
   const c = await pool.connect();
