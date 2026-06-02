@@ -382,14 +382,9 @@ name = "curator-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "curator-core",
- "hex",
  "indicatif",
- "serde_json",
- "sha2",
- "zip",
 ]
 
 [[package]]
@@ -397,6 +392,7 @@ name = "curator-core"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "chrono",
  "directories",
  "fastcdc",
  "hex",
@@ -407,6 +403,7 @@ dependencies = [
  "sha1",
  "sha2",
  "thiserror 1.0.69",
+ "zip",
 ]
 
 [[package]]

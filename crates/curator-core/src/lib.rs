@@ -14,7 +14,8 @@ pub mod progress;
 pub mod render;
 pub mod schema;
 
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use error::{Error, Result};
@@ -208,5 +209,64 @@ impl Analyzer {
             n += 1;
         }
         Ok(n)
+    }
+
+    /// Export the catalog as a portable bundle: a ZIP holding `builds.jsonl` (the
+    /// JSON-Lines feed) plus a self-describing `manifest.json`. This is the format
+    /// to copy between machines and ingest into the web service; it's
+    /// double-clickable on macOS/Windows. Returns the number of records written.
+    pub fn export_bundle(&self, path: &Path) -> Result<u64> {
+        use sha2::{Digest, Sha256};
+        use zip::write::SimpleFileOptions;
+
+        let zip_err = |e: zip::result::ZipError| Error::Other(format!("zip: {e}"));
+        let file = std::fs::File::create(path)?;
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = SimpleFileOptions::default();
+
+        // Records first, hashing the exact bytes we store so the manifest can carry
+        // an integrity digest the importer can verify.
+        let n;
+        let body_sha256 = {
+            zip.start_file("builds.jsonl", opts).map_err(zip_err)?;
+            let mut hasher = Sha256::new();
+            {
+                let mut hw = HashingWriter { inner: &mut zip, hasher: &mut hasher };
+                n = self.export_jsonl(&mut hw)?;
+            }
+            hex::encode(hasher.finalize())
+        };
+
+        zip.start_file("manifest.json", opts).map_err(zip_err)?;
+        let manifest = serde_json::json!({
+            "curator_bundle": 1,
+            "record_schema_version": schema::RECORD_SCHEMA_VERSION,
+            "fingerprint_profile": schema::FINGERPRINT_PROFILE,
+            "count": n,
+            "tool_version": env!("CARGO_PKG_VERSION"),
+            "created_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            "body_sha256": body_sha256,
+        });
+        serde_json::to_writer_pretty(&mut zip, &manifest)?;
+        zip.finish().map_err(zip_err)?;
+        Ok(n)
+    }
+}
+
+/// A `Write` that tees everything into a SHA-256 hasher on its way to `inner`.
+struct HashingWriter<'a, W: Write> {
+    inner: &'a mut W,
+    hasher: &'a mut sha2::Sha256,
+}
+
+impl<W: Write> Write for HashingWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        use sha2::Digest;
+        let written = self.inner.write(buf)?;
+        self.hasher.update(&buf[..written]);
+        Ok(written)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }

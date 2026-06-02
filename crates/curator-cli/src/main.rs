@@ -2,16 +2,13 @@
 
 mod progress;
 
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use curator_core::adapter::AdapterCommand;
-use curator_core::schema::{FINGERPRINT_PROFILE, RECORD_SCHEMA_VERSION};
 use curator_core::{render, Analyzer, Config};
-use sha2::{Digest, Sha256};
 
 use crate::progress::IndicatifObserver;
 
@@ -84,7 +81,8 @@ fn main() -> Result<()> {
         }
         Command::Export { out } => match &out {
             Some(p) if p.extension().and_then(|e| e.to_str()) == Some("zip") => {
-                let n = write_zip_bundle(&analyzer, p)
+                let n = analyzer
+                    .export_bundle(p)
                     .with_context(|| format!("writing bundle {}", p.display()))?;
                 eprintln!("exported {n} builds -> {}", p.display());
             }
@@ -145,65 +143,4 @@ fn ext(f: Format) -> &'static str {
         Format::Xml => "xml",
         Format::Json => "json",
     }
-}
-
-/// Write a portable export bundle: a ZIP holding `builds.jsonl` (one canonical
-/// record per line) and a `manifest.json` describing it. Double-clickable on
-/// macOS/Windows; ingest the inner `builds.jsonl` on the other end.
-fn write_zip_bundle(analyzer: &Analyzer, path: &Path) -> Result<u64> {
-    use zip::write::SimpleFileOptions;
-
-    let file = std::fs::File::create(path)?;
-    let mut zip = zip::ZipWriter::new(file);
-    let opts = SimpleFileOptions::default();
-
-    // Records first, hashing the exact bytes we store so the manifest can carry
-    // an integrity digest the importer can verify.
-    let n;
-    let body_sha256 = {
-        zip.start_file("builds.jsonl", opts)?;
-        let mut hasher = Sha256::new();
-        {
-            let mut hw = HashingWriter { inner: &mut zip, hasher: &mut hasher };
-            n = analyzer.export_jsonl(&mut hw)?;
-        }
-        hex::encode(hasher.finalize())
-    };
-
-    zip.start_file("manifest.json", opts)?;
-    let manifest = serde_json::json!({
-        "curator_bundle": 1,
-        "record_schema_version": RECORD_SCHEMA_VERSION,
-        "fingerprint_profile": FINGERPRINT_PROFILE,
-        "count": n,
-        "tool_version": env!("CARGO_PKG_VERSION"),
-        "created_at": now_iso8601(),
-        "body_sha256": body_sha256,
-    });
-    serde_json::to_writer_pretty(&mut zip, &manifest)?;
-
-    zip.finish()?;
-    Ok(n)
-}
-
-/// A `Write` that tees everything into a SHA-256 hasher on its way to `inner`.
-struct HashingWriter<'a, W: Write> {
-    inner: &'a mut W,
-    hasher: &'a mut Sha256,
-}
-
-impl<W: Write> Write for HashingWriter<'_, W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let written = self.inner.write(buf)?;
-        self.hasher.update(&buf[..written]);
-        Ok(written)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-/// Current UTC time as an ISO-8601 / RFC-3339 instant, e.g. `2026-06-01T12:34:56Z`.
-fn now_iso8601() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
