@@ -114,12 +114,28 @@ impl Analyzer {
                 set_identifier: raw.info.volume.set_identifier.clone(),
                 creation_date: raw.info.volume.creation_date.clone(),
                 modification_date: raw.info.volume.modification_date.clone(),
+                expiration_date: raw.info.volume.expiration_date.clone(),
+                effective_date: raw.info.volume.effective_date.clone(),
             },
-            exe: raw
-                .info
-                .exe
-                .as_ref()
-                .map(|e| schema::Exe { filename: e.filename.clone(), date: e.date.clone() }),
+            exe: raw.info.exe.as_ref().map(|e| schema::Exe {
+                filename: e.filename.clone(),
+                date: e.date.clone(),
+                signing_type: e.signing_type.clone(),
+                num_symbols: e.num_symbols,
+            }),
+            alt_exe: raw.info.alt_exe.as_ref().map(|e| schema::AltExe {
+                filename: e.filename.clone(),
+                date: e.date.clone(),
+                md5: e.md5.clone(),
+            }),
+            sfo: raw.info.sfo.as_ref().map(|s| schema::Sfo {
+                title: s.title.clone(),
+                disc_id: s.disc_id.clone(),
+                disc_version: s.disc_version.clone(),
+                category: s.category.clone(),
+                parental_level: s.parental_level.clone(),
+                system_version: s.system_version.clone(),
+            }),
             disc_type: raw.info.disc_type.clone(),
         };
 

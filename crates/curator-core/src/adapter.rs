@@ -82,6 +82,10 @@ pub struct RawInfo {
     #[serde(default)]
     pub exe: Option<RawExe>,
     #[serde(default)]
+    pub alt_exe: Option<RawAltExe>,
+    #[serde(default)]
+    pub sfo: Option<RawSfo>,
+    #[serde(default)]
     pub disc_type: Option<String>,
 }
 
@@ -102,12 +106,35 @@ pub struct RawVolume {
     pub set_identifier: Option<String>,
     pub creation_date: Option<String>,
     pub modification_date: Option<String>,
+    pub expiration_date: Option<String>,
+    pub effective_date: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RawExe {
-    pub filename: String,
+    pub filename: Option<String>,
     pub date: Option<String>,
+    pub signing_type: Option<String>,
+    pub num_symbols: Option<u64>,
+}
+
+/// Alternate/decrypted boot executable (PSP/PS3/Xbox).
+#[derive(Debug, Deserialize)]
+pub struct RawAltExe {
+    pub filename: Option<String>,
+    pub date: Option<String>,
+    pub md5: Option<String>,
+}
+
+/// PARAM.SFO metadata (PSP/PS3).
+#[derive(Debug, Deserialize)]
+pub struct RawSfo {
+    pub title: Option<String>,
+    pub disc_id: Option<String>,
+    pub disc_version: Option<String>,
+    pub category: Option<String>,
+    pub parental_level: Option<String>,
+    pub system_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

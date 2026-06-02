@@ -24,6 +24,8 @@ struct RecordDoc: Decodable {
         var header: Header?
         var volume: Volume?
         var exe: Exe?
+        var altExe: AltExe?
+        var sfo: Sfo?
         var discType: String?
     }
 
@@ -47,15 +49,40 @@ struct RecordDoc: Decodable {
         var setIdentifier: String?
         var creationDate: String?
         var modificationDate: String?
+        var expirationDate: String?
+        var effectiveDate: String?
 
         var isEmpty: Bool {
-            identifier == nil && setIdentifier == nil && creationDate == nil && modificationDate == nil
+            identifier == nil && setIdentifier == nil && creationDate == nil
+                && modificationDate == nil && expirationDate == nil && effectiveDate == nil
         }
     }
 
     struct Exe: Decodable {
         var filename: String?
         var date: String?
+        var signingType: String?
+        var numSymbols: UInt64?
+    }
+
+    struct AltExe: Decodable {
+        var filename: String?
+        var date: String?
+        var md5: String?
+    }
+
+    struct Sfo: Decodable {
+        var title: String?
+        var discId: String?
+        var discVersion: String?
+        var category: String?
+        var parentalLevel: String?
+        var systemVersion: String?
+
+        var isEmpty: Bool {
+            title == nil && discId == nil && discVersion == nil
+                && category == nil && parentalLevel == nil && systemVersion == nil
+        }
     }
 
     struct Composites: Decodable {

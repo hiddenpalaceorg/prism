@@ -166,6 +166,15 @@ pub fn text_doc(info: &DiscInfo, files: &[RawFile]) -> String {
     if let Some(m) = &info.header.maker_id {
         parts.push(m.clone());
     }
+    // PSP/PS3 carry title + serial in the SFO, not the header.
+    if let Some(s) = &info.sfo {
+        if let Some(t) = &s.title {
+            parts.push(t.clone());
+        }
+        if let Some(id) = &s.disc_id {
+            parts.push(id.clone());
+        }
+    }
     parts.push(info.system.clone());
     for f in files {
         parts.push(f.path.trim_matches('/').replace('/', " "));

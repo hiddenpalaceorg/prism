@@ -1502,6 +1502,17 @@ mod app {
             out.extend(section("Header", r.0));
         }
 
+        if let Some(s) = &info.sfo {
+            let mut r = Rows::new();
+            r.opt("Title", &s.title);
+            r.opt("Disc ID", &s.disc_id);
+            r.opt("Disc version", &s.disc_version);
+            r.opt("Category", &s.category);
+            r.opt("Parental level", &s.parental_level);
+            r.opt("System version", &s.system_version);
+            out.extend(section("SFO", r.0));
+        }
+
         let vol = &info.volume;
         if !vol.is_empty() {
             let mut r = Rows::new();
@@ -1509,14 +1520,28 @@ mod app {
             r.opt("Set identifier", &vol.set_identifier);
             r.opt("Created", &vol.creation_date);
             r.opt("Modified", &vol.modification_date);
+            r.opt("Expires", &vol.expiration_date);
+            r.opt("Effective", &vol.effective_date);
             out.extend(section("Volume", r.0));
         }
 
         if let Some(e) = &info.exe {
             let mut r = Rows::new();
-            r.add("Filename", e.filename.clone());
+            r.opt("Filename", &e.filename);
             r.opt("Date", &e.date);
+            r.opt("Signing", &e.signing_type);
+            if let Some(n) = e.num_symbols {
+                r.add("Symbols", n.to_string());
+            }
             out.extend(section("Boot executable", r.0));
+        }
+
+        if let Some(a) = &info.alt_exe {
+            let mut r = Rows::new();
+            r.opt("Filename", &a.filename);
+            r.opt("Date", &a.date);
+            r.opt("Decrypted MD5", &a.md5);
+            out.extend(section("Alternate executable", r.0));
         }
 
         let c = &record.composites;
