@@ -152,5 +152,5 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
-      - name: pytest (numpy-only; skips the heavy ps2exe stack)
-        run: uv run --no-project --with numpy --with pytest pytest tests/ -q
+      - name: pytest (skips the heavy ps2exe stack; pins match pyproject)
+        run: uv run --no-project --with numpy --with blake3==1.0.8 --with fastcdc==1.7.0 --with pytest pytest tests/ -q
