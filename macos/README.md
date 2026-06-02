@@ -60,7 +60,7 @@ cd macos && swift run curator-probe
   `Resources/adapter`; the app runs with no dev toolchain and no env var.
 - **Find Similar** → `POST /api/similarity`; tiered neighbors (content / files / chunks /
   audio / exe / text) in the Similar tab. Click a neighbor to open its web build-detail
-  page (`/build/<sha256>`), or right-click to copy the hash.
+  page (`/builds/<sha256>`), or right-click to copy the hash.
 - **Submit** → `POST /api/submissions` with a nickname (moderation queue).
 
 ## Remaining for a shippable app
