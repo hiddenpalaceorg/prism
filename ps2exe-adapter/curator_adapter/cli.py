@@ -167,19 +167,58 @@ def _gather_info(processor, reader, system, mods):
         "set_identifier": _nullify(pvd.get("volume_set_identifier")),
         "creation_date": _fmt_date(pvd.get("volume_creation_date")),
         "modification_date": _fmt_date(pvd.get("volume_modification_date")),
+        "expiration_date": _fmt_date(pvd.get("volume_expiration_date")),
+        "effective_date": _fmt_date(pvd.get("volume_effective_date")),
     }
+
+    # Boot executable. `exe_signing_type`/`exe_num_symbols` ride in get_extra_fields, so
+    # the block can exist even when hash_exe() found no filename (e.g. Xbox).
+    exe_filename = _nullify(exe.get("exe_filename"))
+    signing_type = _nullify(extra.get("exe_signing_type"))
+    num_symbols = extra.get("exe_num_symbols")
+    if not isinstance(num_symbols, int):
+        num_symbols = None
     exe_out = None
-    if _nullify(exe.get("exe_filename")):
+    if exe_filename or signing_type or num_symbols is not None:
         exe_out = {
-            "filename": _clean_path(exe["exe_filename"]),
+            "filename": _clean_path(exe_filename) if exe_filename else None,
             "date": _fmt_date(exe.get("exe_date")),
+            "signing_type": signing_type,
+            "num_symbols": num_symbols,
         }
+
+    # Alternate/decrypted boot executable: PSP BOOT.BIN, PS3 decrypted EBOOT, Xbox(360)
+    # decrypted PE. md5 is the stable identity since the on-disc exe is encrypted.
+    alt_filename = _nullify(extra.get("alt_exe_filename"))
+    alt_md5 = _nullify(extra.get("alt_md5"))
+    alt_exe = None
+    if alt_filename or alt_md5:
+        alt_exe = {
+            "filename": _clean_path(alt_filename) if alt_filename else None,
+            "date": _fmt_date(extra.get("alt_exe_date")),
+            "md5": alt_md5,
+        }
+
+    # PARAM.SFO metadata — PSP/PS3 carry this instead of a header_* block.
+    sfo = {
+        "title": _nullify(extra.get("sfo_title")),
+        "disc_id": _nullify(extra.get("sfo_disc_id")),
+        "disc_version": _nullify(extra.get("sfo_disc_version")),
+        "category": _nullify(extra.get("sfo_category")),
+        "parental_level": _nullify(extra.get("sfo_parental_level")),
+        "system_version": _nullify(extra.get("sfo_psp_system_version")),
+    }
+    if not any(sfo.values()):
+        sfo = None
+
     return {
         "system": system,
         "system_identifier": _nullify(pvd.get("system_identifier")),
         "header": header,
         "volume": volume,
         "exe": exe_out,
+        "alt_exe": alt_exe,
+        "sfo": sfo,
         "disc_type": _nullify(disc.get("disc_type")),
     }
 

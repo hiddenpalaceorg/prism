@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Serialization shape of the build record. Bump on additive field changes.
-pub const RECORD_SCHEMA_VERSION: u32 = 1;
+pub const RECORD_SCHEMA_VERSION: u32 = 2;
 /// Algorithm manifest in force. See `fingerprint::profile`.
 pub const FINGERPRINT_PROFILE: &str = "v1";
 
@@ -58,6 +58,12 @@ pub struct DiscInfo {
     pub volume: Volume,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exe: Option<Exe>,
+    /// Alternate/decrypted boot executable (PSP/PS3/Xbox).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt_exe: Option<AltExe>,
+    /// PARAM.SFO metadata (PSP/PS3 carry this instead of a `header`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sfo: Option<Sfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disc_type: Option<String>,
 }
@@ -102,6 +108,10 @@ pub struct Volume {
     pub creation_date: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modification_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiration_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_date: Option<String>,
 }
 
 impl Volume {
@@ -110,14 +120,64 @@ impl Volume {
             && self.set_identifier.is_none()
             && self.creation_date.is_none()
             && self.modification_date.is_none()
+            && self.expiration_date.is_none()
+            && self.effective_date.is_none()
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Exe {
-    pub filename: String,
+    /// Absent on systems whose boot exe is identified only by parsed headers (e.g. Xbox).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
+    /// Signature class: `retail`/`debug`/`devkit`/`xex1` (PS3, Xbox, Xbox360).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signing_type: Option<String>,
+    /// ELF symbol count (PS3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub num_symbols: Option<u64>,
+}
+
+/// Alternate/decrypted boot executable. The on-disc exe is encrypted on PSP/PS3/Xbox;
+/// `md5` here is over the decrypted form, the stable cross-image identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AltExe {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
+}
+
+/// PARAM.SFO metadata — the only title/serial source on PSP/PS3 (no `header`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Sfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disc_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disc_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parental_level: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_version: Option<String>,
+}
+
+impl Sfo {
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.disc_id.is_none()
+            && self.disc_version.is_none()
+            && self.category.is_none()
+            && self.parental_level.is_none()
+            && self.system_version.is_none()
+    }
 }
 
 /// Content identity: digests over the *set* of per-file content hashes,

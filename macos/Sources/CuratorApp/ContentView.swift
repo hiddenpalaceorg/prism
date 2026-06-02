@@ -337,18 +337,39 @@ struct BuildOverview: View {
                         row("Regions", h.regions)
                     }
                 }
+                if let s = info.sfo, !s.isEmpty {
+                    Section("SFO") {
+                        row("Title", s.title)
+                        row("Disc ID", s.discId)
+                        row("Disc version", s.discVersion)
+                        row("Category", s.category)
+                        row("Parental level", s.parentalLevel)
+                        row("System version", s.systemVersion)
+                    }
+                }
                 if let v = info.volume, !v.isEmpty {
                     Section("Volume") {
                         row("Identifier", v.identifier)
                         row("Set identifier", v.setIdentifier)
                         row("Created", prettyDate(v.creationDate))
                         row("Modified", prettyDate(v.modificationDate))
+                        row("Expires", prettyDate(v.expirationDate))
+                        row("Effective", prettyDate(v.effectiveDate))
                     }
                 }
                 if let e = info.exe {
                     Section("Boot executable") {
                         row("Filename", e.filename)
                         row("Date", prettyDate(e.date))
+                        row("Signing", e.signingType)
+                        if let n = e.numSymbols { row("Symbols", "\(n)") }
+                    }
+                }
+                if let a = info.altExe {
+                    Section("Alternate executable") {
+                        row("Filename", a.filename)
+                        row("Date", prettyDate(a.date))
+                        if let h = a.md5 { HashRow(label: "Decrypted MD5", value: h) }
                     }
                 }
             }

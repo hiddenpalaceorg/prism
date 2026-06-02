@@ -62,17 +62,47 @@ pub fn to_dat_xml(record: &BuildRecord) -> String {
         ("set_identifier", &v.set_identifier),
         ("creation_date", &v.creation_date),
         ("modification_date", &v.modification_date),
+        ("expiration_date", &v.expiration_date),
+        ("effective_date", &v.effective_date),
     ]);
     if !vol_attrs.is_empty() {
         write_empty(&mut s, 3, "volume", &vol_attrs);
     }
 
-    if let Some(exe) = &info.exe {
-        let mut ea = vec![("filename", exe.filename.clone())];
-        if let Some(d) = &exe.date {
-            ea.push(("date", d.clone()));
+    if let Some(sfo) = &info.sfo {
+        let sfo_attrs = opt_attrs(&[
+            ("title", &sfo.title),
+            ("disc_id", &sfo.disc_id),
+            ("disc_version", &sfo.disc_version),
+            ("category", &sfo.category),
+            ("parental_level", &sfo.parental_level),
+            ("system_version", &sfo.system_version),
+        ]);
+        if !sfo_attrs.is_empty() {
+            write_empty(&mut s, 3, "sfo", &sfo_attrs);
         }
-        write_empty(&mut s, 3, "exe", &ea);
+    }
+
+    if let Some(exe) = &info.exe {
+        let ea = opt_attrs(&[
+            ("filename", &exe.filename),
+            ("date", &exe.date),
+            ("signing_type", &exe.signing_type),
+            ("num_symbols", &exe.num_symbols.map(|n| n.to_string())),
+        ]);
+        if !ea.is_empty() {
+            write_empty(&mut s, 3, "exe", &ea);
+        }
+    }
+    if let Some(alt) = &info.alt_exe {
+        let aa = opt_attrs(&[
+            ("filename", &alt.filename),
+            ("date", &alt.date),
+            ("md5", &alt.md5),
+        ]);
+        if !aa.is_empty() {
+            write_empty(&mut s, 3, "alt_exe", &aa);
+        }
     }
     if let Some(dt) = &info.disc_type {
         write_empty(&mut s, 3, "disc", &[("type", dt.clone())]);
