@@ -25,7 +25,7 @@ DATABASE_URL=postgres:///curator npm run dev
 # from a desktop export bundle (curator export -o builds.jsonl)
 DATABASE_URL=postgres:///curator npm run ingest -- builds.jsonl
 ```
-Populates `builds`, `files`, `build_fileset` (Tier 2), `build_sketch` (Tier 3), and
+Populates `builds`, `files`, `build_fileset`, `build_chunk_signature`, and
 derives LSH bands. `text_embedding` is left NULL pending the embedding model.
 
 ## API
@@ -33,7 +33,7 @@ derives LSH bands. `text_embedding` is left NULL pending the embedding model.
 - `GET /api/search?q=<term>` — filename FTS + trigram fuzzy, or exact hash lookup when
   the term looks like a hash.
 - `POST /api/similarity` — body = a canonical `BuildRecord`. Logs the check by sha256
-  (read-only, not ingested) and returns fused Tier 1/2/3 neighbors.
+  (read-only, not ingested) and returns fused similar-build neighbors.
 - `POST /api/submissions` — body `{ nickname, record }`; enqueues for moderation
   (dedup by sha256). `GET /api/submissions/<sha256>` returns status.
 

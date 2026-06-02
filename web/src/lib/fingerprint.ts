@@ -1,10 +1,10 @@
 // Fingerprint helpers shared by the ingester and the API routes.
 
-import type { BuildRecord, Node } from "./types";
+import type { BuildRecord, Node, Signature } from "./types";
 
 const MASK63 = (1n << 63n) - 1n;
 
-/** Stable 63-bit id from a hex content hash (for the Tier-2 file-hash set). */
+/** Stable 63-bit id from a hex content hash (for the identical-file set). */
 export function hexToId63(hex?: string | null): bigint | null {
   if (!hex) return null;
   if (!/^[0-9a-fA-F]+$/.test(hex)) return null;
@@ -98,9 +98,22 @@ export interface QueryFeatures {
   fileset: string[];
   minhash: string[] | null;
   bands: string[] | null;
+  resemblanceMinhash: string[] | null;
+  resemblanceBands: string[] | null;
   imphash: string | null;
   tlsh: string | null;
   audioTracks: AudioTrack[];
+}
+
+/** A MinHash signature → signed-64 strings + its LSH band hashes (for GIN). */
+function signatureBands(sk?: Signature | null): { minhash: string[]; bands: string[] } | null {
+  if (!sk?.values?.length) return null;
+  const mh = sk.values
+    .map(parseU64)
+    .filter((x): x is bigint => x !== null)
+    .map(toSigned64);
+  if (!mh.length) return null;
+  return { minhash: mh.map(String), bands: lshBands(mh).map(String) };
 }
 
 /** Derive the query features the similarity endpoint needs from a BuildRecord. */
@@ -114,25 +127,17 @@ export function deriveQueryFeatures(rec: BuildRecord): QueryFeatures {
         .map(String)
     ),
   ];
-  let minhash: string[] | null = null;
-  let bands: string[] | null = null;
-  if (rec.sketch?.values?.length) {
-    const mh = rec.sketch.values
-      .map(parseU64)
-      .filter((x): x is bigint => x !== null)
-      .map(toSigned64);
-    if (mh.length) {
-      minhash = mh.map(String);
-      bands = lshBands(mh).map(String);
-    }
-  }
+  const chunkSig = signatureBands(rec.chunk_signature);
+  const resemblance = signatureBands(rec.resemblance);
   return {
     sha256: rec.image?.sha256 ?? null,
     name: rec.image?.name ?? null,
     content_hash: rec.composites?.content_hash ?? null,
     fileset,
-    minhash,
-    bands,
+    minhash: chunkSig?.minhash ?? null,
+    bands: chunkSig?.bands ?? null,
+    resemblanceMinhash: resemblance?.minhash ?? null,
+    resemblanceBands: resemblance?.bands ?? null,
     imphash: rec.exe_fp?.imphash ?? null,
     tlsh: rec.exe_fp?.tlsh ?? null,
     audioTracks: (rec.media ?? [])

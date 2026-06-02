@@ -5,7 +5,7 @@ import type { BuildRecord, Node } from "./types";
 export const MAX_BODY_BYTES = 8_000_000;
 
 const MAX_FILES = 200_000;
-const MAX_SKETCH_VALUES = 4096;
+const MAX_SIGNATURE_VALUES = 4096;
 const MAX_MEDIA = 4096;
 const MAX_AUDIO_FP = 200_000;
 
@@ -49,9 +49,9 @@ export function validateBuildRecord(rec: unknown): ValidateResult {
     }
   }
 
-  const sketch = r.sketch as Record<string, unknown> | null | undefined;
-  if (sketch && Array.isArray(sketch.values) && sketch.values.length > MAX_SKETCH_VALUES) {
-    return { ok: false, error: `sketch.values exceeds ${MAX_SKETCH_VALUES} entries` };
+  const chunkSig = r.chunk_signature as Record<string, unknown> | null | undefined;
+  if (chunkSig && Array.isArray(chunkSig.values) && chunkSig.values.length > MAX_SIGNATURE_VALUES) {
+    return { ok: false, error: `chunk_signature.values exceeds ${MAX_SIGNATURE_VALUES} entries` };
   }
 
   const media = r.media;

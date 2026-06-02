@@ -2,9 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
-import { getBuild, findSimilar, findByEmbedding } from "@/lib/queries";
-import { embed, toPgVector } from "@/lib/embed";
+import { getBuild, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities } from "@/lib/queries";
 import type { Node } from "@/lib/types";
+import SimilarBuilds from "./SimilarBuilds";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,13 +42,6 @@ function humanSize(bytes?: number): string {
   return i === 0 ? `${bytes} B` : `${v.toFixed(1)} ${units[i]}`;
 }
 
-interface Neighbor {
-  sha256: string;
-  name: string;
-  system: string;
-  score?: string;
-}
-
 export default async function BuildPage({ params }: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await params;
   const pool = getPool();
@@ -56,27 +49,24 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
   if (!build) notFound();
 
   const q = deriveQueryFeatures(build.record);
-  const similar = await findSimilar(pool, q);
-  const textNeighbors = build.record.text_doc
-    ? await findByEmbedding(pool, toPgVector(await embed(build.record.text_doc)), sha256)
-    : [];
+  // Pull a wide candidate set per tier so the fused top-50 is well-populated.
+  const similar = await findSimilar(pool, q, 100);
+  // Text neighbors use this build's already-stored embedding — no re-embedding per load.
+  const textNeighbors = await findByEmbeddingOf(pool, sha256, 100);
+  const fused = fuseSimilar(similar, textNeighbors);
 
-  const sections: { title: string; items: Neighbor[] }[] = [
-    { title: "Identical content (Tier 1)", items: similar.tier1_twins.map((x) => ({ ...x })) },
-    { title: "Shared files (Tier 2)", items: similar.tier2.map((x) => ({ ...x, score: `${Math.round((x.jaccard ?? 0) * 100)}%` })) },
-    { title: "Similar chunks (Tier 3)", items: similar.tier3.map((x) => ({ ...x, score: `${Math.round((x.jaccard ?? 0) * 100)}%` })) },
-    { title: "Same boot imports (Tier 5)", items: similar.tier5_exe.map((x) => ({ ...x })) },
-    { title: "Similar executable (TLSH)", items: similar.tier5_tlsh.map((x) => ({ ...x, score: `d=${x.distance}` })) },
-    { title: "Shared audio tracks", items: similar.audio_neighbors.map((x) => ({ ...x, score: `${x.matched_tracks} tracks` })) },
-    { title: "Semantically related (text)", items: textNeighbors.map((x) => ({ sha256: x.sha256, name: x.name, system: x.system, score: x.cosine == null ? undefined : x.cosine.toFixed(2) })) },
-  ].filter((s) => s.items.length > 0);
+  // A tier only counts when both builds have its data — attach each build's capabilities
+  // (and the query build's) so the fusion can drop inapplicable tiers from the denominator.
+  const caps = await getCapabilities(pool, [sha256, ...fused.map((f) => f.sha256)]);
+  const queryCaps = caps.get(sha256) ?? [];
+  for (const f of fused) f.caps = caps.get(f.sha256) ?? [];
 
   const files = flatten(build.record.contents);
   const dirCount = files.filter((f) => f.dir).length;
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-10">
-      <Link href="/" className="text-sm text-neutral-500 hover:underline">&larr; Search</Link>
+      <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
 
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">
         {build.record.info?.title as string | undefined ?? build.name}
@@ -96,31 +86,7 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
         <dd className="font-mono text-xs">{build.content_hash.slice(0, 32)}…</dd>
       </dl>
 
-      {sections.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-lg font-medium">Similar builds</h2>
-          <div className="mt-3 space-y-5">
-            {sections.map((s) => (
-              <div key={s.title}>
-                <p className="mb-1 text-xs uppercase tracking-wide text-neutral-400">{s.title}</p>
-                <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
-                  {s.items.map((n) => (
-                    <li key={n.sha256} className="flex items-center justify-between py-2">
-                      <Link href={`/build/${n.sha256}`} className="hover:underline">
-                        {n.name}
-                      </Link>
-                      <span className="flex gap-3 text-xs text-neutral-500">
-                        <Chip>{n.system}</Chip>
-                        {n.score && <span className="font-mono">{n.score}</span>}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      <SimilarBuilds builds={fused} queryCaps={queryCaps} />
 
       <section className="mt-8">
         <h2 className="text-lg font-medium">

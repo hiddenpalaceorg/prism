@@ -1,5 +1,5 @@
 // Ingest one canonical BuildRecord into Postgres: builds + text embedding,
-// files + Tier-2 fileset, Tier-3 sketch, Tier-5 exe, Tier-4 audio. Shared by the
+// files + fileset, chunk signature, exe, audio. Shared by the
 // bulk CLI ingester (scripts/ingest.ts) and the moderation accept endpoint.
 
 import type { Pool } from "pg";
@@ -27,7 +27,7 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
      JSON.stringify(st.ext_histogram ?? {}), rec.text_doc ?? "", rec.fingerprint_profile, rec]
   );
 
-  // Tier-text embedding from the text doc.
+  // Text embedding from the text doc.
   if (rec.text_doc) {
     const vec = toPgVector(await embed(rec.text_doc));
     await db.query("UPDATE builds SET text_embedding=$1::vector WHERE sha256=$2", [vec, sha]);
@@ -63,15 +63,30 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
     [sha, arrayLit([...fileset])]
   );
 
-  if (rec.sketch?.values?.length) {
-    const mh = rec.sketch.values
+  if (rec.chunk_signature?.values?.length) {
+    const mh = rec.chunk_signature.values
       .map(parseU64)
       .filter((x): x is bigint => x !== null)
       .map(toSigned64);
     if (mh.length) {
       const bands = lshBands(mh);
       await db.query(
-        `INSERT INTO build_sketch (build_sha256,minhash,lsh_bands) VALUES ($1,$2,$3)
+        `INSERT INTO build_chunk_signature (build_sha256,minhash,lsh_bands) VALUES ($1,$2,$3)
+         ON CONFLICT (build_sha256) DO UPDATE SET minhash=excluded.minhash, lsh_bands=excluded.lsh_bands`,
+        [sha, arrayLit(mh.map(String)), arrayLit(bands.map(String))]
+      );
+    }
+  }
+
+  if (rec.resemblance?.values?.length) {
+    const mh = rec.resemblance.values
+      .map(parseU64)
+      .filter((x): x is bigint => x !== null)
+      .map(toSigned64);
+    if (mh.length) {
+      const bands = lshBands(mh);
+      await db.query(
+        `INSERT INTO build_resemblance (build_sha256,minhash,lsh_bands) VALUES ($1,$2,$3)
          ON CONFLICT (build_sha256) DO UPDATE SET minhash=excluded.minhash, lsh_bands=excluded.lsh_bands`,
         [sha, arrayLit(mh.map(String)), arrayLit(bands.map(String))]
       );
