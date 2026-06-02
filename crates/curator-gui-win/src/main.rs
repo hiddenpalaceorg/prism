@@ -1450,11 +1450,11 @@ mod app {
             return format!("Unexpected response:\n{body}");
         };
         let sections = [
-            ("Identical content (Tier 1)", "tier1_twins"),
-            ("Shared files (Tier 2)", "tier2"),
-            ("Similar chunks (Tier 3)", "tier3"),
-            ("Same boot imports (Tier 5)", "tier5_exe"),
-            ("Similar executable (TLSH)", "tier5_tlsh"),
+            ("Identical content", "identical_content"),
+            ("Shared files", "shared_files"),
+            ("Similar chunks", "similar_chunks"),
+            ("Same boot imports", "exe_imports"),
+            ("Similar executable", "exe_similar"),
             ("Shared audio tracks", "audio_neighbors"),
             ("Semantically related (text)", "text_neighbors"),
         ];

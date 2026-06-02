@@ -29,15 +29,15 @@ builds/                sample disc images for testing
 | Phase 0 — workspace + move old code | ✅ done |
 | Phase 1 — adapter → core → CLI (analyze, cache, catalog, export) | ✅ working |
 | ↳ nested archive→disc recursion (bin/cue inside zip/7z) | ✅ working |
-| ↳ Tier-3 chunk fingerprint (FastCDC + MinHash sketch + sidecar) | ✅ working & validated |
-| ↳ Tier-4 audio fingerprint (Shazam-style constellation peak-pairs, numpy; offset-tolerant) | ✅ validated (cross-build EU↔JP; offset-robust) |
-| ↳ Tier-5 exe binary fingerprint (TLSH + imphash; web imphash query) | ✅ built & validated |
+| ↳ Chunk fingerprint (FastCDC + MinHash signature + sidecar) | ✅ working & validated |
+| ↳ Audio fingerprint (Shazam-style constellation peak-pairs, numpy; offset-tolerant) | ✅ validated (cross-build EU↔JP; offset-robust) |
+| ↳ Exe binary fingerprint (TLSH + imphash; web imphash query) | ✅ built & validated |
 | ↳ web audio-Jaccard query (shared CDDA tracks) | ✅ built & validated |
 | ↳ exe TLSH-distance ranking (web, validated vs py-tlsh) | ✅ built & validated |
 | ↳ image pHash | ⬜ skipped (validated algorithm; ~0 yield on retro discs) |
 | Phase 4 — web (Next 16/TS/Tailwind): schema, ingester, search/similarity/submission API, search UI | ✅ built & validated |
 | ↳ text-embedding tier (all-MiniLM-L6-v2 → pgvector cosine) | ✅ built & validated |
-| ↳ build-detail page (`/build/[sha256]`: details, files, similar) + search links | ✅ built & validated (live) |
+| ↳ build-detail page (`/builds/[sha256]`: details, files, similar) + search links | ✅ built & validated (live) |
 | ↳ submission-moderation UI (`/moderate`: list, accept→ingest, reject; `MODERATION_TOKEN`-gated) | ✅ built & validated (live) |
 | Phase 2 — self-contained adapter binary (PyInstaller `curator-adapter.spec`; one ≈60 MB file) | ✅ built & validated (macOS run + CI Windows/macOS) |
 | ↳ macOS codesign/notarize | ⬜ (signing out of scope) |

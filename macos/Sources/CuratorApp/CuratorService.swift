@@ -26,20 +26,21 @@ struct SimilarNeighbor: Decodable, Identifiable {
 struct SimilarityResponse: Decodable {
     struct Query: Decodable { let sha256: String?; let name: String? }
     let query: Query
-    let tier1Twins: [SimilarNeighbor]
-    let tier2: [SimilarNeighbor]
-    let tier3: [SimilarNeighbor]
-    let tier5Exe: [SimilarNeighbor]
-    let tier5Tlsh: [SimilarNeighbor]
+    let identicalContent: [SimilarNeighbor]
+    let sharedFiles: [SimilarNeighbor]
+    let similarChunks: [SimilarNeighbor]
+    let exeImports: [SimilarNeighbor]
+    let exeSimilar: [SimilarNeighbor]
     let audioNeighbors: [SimilarNeighbor]
     let textNeighbors: [SimilarNeighbor]
 
     private enum CodingKeys: String, CodingKey {
         case query
-        case tier1Twins = "tier1_twins"
-        case tier2, tier3
-        case tier5Exe = "tier5_exe"
-        case tier5Tlsh = "tier5_tlsh"
+        case identicalContent = "identical_content"
+        case sharedFiles = "shared_files"
+        case similarChunks = "similar_chunks"
+        case exeImports = "exe_imports"
+        case exeSimilar = "exe_similar"
         case audioNeighbors = "audio_neighbors"
         case textNeighbors = "text_neighbors"
     }
@@ -50,11 +51,11 @@ struct SimilarityResponse: Decodable {
         func list(_ key: CodingKeys) -> [SimilarNeighbor] {
             (try? c.decode([SimilarNeighbor].self, forKey: key)) ?? []
         }
-        tier1Twins = list(.tier1Twins)
-        tier2 = list(.tier2)
-        tier3 = list(.tier3)
-        tier5Exe = list(.tier5Exe)
-        tier5Tlsh = list(.tier5Tlsh)
+        identicalContent = list(.identicalContent)
+        sharedFiles = list(.sharedFiles)
+        similarChunks = list(.similarChunks)
+        exeImports = list(.exeImports)
+        exeSimilar = list(.exeSimilar)
         audioNeighbors = list(.audioNeighbors)
         textNeighbors = list(.textNeighbors)
     }
@@ -62,11 +63,11 @@ struct SimilarityResponse: Decodable {
     /// (section title, neighbors) for non-empty tiers, in display order.
     var sections: [(String, [SimilarNeighbor])] {
         [
-            ("Identical content (Tier 1)", tier1Twins),
-            ("Shared files (Tier 2)", tier2),
-            ("Similar chunks (Tier 3)", tier3),
-            ("Same boot imports (Tier 5)", tier5Exe),
-            ("Similar executable (TLSH)", tier5Tlsh),
+            ("Identical content", identicalContent),
+            ("Shared files", sharedFiles),
+            ("Similar chunks", similarChunks),
+            ("Same boot imports", exeImports),
+            ("Similar executable", exeSimilar),
             ("Shared audio tracks", audioNeighbors),
             ("Semantically related (text)", textNeighbors),
         ].filter { !$0.1.isEmpty }

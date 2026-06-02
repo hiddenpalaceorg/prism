@@ -29,12 +29,13 @@ ec8de44  Web service: search, similarity, submissions API
   uv adapter (`ps2exe-adapter/`), `macos/`, `web/`. Rust pinned to `stable` via
   `rust-toolchain.toml` (1.77 was too old for current crates).
 - **Phase 1** — desktop pipeline: Rust image hash → uv/ps2exe adapter (canonical JSON +
-  NDJSON progress) → composites + structural + Tier-3 chunk sketch + tree → DAT/JSON →
+  NDJSON progress) → composites + structural + chunk signature + tree → DAT/JSON →
   sha256 cache → SQLite catalog → `export` (JSONL). Live `indicatif` progress.
   **Nested archive→disc recursion** (zip/7z) works.
 - **Fingerprint tiers** (all captured in the one pass): T1 content-id (`content_hash`,
-  `filtered_content_hash`), T2 whole-file set, T3 FastCDC+blake3 chunks → MinHash
-  sketch + `.chunks` sidecar, T4 audio (Shazam-style constellation peak-pair landmarks;
+  `filtered_content_hash`), T2 whole-file set, T3 FastCDC+blake3 chunks (**streamed**,
+  bounded memory, **no file-size cap** — large blobs chunk too, for byte-shift tolerance)
+  → MinHash signature + `.chunks` sidecar, T4 audio (Shazam-style constellation peak-pair landmarks;
   multi-bin **and** `.cue` single-bin), T5 exe (TLSH + imphash). Self-contained
   audio/TLSH algos (numpy/JS) — no libchromaprint/libtlsh.
 - **Phase 4 web** — Next 16 / React 19 / Tailwind 4 / TS. `web/db/schema.sql` (pgvector
@@ -64,7 +65,7 @@ ec8de44  Web service: search, similarity, submissions API
   with no env var / dev tools — verified the relocated launcher analyzes). Find-Similar
   (`POST /api/similarity`, tiered neighbors in a Similar tab) + Submit
   (`POST /api/submissions` with nickname). **Validated live**: recreated the `curator` DB,
-  seeded two content-twins, server on :3001 — similarity returned `tier1_twins` matching
+  seeded two content-twins, server on :3001 — similarity returned `identical_content` matching
   the Swift `CodingKeys`, submit returned `202 {sha256,status:"queued"}` and persisted.
 - **Phase 3 (macOS niceties)** — drag-and-drop onto the window; a recent-builds sidebar
   (new `Db::list_recent`/`CatalogRow`, FFI `recentBuilds`/`loadBuild`) that reopens a
@@ -101,7 +102,7 @@ ec8de44  Web service: search, similarity, submissions API
 **Remaining (all environment-bound, not doable here):**
 - Code-signing/notarization (macOS Developer ID, Windows Authenticode) — explicitly out of scope.
 - A standalone archive tool (`unrar`/`7zz`) for `.rar`/`.7z` inputs is not frozen in; libarchive (zip/etc.) is.
-- Tier-3 TLSH/LSH are linear scans (fine at current scale; need a forest/index to scale).
+- Chunk-LSH & exe-TLSH are linear scans (fine at current scale; need a forest/index to scale).
 - Skipped by design: image pHash (validated algo, ~0 yield on retro discs — native formats).
 - Audio fp is **offset-tolerant** (Shazam-style constellation of peak-pairs keyed by Δt;
   freq bins coarsened `>>2` for sub-frame robustness). Validated on synthetic PCM:
@@ -222,7 +223,7 @@ Two tiers:
 **Cancellation** pairs with progress: core can kill the adapter subprocess and stop
 the batch loop; the observer exposes a cancel signal the GUI "Cancel" button trips.
 
-## Canonical schema (sketch, owned by curator-core)
+## Canonical schema (outline, owned by curator-core)
 
 ```
 Build {
@@ -328,11 +329,11 @@ v1. Cheapest/most precise first; fused at query time:
 
 | Tier | Built from | Answers | Index |
 |---|---|---|---|
-| 1. Content identity | image sha256 + `content_hash` / `filtered_content_hash` | "same dump / same contents, different metadata" | equality |
-| 2. Identical-file overlap | whole-file hash **set** (`int[]`) | "shares identical files" | GIN / `smlar` Jaccard |
-| 3. Similar-content overlap | **FastCDC chunk-hash set** → weighted-MinHash sketch | "shares *near*-identical & partial files" | LSH banding (GIN) |
-| 4. Perceptual media | **pHash** (images), **Chromaprint** (audio) per asset | "same assets, re-encoded / different bitrate" | pHash Hamming (BK-tree/LSH), Chromaprint match |
-| 5. Exe binary similarity | **TLSH + imphash** (+ func hashes) of the boot exe | "same program, recompiled / patched" | imphash equality; TLSH forest (HAC-T) |
+| Content identity | image sha256 + `content_hash` / `filtered_content_hash` | "same dump / same contents, different metadata" | equality |
+| Identical-file overlap | whole-file hash **set** (`int[]`) | "shares identical files" | GIN / `smlar` Jaccard |
+| Similar-content overlap | **FastCDC chunk-hash set** → weighted-MinHash signature | "shares *near*-identical & partial files" | LSH banding (GIN) |
+| Perceptual media | **pHash** (images), **Chromaprint** (audio) per asset | "same assets, re-encoded / different bitrate" | pHash Hamming (BK-tree/LSH), Chromaprint match |
+| Exe binary similarity | **TLSH + imphash** (+ func hashes) of the boot exe | "same program, recompiled / patched" | imphash equality; TLSH forest (HAC-T) |
 
 Plus two cross-cutting signals folded into the fusion:
 - **Text embedding** — title + maker + system + filename corpus via a local open model
@@ -343,14 +344,14 @@ Plus two cross-cutting signals folded into the fusion:
 And an on-demand **diff view**: per-file chunk lists + exe/media fingerprints →
 "what changed between A and B" (pairwise, not a ranking index).
 
-**Adopted refinements:** Tier-3 uses **weighted MinHash** (BagMinHash/ProbMinHash) so
-sketches honor chunk size + IDF; a server-side **corpus chunk-IDF table** formalizes
+**Adopted refinements:** Chunk similarity uses **weighted MinHash** (BagMinHash/ProbMinHash) so
+signatures honor chunk size + IDF; a server-side **corpus chunk-IDF table** formalizes
 "stop-chunks" (down-weights ubiquitous padding/headers), the chunk-level analogue of
 stop-file pruning.
 
 Identity/identical-file (Tiers 1–2) stay in btree/GIN/`smlar`; chunk similarity
-(Tier 3) in LSH-banded GIN; media/exe (Tiers 4–5) in their own indexes; pgvector
-hosts **only** the text embedding. **Evaluate LZJD** as an alternative Tier-3 engine;
+chunk similarity in LSH-banded GIN; media/exe in their own indexes; pgvector
+hosts **only** the text embedding. **Evaluate LZJD** as an alternative chunk-similarity engine;
 keep **NCD** as an offline quality baseline.
 
 ## Similarity checks & contributor submissions
@@ -373,7 +374,7 @@ moderation/ingest. Endpoints: `POST /similarity`, `POST /submissions`,
 
 **Principle:** the single pass over the (multi-GB) image is the *only* access to its
 bytes. The persisted record must be fully **image-independent** — every downstream op
-(DAT render, all four similarity tiers, submission, re-sketching) derives from it
+(DAT render, all four similarity tiers, submission, re-signing) derives from it
 alone. Capture everything cheap *now*, including inputs for the deferred media/exe
 tiers (irrecoverable later). Only a CDC-param change (`fingerprint_version`) forces a
 re-scan.
@@ -381,10 +382,10 @@ re-scan.
 **Physical split:**
 - **Core record** (`<sha256>.json` + rendered `<sha256>.xml` DAT) — always kept:
   identity, info, composites, structural, text_doc, contents tree, media/exe
-  fingerprints, and the weighted-MinHash sketch. Tens of KB to ~0.7 MB.
+  fingerprints, and the weighted-MinHash signature. Tens of KB to ~0.7 MB.
 - **Chunk sidecar** (`<sha256>.chunks`, compact binary) — per-file `(hash64, len)`
   lists. **Prunable** after contribution (the server is the durable chunk store and
-  the only consumer of raw chunks — for IDF re-weighting and Tier-4 diff). ~0.6 MB
+  the only consumer of raw chunks — for IDF re-weighting and media diff). ~0.6 MB
   per 4 GB disc.
 
 ```
@@ -392,15 +393,15 @@ BuildRecord {
   record_schema_version, fingerprint_profile   // e.g. "v1" — see Schema & fingerprint versioning
   image: { name, size, md5, sha1, sha256 }     // sha256 = primary key/identity
   info:  { system, header{...}, volume{...}, exe{filename,date}, disc_type }
-  composites: { content_hash, filtered_content_hash,                 // Tier-1
+  composites: { content_hash, filtered_content_hash,                 // content identity
                 hash_exe, most_recent_file{path,date,hash}, incomplete_files }
   structural: { system, file_count, total_size, max_depth, ext_histogram }
   text_doc:   "<title> <maker> <system> <filename/path corpus>"      // server embeds
   contents:   Node[]   // File{name,date,size,md5,sha1,sha256,unreadable} | Dir{...}
-  media:      [ { path, kind, phash|chromaprint } ]                  // Tier-4 (active)
-  exe_fp:     { tlsh, imphash, func_hashes? }                        // Tier-5 (active)
-  sketch:     { kind:"weighted-minhash", k, seed, values[] }         // ~2 KB, Tier-3
-  // chunk sidecar (separate file): files:[ {path, chunks:[[hash64,len]]} ]  // Tier-3/4
+  media:      [ { path, kind, phash|chromaprint } ]                  // media (active)
+  exe_fp:     { tlsh, imphash, func_hashes? }                        // exe (active)
+  chunk_signature: { kind:"minhash-v1", k, seed, values[] }   // ~2 KB
+  // chunk sidecar (separate file): files:[ {path, chunks:[[hash64,len]]} ]
 }
 ```
 
@@ -408,7 +409,7 @@ BuildRecord {
 independent of filenames, layout, order, and image container):
 - `content_hash` — over **all** files; strict (every file, incl. junk, must match).
 - `filtered_content_hash` — **excluding ignored files** (`.nfo`/`.diz`/scene junk +
-  per-system ignores); tolerant of cosmetic differences. These are Tier-1 identity and
+  per-system ignores); tolerant of cosmetic differences. These are content identity and
   the cross-machine "same contents, different metadata" signal (image sha256 stays the
   primary key). Replaces ps2exe's path-sorted `all_files_hash` variants (dropped).
 
@@ -420,18 +421,18 @@ independent of filenames, layout, order, and image container):
   (Sensitivity↔footprint knob.)
 - **Media/exe stored as fingerprints, never raw bytes** — pHash ~8 B/image,
   Chromaprint reduced ~KB/track, exe = TLSH+imphash (PS3/Xbox exes are multi-MB raw).
-- **Sketch always; raw chunks prunable** — check path submits the ~2 KB sketch;
+- **Signature always; raw chunks prunable** — check path submits the ~2 KB signature;
   contribute path uploads raw chunks once for the server to keep.
 
 **Budget (~4 GB disc):** core record 0.1–0.7 MB (tree-dominated, scales with file
-count) + chunks ~0.6 MB + media/exe/sketch <20 KB ⇒ **~0.8–1.4 MB**; **~0.1–0.7 MB
+count) + chunks ~0.6 MB + media/exe/signature <20 KB ⇒ **~0.8–1.4 MB**; **~0.1–0.7 MB
 after pruning chunks**. (If the tree ever dominates, move it to its own sidecar to
 keep the core tiny.)
 
 **Two paths reuse the record:**
-- *Similarity check* (read-only): submit sketch + text_doc + structural + file-hash set.
+- *Similarity check* (read-only): submit signature + text_doc + structural + file-hash set.
 - *Contribute/ingest*: upload core + raw chunks once; server builds the corpus
-  chunk-IDF table, an IDF-weighted sketch, and retains chunks for Tier-4 diff.
+  chunk-IDF table, an IDF-weighted signature, and retains chunks for media diff.
 
 ## Schema & fingerprint versioning
 
@@ -453,7 +454,7 @@ source ∈ RawBytes        // needs the original image → RE-SCAN only
 ```
 e.g. `image_hashes`/`per_file_hashes`/`chunking`/`phash`/`chromaprint`/`exe_fp` =
 **RawBytes**; `content_hash`←FromFileHashes; `minhash`←FromChunkSet;
-`structural`←FromTree; `text_embed`←FromTextDoc; IDF-weighted sketch←FromCorpus.
+`structural`←FromTree; `text_embed`←FromTextDoc; IDF-weighted signature←FromCorpus.
 
 A **Profile** (`v1`) is a frozen manifest pinning each component to a version. The
 record stores the profile tag + a manifest hash (integrity). **Profiles are immutable**
@@ -500,7 +501,7 @@ reads the profile, runs derivable recomputes, and segments RawBytes indexes by v
   moderation/ingest queue; status synced back to the GUI.
 - **Similarity = web service.** Layered tiers (identity / identical-file /
   chunk-similar / diff) + text embedding + structural, fused server-side; GUI submits
-  to `POST /similarity` (read-only) and renders. Tier-3 = FastCDC chunks + **weighted
+  to `POST /similarity` (read-only) and renders. Chunk similarity = FastCDC chunks + **weighted
   MinHash** + **corpus chunk-IDF**. Evaluate LZJD; NCD as baseline.
 - **Capture everything in one pass** including deferred-tier inputs (pHash/Chromaprint
   for media, TLSH+imphash for the exe) — irrecoverable once the image is gone.
