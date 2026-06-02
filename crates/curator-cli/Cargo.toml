@@ -15,3 +15,8 @@ curator-core = { path = "../curator-core" }
 clap = { version = "4", features = ["derive", "env"] }
 indicatif = "0.17"
 anyhow = { workspace = true }
+zip = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
