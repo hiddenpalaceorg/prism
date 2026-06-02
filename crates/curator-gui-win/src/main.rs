@@ -139,6 +139,9 @@ mod app {
         cancel: Arc<AtomicBool>,
         totals: HashMap<u64, f64>,
         working: bool,
+        /// True during a recursive folder import (vs. a single analyze): keeps the
+        /// "Importing x of y" status from being overwritten by per-file counter labels.
+        importing: bool,
         /// Canonical JSON of the loaded build (for similarity/submit), if any.
         last_json: Option<String>,
         /// Document-pane content, by view. `view` selects which one is shown.
@@ -527,6 +530,7 @@ mod app {
             cancel: Arc::new(AtomicBool::new(false)),
             totals: HashMap::new(),
             working: false,
+            importing: false,
             last_json: None,
             view: DocView::Overview,
             doc_overview: Vec::new(),
@@ -778,6 +782,7 @@ mod app {
 
     unsafe fn drain_progress(hwnd: HWND) {
         let Some(st) = state(hwnd) else { return };
+        let importing = st.importing;
         let mut queue = st.events.lock().unwrap();
         while let Some(ev) = queue.pop_front() {
             match ev {
@@ -789,7 +794,11 @@ mod app {
                         st.totals.insert(id, t);
                     }
                     let _ = SendMessageW(st.progress, PBM_SETRANGE32, WPARAM(0), LPARAM(1000));
-                    set_status(hwnd, &label);
+                    // During a batch import keep the "Importing x of y" line; the bar still
+                    // animates per file. A single analyze shows the per-stage label.
+                    if !importing {
+                        set_status(hwnd, &label);
+                    }
                 }
                 UiEvent::Progress { id, count } => {
                     if let Some(t) = st.totals.get(&id) {
@@ -803,7 +812,11 @@ mod app {
                     st.totals.remove(&id);
                     let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM(0), LPARAM(0));
                 }
-                UiEvent::Message(text) => set_status(hwnd, &text),
+                UiEvent::Message(text) => {
+                    if !importing {
+                        set_status(hwnd, &text);
+                    }
+                }
             }
         }
     }
@@ -1169,6 +1182,7 @@ mod app {
             return;
         }
         st.working = true;
+        st.importing = true;
         st.cancel.store(false, Ordering::SeqCst);
         st.totals.clear();
         st.events.lock().unwrap().clear();
@@ -1280,6 +1294,7 @@ mod app {
         let summary = *Box::from_raw(ptr);
         if let Some(st) = state(hwnd) {
             st.working = false;
+            st.importing = false;
             let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM(0), LPARAM(0));
         }
         set_status(hwnd, &summary);
