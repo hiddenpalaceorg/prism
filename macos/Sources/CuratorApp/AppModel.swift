@@ -311,6 +311,7 @@ final class AppModel: ObservableObject {
         isWorking = true
         errorMessage = nil
         counters = []
+        summary = nil // show the (live-updating) library browser while importing
         status = "Scanning \(url.lastPathComponent)…"
         let cancel = CancelHandle()
         cancelHandle = cancel
@@ -338,6 +339,11 @@ final class AppModel: ObservableObject {
                             }
                         }
                         imported += 1
+                        // Live-refresh the (non-modal) browser as items land. Reads use a
+                        // separate DB connection, so this never blocks on the import writer.
+                        if imported % 5 == 0 {
+                            await MainActor.run { self.refreshLibrary() }
+                        }
                     } catch CuratorError.Cancelled {
                         cancelled = true
                         break
