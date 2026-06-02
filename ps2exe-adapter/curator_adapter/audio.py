@@ -1,11 +1,11 @@
-"""Self-contained acoustic fingerprint for CD audio (Tier-4).
+"""Self-contained acoustic fingerprint for CD audio.
 
 A Shazam-style **constellation** fingerprint: pick spectral peaks in the
 time–frequency plane, then hash *pairs* of nearby peaks keyed by their frequencies
 and the time delta between them. Because the hash encodes Δt (not absolute time), a
 constant time offset between two rips — different pregap, leading silence, a shifted
 `.cue` INDEX — cancels out, so the fingerprints still match. The output is a *set* of
-integer hashes, so similarity is still Jaccard (reuses the Tier-2/3 set machinery).
+integer hashes, so similarity is still Jaccard (reuses the set-similarity machinery).
 
 No libchromaprint dependency — just numpy. Hash values stay < 2**26 (JSON-number safe).
 

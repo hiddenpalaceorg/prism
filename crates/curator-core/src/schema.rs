@@ -21,7 +21,7 @@ pub struct BuildRecord {
     pub info: DiscInfo,
     pub composites: Composites,
     pub structural: Structural,
-    /// Title + maker + system + filename/path corpus — embedded server-side (Tier text).
+    /// Title + maker + system + filename/path corpus — embedded server-side.
     pub text_doc: String,
     pub contents: Vec<Node>,
 
@@ -29,8 +29,12 @@ pub struct BuildRecord {
     pub media: Vec<MediaFp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exe_fp: Option<ExeFp>,
+    /// MinHash signature over the build's content-defined chunk set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sketch: Option<Sketch>,
+    pub chunk_signature: Option<Signature>,
+    /// Byte-shingle resemblance signature (OPH). Survives many small scattered edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resemblance: Option<Signature>,
 }
 
 /// Image-level identity. `sha256` is the primary key everywhere.
@@ -116,7 +120,7 @@ pub struct Exe {
     pub date: Option<String>,
 }
 
-/// Tier-1 content identity: digests over the *set* of per-file content hashes,
+/// Content identity: digests over the *set* of per-file content hashes,
 /// independent of names, layout, order, and image container.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Composites {
@@ -145,7 +149,7 @@ pub struct MostRecentFile {
     pub hash: Option<String>,
 }
 
-/// Cheap precomputed query features (Tier structural).
+/// Cheap precomputed structural query features.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Structural {
     pub system: String,
@@ -193,7 +197,7 @@ impl Node {
     }
 }
 
-/// Tier-4 perceptual media fingerprint.
+/// Perceptual media fingerprint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaFp {
     pub path: String,
@@ -207,7 +211,7 @@ pub struct MediaFp {
     pub audio_fp: Vec<u64>,
 }
 
-/// Tier-5 executable binary-similarity fingerprint.
+/// Executable binary-similarity fingerprint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExeFp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,9 +222,9 @@ pub struct ExeFp {
     pub func_hashes: Vec<String>,
 }
 
-/// Tier-3 MinHash sketch over the chunk set (size/IDF-aware server-side).
+/// MinHash signature over a set (chunks or shingles), size/IDF-aware server-side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sketch {
+pub struct Signature {
     pub kind: String, // e.g. "minhash-v1"
     pub k: u32,
     #[serde(with = "u64_str")]
@@ -246,13 +250,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sketch_u64s_serialize_as_strings_and_roundtrip() {
-        let s = Sketch { kind: "minhash-v1".into(), k: 2, seed: 42, values: vec![1, u64::MAX] };
+    fn signature_u64s_serialize_as_strings_and_roundtrip() {
+        let s = Signature { kind: "minhash-v1".into(), k: 2, seed: 42, values: vec![1, u64::MAX] };
         let j = serde_json::to_string(&s).unwrap();
         // u64s must be JSON strings (numbers would lose precision in JS).
         assert!(j.contains("\"42\""), "{j}");
         assert!(j.contains("\"18446744073709551615\""), "{j}");
-        let back: Sketch = serde_json::from_str(&j).unwrap();
+        let back: Signature = serde_json::from_str(&j).unwrap();
         assert_eq!(back.seed, 42);
         assert_eq!(back.values, vec![1, u64::MAX]);
     }
@@ -270,11 +274,12 @@ mod tests {
             contents: vec![],
             media: vec![],
             exe_fp: None,
-            sketch: None,
+            chunk_signature: None,
+            resemblance: None,
         };
         let j = serde_json::to_string(&rec).unwrap();
         assert!(!j.contains("\"header\""), "empty header should be skipped: {j}");
-        assert!(!j.contains("\"sketch\""));
+        assert!(!j.contains("\"chunk_signature\""));
         let back: BuildRecord = serde_json::from_str(&j).unwrap();
         assert_eq!(back.image.sha256, "h");
     }

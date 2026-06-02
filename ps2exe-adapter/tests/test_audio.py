@@ -1,4 +1,4 @@
-"""Tests for the Tier-4 constellation audio fingerprint (curator_adapter.audio).
+"""Tests for the constellation audio fingerprint (curator_adapter.audio).
 
 Synthesizes deterministic PCM (no real disc needed) and asserts the key properties:
 identical match, offset tolerance (the whole point of the constellation design), and
