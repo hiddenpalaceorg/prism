@@ -30,7 +30,7 @@ export default async function BuildsPage() {
       </h1>
 
       {builds.length === 0 ? (
-        <p className="mt-6 text-sm text-neutral-500">No builds in the catalog yet.</p>
+        <p className="mt-6 text-sm text-neutral-500">No builds in the library yet.</p>
       ) : (
         <ul className="mt-6 divide-y divide-neutral-200 dark:divide-neutral-800">
           {builds.map((b) => (

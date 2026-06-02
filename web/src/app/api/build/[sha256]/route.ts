@@ -8,7 +8,7 @@ import { isSha256 } from "@/lib/validate";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// GET /api/build/<sha256> — the catalogued build plus its similar neighbors
+// GET /api/build/<sha256> — the stored build plus its similar neighbors
 // (same fusion as /api/similarity, computed from the stored record).
 export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await ctx.params;

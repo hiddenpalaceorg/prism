@@ -13,9 +13,9 @@ use curator_core::{render, Analyzer, Config};
 use crate::progress::IndicatifObserver;
 
 #[derive(Parser)]
-#[command(name = "curator", version, about = "Analyze disc images into DAT/JSON and catalog them")]
+#[command(name = "curator", version, about = "Analyze disc images into DAT/JSON and add them to a local library")]
 struct Cli {
-    /// Override the user data dir (cache + local catalog DB).
+    /// Override the user data dir (cache + local library DB).
     #[arg(long, global = true)]
     data_dir: Option<PathBuf>,
 
@@ -45,7 +45,7 @@ enum Command {
         #[arg(long, short)]
         out: Option<PathBuf>,
     },
-    /// Export the local catalog as the bulk web-contribute feed.
+    /// Export the local library as the bulk web-contribute feed.
     ///
     /// With `--out FILE.zip`, writes a portable bundle (`manifest.json` +
     /// `builds.jsonl`) for copying to another machine and ingesting into the
@@ -55,7 +55,7 @@ enum Command {
         #[arg(long, short)]
         out: Option<PathBuf>,
     },
-    /// Show local catalog stats.
+    /// Show local library stats.
     Stats,
 }
 
@@ -77,7 +77,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Stats => {
-            println!("builds in catalog: {}", analyzer.catalog_size()?);
+            println!("builds in library: {}", analyzer.library_size()?);
         }
         Command::Export { out } => match &out {
             Some(p) if p.extension().and_then(|e| e.to_str()) == Some("zip") => {

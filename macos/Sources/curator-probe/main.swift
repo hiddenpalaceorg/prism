@@ -1,5 +1,5 @@
 // Headless runtime check for the UniFFI bridge — no GUI session required.
-// Exercises: Engine constructor, a catalog query, the ProgressListener callback
+// Exercises: Engine constructor, a library query, the ProgressListener callback
 // (image hashing emits real events), cancellation, and error propagation.
 //
 //   cargo build -p curator-ffi && (cd macos && swift run curator-probe)
@@ -27,7 +27,7 @@ defer { try? fm.removeItem(at: tmp) }
 let dataDir = ProcessInfo.processInfo.environment["CURATOR_DATA_DIR"]
     ?? tmp.appendingPathComponent("data").path
 let engine = try Engine(adapterDir: "../ps2exe-adapter", adapterBin: nil, dataDir: dataDir)
-print("1. catalogSize() ->", try engine.catalogSize(), "(fresh data dir) ✓")
+print("1. librarySize() ->", try engine.librarySize(), "(fresh data dir) ✓")
 
 // 2. Cancellation: pre-trip the handle; hashing must unwind as .cancelled.
 let big = tmp.appendingPathComponent("big.bin")
@@ -57,7 +57,7 @@ do {
     print("   threw:", error)
 }
 
-// 4. New catalog reads round-trip (empty data dir → [] and nil).
+// 4. New library reads round-trip (empty data dir → [] and nil).
 let recent = try engine.recentBuilds(limit: 10)
 print("4. recentBuilds(10) -> \(recent.count) entries ✓")
 let missing = try engine.loadBuild(sha256: "deadbeef")

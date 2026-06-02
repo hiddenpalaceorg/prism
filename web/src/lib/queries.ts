@@ -342,7 +342,7 @@ export interface BuildListItem {
   ingested_at: string;
 }
 
-/// List catalogued builds, most recently ingested first (for the /builds index).
+/// List stored builds, most recently ingested first (for the /builds index).
 export async function listBuilds(pool: Pool, limit = 500): Promise<BuildListItem[]> {
   const r = await pool.query(
     `SELECT sha256, name, system, file_count, total_size, ingested_at
@@ -352,7 +352,7 @@ export async function listBuilds(pool: Pool, limit = 500): Promise<BuildListItem
   return r.rows as BuildListItem[];
 }
 
-/// Fetch one catalogued build (with its full canonical record) by sha256.
+/// Fetch one stored build (with its full canonical record) by sha256.
 export async function getBuild(pool: Pool, sha256: string): Promise<BuildRow | null> {
   const r = await pool.query(
     `SELECT sha256, name, system, size, md5, sha1, content_hash, file_count,

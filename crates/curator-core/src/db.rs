@@ -1,4 +1,4 @@
-//! Local SQLite catalog: the build index plus the similarity-check and submission
+//! Local SQLite library: the build index plus the similarity-check and submission
 //! tables from PLAN.md. Identity is always `image.sha256`.
 
 use std::path::Path;
@@ -13,9 +13,9 @@ pub struct Db {
     conn: Connection,
 }
 
-/// A catalog row for listing (recent builds, browse, etc.).
+/// A library row for listing (recent builds, browse, etc.).
 #[derive(Debug, Clone)]
-pub struct CatalogRow {
+pub struct LibraryRow {
     pub sha256: String,
     pub name: String,
     pub system: String,
@@ -24,10 +24,10 @@ pub struct CatalogRow {
     pub analyzed_at: i64,
 }
 
-/// Column the catalog browser sorts on. Maps to a fixed SQL column name (never
+/// Column the library browser sorts on. Maps to a fixed SQL column name (never
 /// interpolate caller text into ORDER BY).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CatalogSort {
+pub enum LibrarySort {
     Name,
     System,
     Files,
@@ -35,14 +35,14 @@ pub enum CatalogSort {
     Date,
 }
 
-impl CatalogSort {
+impl LibrarySort {
     fn column(self) -> &'static str {
         match self {
-            CatalogSort::Name => "name",
-            CatalogSort::System => "system",
-            CatalogSort::Files => "file_count",
-            CatalogSort::Size => "total_size",
-            CatalogSort::Date => "analyzed_at",
+            LibrarySort::Name => "name",
+            LibrarySort::System => "system",
+            LibrarySort::Files => "file_count",
+            LibrarySort::Size => "total_size",
+            LibrarySort::Date => "analyzed_at",
         }
     }
 }
@@ -145,13 +145,13 @@ impl Db {
     }
 
     /// The most recently analyzed builds, newest first.
-    pub fn list_recent(&self, limit: u32) -> Result<Vec<CatalogRow>> {
+    pub fn list_recent(&self, limit: u32) -> Result<Vec<LibraryRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT sha256, name, system, file_count, total_size, analyzed_at
              FROM builds ORDER BY analyzed_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map([limit], |r| {
-            Ok(CatalogRow {
+            Ok(LibraryRow {
                 sha256: r.get(0)?,
                 name: r.get(1)?,
                 system: r.get(2)?,
@@ -163,18 +163,18 @@ impl Db {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// Search/browse the catalog. `search` matches name or system (case-insensitive
+    /// Search/browse the library. `search` matches name or system (case-insensitive
     /// substring); `system` filters to one system exactly. Results are sorted by
     /// `sort` (descending when `desc`), with a stable `name` tiebreak, then paged.
     pub fn search_builds(
         &self,
         search: Option<&str>,
         system: Option<&str>,
-        sort: CatalogSort,
+        sort: LibrarySort,
         desc: bool,
         limit: u32,
         offset: u32,
-    ) -> Result<Vec<CatalogRow>> {
+    ) -> Result<Vec<LibraryRow>> {
         let mut sql = String::from(
             "SELECT sha256, name, system, file_count, total_size, analyzed_at FROM builds WHERE 1=1",
         );
@@ -202,7 +202,7 @@ impl Db {
         let param_refs: Vec<&dyn rusqlite::types::ToSql> = args.iter().map(|b| b.as_ref()).collect();
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(param_refs.as_slice(), |r| {
-            Ok(CatalogRow {
+            Ok(LibraryRow {
                 sha256: r.get(0)?,
                 name: r.get(1)?,
                 system: r.get(2)?,
@@ -214,7 +214,7 @@ impl Db {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// Distinct systems present in the catalog, alphabetical — for the filter UI.
+    /// Distinct systems present in the library, alphabetical — for the filter UI.
     pub fn list_systems(&self) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
@@ -223,7 +223,7 @@ impl Db {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    /// Cached JSON paths for every catalogued build, oldest first.
+    /// Cached JSON paths for every stored build, oldest first.
     pub fn list_json_paths(&self) -> Result<Vec<String>> {
         let mut stmt = self
             .conn
@@ -261,7 +261,7 @@ mod tests {
         }
     }
 
-    fn names(rows: &[CatalogRow]) -> Vec<&str> {
+    fn names(rows: &[LibraryRow]) -> Vec<&str> {
         rows.iter().map(|r| r.name.as_str()).collect()
     }
 
@@ -276,29 +276,29 @@ mod tests {
         db.upsert_build(&rec("h3", "Crash Bandicoot", "PSX", 5, 500), "p3").unwrap();
 
         // Sort by name ascending — alphabetical across all rows.
-        let all = db.search_builds(None, None, CatalogSort::Name, false, 100, 0).unwrap();
+        let all = db.search_builds(None, None, LibrarySort::Name, false, 100, 0).unwrap();
         assert_eq!(names(&all), ["Crash Bandicoot", "Sonic CD (Europe)", "Sonic CD (USA)"]);
 
         // Case-insensitive substring over the name.
-        let sonic = db.search_builds(Some("sonic"), None, CatalogSort::Name, false, 100, 0).unwrap();
+        let sonic = db.search_builds(Some("sonic"), None, LibrarySort::Name, false, 100, 0).unwrap();
         assert_eq!(sonic.len(), 2);
 
         // Search also matches the system column.
-        let psx = db.search_builds(Some("psx"), None, CatalogSort::Name, false, 100, 0).unwrap();
+        let psx = db.search_builds(Some("psx"), None, LibrarySort::Name, false, 100, 0).unwrap();
         assert_eq!(names(&psx), ["Crash Bandicoot"]);
 
         // Exact system filter.
-        let segacd = db.search_builds(None, Some("Sega CD"), CatalogSort::Size, true, 100, 0).unwrap();
+        let segacd = db.search_builds(None, Some("Sega CD"), LibrarySort::Size, true, 100, 0).unwrap();
         assert_eq!(names(&segacd), ["Sonic CD (Europe)", "Sonic CD (USA)"]); // size desc: 2000, 1000
 
         // Paging by name ascending.
-        let page0 = db.search_builds(None, None, CatalogSort::Name, false, 1, 0).unwrap();
-        let page1 = db.search_builds(None, None, CatalogSort::Name, false, 1, 1).unwrap();
+        let page0 = db.search_builds(None, None, LibrarySort::Name, false, 1, 0).unwrap();
+        let page1 = db.search_builds(None, None, LibrarySort::Name, false, 1, 1).unwrap();
         assert_eq!(names(&page0), ["Crash Bandicoot"]);
         assert_eq!(names(&page1), ["Sonic CD (Europe)"]);
 
         // Wildcards in the term are matched literally (no rows contain '%').
-        assert!(db.search_builds(Some("%"), None, CatalogSort::Name, false, 100, 0).unwrap().is_empty());
+        assert!(db.search_builds(Some("%"), None, LibrarySort::Name, false, 100, 0).unwrap().is_empty());
 
         assert_eq!(db.list_systems().unwrap(), ["PSX", "Sega CD"]);
 

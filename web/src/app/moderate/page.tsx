@@ -83,7 +83,7 @@ export default function Moderate() {
         <Link href="/" className="text-sm text-neutral-500 hover:underline">Search &rarr;</Link>
       </div>
       <p className="mt-1 text-sm text-neutral-500">
-        Review contributor submissions. Accepting ingests the build into the catalog.
+        Review contributor submissions. Accepting ingests the build into the library.
       </p>
 
       <input

@@ -337,16 +337,6 @@ uint64_t uniffi_curator_ffi_fn_constructor_engine_new(RustBuffer adapter_dir, Ru
 RustBuffer uniffi_curator_ffi_fn_method_engine_analyze(uint64_t ptr, RustBuffer path, uint64_t listener, RustBuffer cancel, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_CATALOG_SIZE
-#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_CATALOG_SIZE
-uint64_t uniffi_curator_ffi_fn_method_engine_catalog_size(uint64_t ptr, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_CATALOG_SYSTEMS
-#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_CATALOG_SYSTEMS
-RustBuffer uniffi_curator_ffi_fn_method_engine_catalog_systems(uint64_t ptr, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_EXPORT_BUNDLE
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_EXPORT_BUNDLE
 uint64_t uniffi_curator_ffi_fn_method_engine_export_bundle(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
@@ -355,6 +345,16 @@ uint64_t uniffi_curator_ffi_fn_method_engine_export_bundle(uint64_t ptr, RustBuf
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_EXPORT_JSONL
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_EXPORT_JSONL
 uint64_t uniffi_curator_ffi_fn_method_engine_export_jsonl(uint64_t ptr, RustBuffer out_path, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LIBRARY_SIZE
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LIBRARY_SIZE
+uint64_t uniffi_curator_ffi_fn_method_engine_library_size(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LIBRARY_SYSTEMS
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LIBRARY_SYSTEMS
+RustBuffer uniffi_curator_ffi_fn_method_engine_library_systems(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LOAD_BUILD
@@ -367,9 +367,9 @@ RustBuffer uniffi_curator_ffi_fn_method_engine_load_build(uint64_t ptr, RustBuff
 RustBuffer uniffi_curator_ffi_fn_method_engine_recent_builds(uint64_t ptr, uint32_t limit, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_SEARCH_CATALOG
-#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_SEARCH_CATALOG
-RustBuffer uniffi_curator_ffi_fn_method_engine_search_catalog(uint64_t ptr, RustBuffer search, RustBuffer system, RustBuffer sort, int8_t descending, uint32_t limit, uint32_t offset, RustCallStatus *_Nonnull out_status
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_SEARCH_LIBRARY
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_SEARCH_LIBRARY
+RustBuffer uniffi_curator_ffi_fn_method_engine_search_library(uint64_t ptr, RustBuffer search, RustBuffer system, RustBuffer sort, int8_t descending, uint32_t limit, uint32_t offset, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_INIT_CALLBACK_VTABLE_PROGRESSLISTENER
@@ -655,18 +655,6 @@ uint16_t uniffi_curator_ffi_checksum_method_engine_analyze(void
     
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_CATALOG_SIZE
-#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_CATALOG_SIZE
-uint16_t uniffi_curator_ffi_checksum_method_engine_catalog_size(void
-    
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_CATALOG_SYSTEMS
-#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_CATALOG_SYSTEMS
-uint16_t uniffi_curator_ffi_checksum_method_engine_catalog_systems(void
-    
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_BUNDLE
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_BUNDLE
 uint16_t uniffi_curator_ffi_checksum_method_engine_export_bundle(void
@@ -676,6 +664,18 @@ uint16_t uniffi_curator_ffi_checksum_method_engine_export_bundle(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_JSONL
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_JSONL
 uint16_t uniffi_curator_ffi_checksum_method_engine_export_jsonl(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SIZE
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SIZE
+uint16_t uniffi_curator_ffi_checksum_method_engine_library_size(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SYSTEMS
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SYSTEMS
+uint16_t uniffi_curator_ffi_checksum_method_engine_library_systems(void
     
 );
 #endif
@@ -691,9 +691,9 @@ uint16_t uniffi_curator_ffi_checksum_method_engine_recent_builds(void
     
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_SEARCH_CATALOG
-#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_SEARCH_CATALOG
-uint16_t uniffi_curator_ffi_checksum_method_engine_search_catalog(void
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_SEARCH_LIBRARY
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_SEARCH_LIBRARY
+uint16_t uniffi_curator_ffi_checksum_method_engine_search_library(void
     
 );
 #endif

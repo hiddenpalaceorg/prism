@@ -71,9 +71,9 @@ pub struct AnalysisSummary {
     pub json: String,
 }
 
-/// Column the catalog browser sorts on.
+/// Column the library browser sorts on.
 #[derive(uniffi::Enum)]
-pub enum CatalogSort {
+pub enum LibrarySort {
     Name,
     System,
     Files,
@@ -81,21 +81,21 @@ pub enum CatalogSort {
     Date,
 }
 
-impl From<CatalogSort> for curator_core::db::CatalogSort {
-    fn from(s: CatalogSort) -> Self {
+impl From<LibrarySort> for curator_core::db::LibrarySort {
+    fn from(s: LibrarySort) -> Self {
         match s {
-            CatalogSort::Name => curator_core::db::CatalogSort::Name,
-            CatalogSort::System => curator_core::db::CatalogSort::System,
-            CatalogSort::Files => curator_core::db::CatalogSort::Files,
-            CatalogSort::Size => curator_core::db::CatalogSort::Size,
-            CatalogSort::Date => curator_core::db::CatalogSort::Date,
+            LibrarySort::Name => curator_core::db::LibrarySort::Name,
+            LibrarySort::System => curator_core::db::LibrarySort::System,
+            LibrarySort::Files => curator_core::db::LibrarySort::Files,
+            LibrarySort::Size => curator_core::db::LibrarySort::Size,
+            LibrarySort::Date => curator_core::db::LibrarySort::Date,
         }
     }
 }
 
-/// A catalog entry for the recent-builds list and the catalog browser.
+/// A library entry for the recent-builds list and the library browser.
 #[derive(uniffi::Record)]
-pub struct CatalogEntry {
+pub struct LibraryEntry {
     pub sha256: String,
     pub name: String,
     pub system: String,
@@ -125,8 +125,8 @@ fn build_summary(analysis: &Analysis) -> Result<AnalysisSummary, CuratorError> {
     })
 }
 
-fn entry_from_row(r: curator_core::db::CatalogRow) -> CatalogEntry {
-    CatalogEntry {
+fn entry_from_row(r: curator_core::db::LibraryRow) -> LibraryEntry {
+    LibraryEntry {
         sha256: r.sha256,
         name: r.name,
         system: r.system,
@@ -232,7 +232,7 @@ impl ProgressObserver for ListenerObserver {
 /// The analysis engine. Construct once; methods are thread-safe.
 #[derive(uniffi::Object)]
 pub struct Engine {
-    // The catalog holds a single rusqlite connection (Send, !Sync); a Mutex makes the
+    // The library holds a single rusqlite connection (Send, !Sync); a Mutex makes the
     // engine shareable. Analyses serialize through it, which is fine for a desktop app.
     inner: Mutex<Analyzer>,
 }
@@ -241,7 +241,7 @@ pub struct Engine {
 impl Engine {
     /// Build an engine. Supply *either* `adapter_bin` (a bundled launcher; preferred
     /// in a shipped app) *or* `adapter_dir` (a uv project, for development). `data_dir`
-    /// overrides the platform cache/catalog location.
+    /// overrides the platform cache/library location.
     #[uniffi::constructor]
     pub fn new(
         adapter_dir: Option<String>,
@@ -269,29 +269,29 @@ impl Engine {
         build_summary(&analysis)
     }
 
-    /// Number of builds in the local catalog.
-    pub fn catalog_size(&self) -> Result<u64, CuratorError> {
-        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).catalog_size()?)
+    /// Number of builds in the local library.
+    pub fn library_size(&self) -> Result<u64, CuratorError> {
+        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).library_size()?)
     }
 
     /// The most recently analyzed builds, newest first.
-    pub fn recent_builds(&self, limit: u32) -> Result<Vec<CatalogEntry>, CuratorError> {
+    pub fn recent_builds(&self, limit: u32) -> Result<Vec<LibraryEntry>, CuratorError> {
         let rows = self.inner.lock().unwrap_or_else(|e| e.into_inner()).recent_builds(limit)?;
         Ok(rows.into_iter().map(entry_from_row).collect())
     }
 
-    /// Search/browse the catalog: `search` matches name or system, `system` filters
+    /// Search/browse the library: `search` matches name or system, `system` filters
     /// to one, sorted by `sort` (descending when `descending`), paged by limit/offset.
-    pub fn search_catalog(
+    pub fn search_library(
         &self,
         search: Option<String>,
         system: Option<String>,
-        sort: CatalogSort,
+        sort: LibrarySort,
         descending: bool,
         limit: u32,
         offset: u32,
-    ) -> Result<Vec<CatalogEntry>, CuratorError> {
-        let rows = self.inner.lock().unwrap_or_else(|e| e.into_inner()).search_catalog(
+    ) -> Result<Vec<LibraryEntry>, CuratorError> {
+        let rows = self.inner.lock().unwrap_or_else(|e| e.into_inner()).search_library(
             search.as_deref(),
             system.as_deref(),
             sort.into(),
@@ -302,12 +302,12 @@ impl Engine {
         Ok(rows.into_iter().map(entry_from_row).collect())
     }
 
-    /// Distinct systems in the catalog (for the browser's filter control).
-    pub fn catalog_systems(&self) -> Result<Vec<String>, CuratorError> {
-        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).catalog_systems()?)
+    /// Distinct systems in the library (for the browser's filter control).
+    pub fn library_systems(&self) -> Result<Vec<String>, CuratorError> {
+        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).library_systems()?)
     }
 
-    /// Reload a catalogued build from cache by sha256 (no adapter run). `None` if absent.
+    /// Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
     pub fn load_build(&self, sha256: String) -> Result<Option<AnalysisSummary>, CuratorError> {
         match self.inner.lock().unwrap_or_else(|e| e.into_inner()).load_cached(&sha256)? {
             Some(analysis) => Ok(Some(build_summary(&analysis)?)),
@@ -315,7 +315,7 @@ impl Engine {
         }
     }
 
-    /// Export the catalog as JSON Lines to `out_path` (the desktop→web feed). Returns
+    /// Export the library as JSON Lines to `out_path` (the desktop→web feed). Returns
     /// the number of records written.
     pub fn export_jsonl(&self, out_path: String) -> Result<u64, CuratorError> {
         let file = std::fs::File::create(&out_path)
@@ -323,7 +323,7 @@ impl Engine {
         Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).export_jsonl(std::io::BufWriter::new(file))?)
     }
 
-    /// Export the catalog as a portable `.zip` bundle (`manifest.json` +
+    /// Export the library as a portable `.zip` bundle (`manifest.json` +
     /// `builds.jsonl`) to `out_path` — the format to copy between machines and
     /// ingest into the web service. Returns the number of records written.
     pub fn export_bundle(&self, out_path: String) -> Result<u64, CuratorError> {

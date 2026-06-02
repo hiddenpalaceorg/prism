@@ -25,7 +25,7 @@ DB="${DB:-curator}"
 PORT="${PORT:-3000}"
 DATADIR="${DATADIR:-/tmp/curator-e2e}"
 DBURL="postgres:///$DB"
-CAT="$DATADIR/catalog"                       # isolated local SQLite catalog
+CAT="$DATADIR/library"                       # isolated local SQLite library
 export CURATOR_ADAPTER_DIR="$ROOT/ps2exe-adapter"
 
 log() { printf '\n\033[1;36m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
@@ -89,7 +89,7 @@ ok "synthetic ISOs: $DATADIR/a.iso, $DATADIR/b.iso"
 log "Analyzing the synthetic pair"
 "${RUN[@]}" analyze "$DATADIR/a.iso" >/dev/null
 "${RUN[@]}" analyze "$DATADIR/b.iso" >/dev/null
-ok "2 synthetic builds cataloged"
+ok "2 synthetic builds analyzed"
 
 # ── optional: real Sonic CD lineage ────────────────────────────────────────────
 if [ "${WITH_SAMPLES:-0}" = "1" ]; then
@@ -102,13 +102,13 @@ if [ "${WITH_SAMPLES:-0}" = "1" ]; then
     printf '    analyzing %s\n' "$(basename "$f")"
     "${RUN[@]}" analyze "$f" >/dev/null
   done
-  ok "sample lineage cataloged"
+  ok "sample lineage analyzed"
 fi
 
-log "Catalog stats"; "${RUN[@]}" stats || true
+log "Library stats"; "${RUN[@]}" stats || true
 
 # ── export + ingest ─────────────────────────────────────────────────────────────
-log "Exporting catalog -> JSONL"
+log "Exporting library -> JSONL"
 "${RUN[@]}" export -o "$DATADIR/builds.jsonl"
 BUNDLE="$DATADIR/builds.jsonl"
 ok "exported $(grep -c . "$BUNDLE") builds -> $BUNDLE"
