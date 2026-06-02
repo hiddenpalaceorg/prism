@@ -16,6 +16,7 @@ import re
 import sys
 
 import blake3
+import numpy as np
 from fastcdc import fastcdc
 
 from .progress import ProgressManager
@@ -24,9 +25,24 @@ from .progress import ProgressManager
 _CDC_MIN = 16 * 1024
 _CDC_AVG = 64 * 1024
 _CDC_MAX = 256 * 1024
-# Only chunk files we can buffer in memory; larger files are whole-file hashed only.
-_CHUNK_CAP = 256 * 1024 * 1024
+# Streaming chunker flush threshold: process once the buffer comfortably exceeds one
+# max-size chunk, so every committed boundary is decided by bytes already in hand.
+# Bounds chunker memory regardless of file size (no whole-file buffering / size cap).
+_CHUNK_FLUSH = 8 * 1024 * 1024
 _HASH63 = (1 << 63) - 1
+
+# Byte-shingle resemblance — One Permutation Hashing over w-byte shingles.
+# Where exact CDC chunk hashes collapse under many small *scattered* edits, this stays
+# high: each edit only perturbs the ~w shingles spanning it. A new RawBytes component
+# (slated for the next fingerprint_profile bump); changing w/k/the hash is a re-scan.
+_SHINGLE_W = 16                          # shingle window (bytes)
+_SHINGLE_K = 128                         # OPH bins == signature length (power of two)
+_SHINGLE_MIN_SIZE = 1 * 1024 * 1024      # only signature files this big (all bins fill)
+_SHINGLE_FLUSH = 2 * 1024 * 1024         # vectorize this many buffered bytes at a time
+_SHINGLE_POLY = np.uint64(1099511628211)            # Rabin–Karp base (odd)
+_SHINGLE_BINSHIFT = np.uint64(63 - _SHINGLE_K.bit_length() + 1)  # top bits → bin index
+_U64 = np.uint64
+_MASK63_NP = np.uint64(_HASH63)
 
 # ps2exe's modules are top-level (common/, cdi/, ...); put its root on sys.path.
 _DEFAULT_PS2EXE = pathlib.Path(__file__).resolve().parents[2] / "lib" / "ps2exe"
@@ -205,9 +221,12 @@ def _hash_one(reader, f, rec, size, hbar):
     sha1 = hashlib.sha1(usedforsecurity=False)
     sha256 = hashlib.sha256()
     read = 0
-    # Buffer the file for content-defined chunking when it fits; otherwise hash only.
-    buffer_it = size is not None and size <= _CHUNK_CAP
-    buf = bytearray() if buffer_it else None
+    # Content-defined chunks, streamed so even multi-GB files are chunked
+    # without buffering them whole.
+    chunker = _StreamingChunker()
+    # Byte-shingle resemblance signature for large files only — the big blobs
+    # where scattered small edits matter; tiny files lean on their whole-file hash.
+    shingler = _ShingleSignature() if size is not None and size >= _SHINGLE_MIN_SIZE else None
     hbar.total = float(size or 0)
     hbar.count = 0.0
     hbar.update(incr=0, file_name=os.path.basename(rec["path"]))
@@ -221,8 +240,9 @@ def _hash_one(reader, f, rec, size, hbar):
                 md5.update(chunk)
                 sha1.update(chunk)
                 sha256.update(chunk)
-                if buf is not None:
-                    buf.extend(chunk)
+                chunker.update(chunk)
+                if shingler is not None:
+                    shingler.update(chunk)
                 read += len(chunk)
                 hbar.update(len(chunk))
         finally:
@@ -239,19 +259,118 @@ def _hash_one(reader, f, rec, size, hbar):
         rec["sha256"] = sha256.hexdigest()
         if size is not None and read != size:
             rec["unreadable"] = True
-        if buf is not None and read:
-            rec["chunks"] = _chunk(bytes(buf))
+        chunks = chunker.finish()
+        if chunks:
+            rec["chunks"] = chunks
+        if shingler is not None:
+            sig = shingler.finish()
+            if sig is not None:
+                rec["shingle"] = sig
     elif size:
         rec["unreadable"] = True
 
 
-def _chunk(data):
-    """Content-defined chunks as [blake3_63bit, length] pairs (Tier-3 fingerprint)."""
-    out = []
-    for c in fastcdc(data, min_size=_CDC_MIN, avg_size=_CDC_AVG, max_size=_CDC_MAX, fat=True):
-        h = int.from_bytes(blake3.blake3(c.data).digest()[:8], "little") & _HASH63
-        out.append([h, c.length])
-    return out
+def _chunk_pair(data):
+    """One content-defined chunk → [blake3_63bit, length] pair."""
+    h = int.from_bytes(blake3.blake3(data).digest()[:8], "little") & _HASH63
+    return [h, len(data)]
+
+
+class _StreamingChunker:
+    """Feed file bytes incrementally; collect content-defined [hash63, len] chunks
+    without ever holding the whole file in memory.
+
+    FastCDC's boundaries are stateless across chunks (the gear pattern resets at each
+    cut) and depend only on the <= max_size bytes following a cut. So we buffer, and
+    once the buffer holds well over one max-size chunk we run fastcdc and commit every
+    chunk *except the last* — the last may extend past the current buffer, so we defer
+    it and re-cut it together with the next bytes. The committed stream is therefore
+    byte-identical to chunking the whole file at once, but memory stays bounded.
+    """
+
+    def __init__(self):
+        self._buf = bytearray()
+        self.chunks = []
+
+    def update(self, data):
+        self._buf.extend(data)
+        if len(self._buf) >= _CHUNK_FLUSH:
+            self._flush(final=False)
+
+    def finish(self):
+        self._flush(final=True)
+        return self.chunks
+
+    def _flush(self, final):
+        if not self._buf:
+            return
+        cuts = list(
+            fastcdc(bytes(self._buf), min_size=_CDC_MIN, avg_size=_CDC_AVG, max_size=_CDC_MAX, fat=True)
+        )
+        if not cuts:
+            return
+        # Defer the trailing chunk unless this is EOF — it may still grow.
+        keep = cuts if final else cuts[:-1]
+        for c in keep:
+            self.chunks.append(_chunk_pair(c.data))
+        if final:
+            self._buf.clear()
+        else:
+            tail = cuts[-1].length
+            del self._buf[: len(self._buf) - tail]
+
+
+class _ShingleSignature:
+    """Streaming One-Permutation-Hashing resemblance signature over w-byte shingles.
+
+    Slides a w-byte window one byte at a time, hashes each window (Rabin–Karp + an
+    avalanche mix), buckets the hashes into K bins by their top bits, and keeps the
+    minimum per bin. The K-slot result is MinHash-comparable: the fraction of slots two
+    files agree on estimates the Jaccard of their shingle sets — which stays ~1.0 even
+    when edits are sprinkled across the file, because each edit only disturbs the ~w
+    shingles spanning it.
+
+    Bytes are fed incrementally and processed a buffer at a time (carrying a (w-1)-byte
+    tail so every window is hashed exactly once), so even multi-GB files are summarized
+    without being held in memory.
+    """
+
+    def __init__(self):
+        self._sig = np.full(_SHINGLE_K, _HASH63, dtype=_U64)
+        self._buf = bytearray()
+        self._any = False
+
+    def update(self, data):
+        self._buf.extend(data)
+        if len(self._buf) >= _SHINGLE_FLUSH:
+            self._flush()
+
+    def finish(self):
+        self._flush(final=True)
+        return [int(x) for x in self._sig] if self._any else None
+
+    def _flush(self, final=False):
+        buf = self._buf
+        if len(buf) >= _SHINGLE_W:
+            arr = np.frombuffer(bytes(buf), dtype=np.uint8).astype(_U64)
+            nwin = len(arr) - _SHINGLE_W + 1
+            # Horner over the window: h = b0·P^(w-1) + … + b_{w-1}  (mod 2^64).
+            h = arr[:nwin].copy()
+            for j in range(1, _SHINGLE_W):
+                h *= _SHINGLE_POLY
+                h += arr[j : j + nwin]
+            # Avalanche-mix so overlapping windows decorrelate; keep low 63 bits.
+            h ^= h >> _U64(33)
+            h *= _U64(0xFF51AFD7ED558CCD)
+            h ^= h >> _U64(33)
+            h &= _MASK63_NP
+            np.minimum.at(self._sig, (h >> _SHINGLE_BINSHIFT).astype(np.intp), h)
+            self._any = True
+        # Carry the trailing (w-1) bytes — they can't start a full window yet.
+        if final:
+            buf.clear()
+        else:
+            del buf[: len(buf) - (_SHINGLE_W - 1)]
 
 
 def analyze(path):
@@ -294,7 +413,7 @@ def analyze(path):
 
 
 def _exe_fingerprint(reader, exe_path):
-    """Tier-5: TLSH (any bytes) + imphash (PE only) of the boot executable."""
+    """Boot-exe fingerprint: TLSH (any bytes) + imphash (PE only)."""
     import tlsh
 
     target = None
@@ -343,7 +462,7 @@ def _exe_fingerprint(reader, exe_path):
 
 
 def _scan_audio_tracks(readers, mods, manager):
-    """Fingerprint raw CDDA audio tracks (Tier-4).
+    """Fingerprint raw CDDA audio tracks.
 
     Two layouts: a single combined .bin described by a .cue (Redump), or one .bin per
     track sitting beside the data track."""

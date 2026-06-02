@@ -64,7 +64,7 @@ pub struct RawExeFp {
 pub struct RawMedia {
     pub path: String,
     pub kind: String,
-    /// Acoustic sub-fingerprint set (Tier-4 audio); values < 2^53 so JSON-number safe.
+    /// Acoustic sub-fingerprint set (audio); values < 2^53 so JSON-number safe.
     #[serde(default)]
     pub audio_fp: Vec<u64>,
 }
@@ -123,10 +123,14 @@ pub struct RawFile {
     pub sha256: Option<String>,
     #[serde(default)]
     pub unreadable: bool,
-    /// FastCDC content-defined chunks as `[blake3_63bit, length]` (Tier-3). Absent for
-    /// directories and files too large to buffer.
+    /// FastCDC content-defined chunks as [blake3_63bit, length]. Absent for
+    /// directories.
     #[serde(default)]
     pub chunks: Vec<(u64, u32)>,
+    /// One-Permutation-Hashing byte-shingle signature, length SHINGLE_K. Present
+    /// only for large files; combined into the build-level resemblance signature.
+    #[serde(default)]
+    pub shingle: Vec<u64>,
 }
 
 /// Run the adapter on `path`, relaying progress to `observer`, and return its raw output.

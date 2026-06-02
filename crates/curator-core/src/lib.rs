@@ -114,7 +114,8 @@ impl Analyzer {
         let composites = fingerprint::composites(&raw.files);
         let structural = fingerprint::structural(&info.system, &raw.files);
         let text_doc = fingerprint::text_doc(&info, &raw.files);
-        let sketch = fingerprint::chunk_sketch(&raw.files);
+        let chunk_signature = fingerprint::chunk_signature(&raw.files);
+        let resemblance = fingerprint::resemblance_signature(&raw.files);
         let sidecar = fingerprint::chunk_sidecar(&raw.files);
         let contents = fingerprint::build_tree(&raw.files);
 
@@ -149,7 +150,8 @@ impl Analyzer {
                     })
                 }
             }),
-            sketch,
+            chunk_signature,
+            resemblance,
         };
 
         // 5. Render, cache, index.

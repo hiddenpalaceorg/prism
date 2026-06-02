@@ -1,6 +1,6 @@
 //! Image hashing, content composites, structural features, and tree building.
 //!
-//! Per-file content access (for chunking / media / exe fingerprints — Tiers 3–5) lives
+//! Per-file content access (for chunking, media, and exe fingerprints) lives
 //! in the adapter, where file bytes are extractable. This module covers everything
 //! derivable in Rust from the image bytes and the adapter's per-file hashes.
 
@@ -75,7 +75,7 @@ pub fn hash_image(path: &str, observer: &Arc<dyn ProgressObserver>) -> Result<Im
     })
 }
 
-/// Tier-1 content composites from the adapter's per-file sha1s.
+/// Content composites from the adapter's per-file sha1s.
 ///
 /// `content_*` is a sha256 over each file's sha1 digest, sorted by digest value, so it
 /// is independent of names, layout, order, and image container.
@@ -173,19 +173,19 @@ pub fn text_doc(info: &DiscInfo, files: &[RawFile]) -> String {
     parts.join(" ")
 }
 
-// ---- Tier-3: chunk sketch + sidecar ----
+// ---- chunk signature + sidecar ----
 
-const SKETCH_K: u32 = 128;
-const SKETCH_BASE_SEED: u64 = 0x5ec0_de5e_ed5e_ed00;
+const SIGNATURE_K: u32 = 128;
+const SIGNATURE_BASE_SEED: u64 = 0x5ec0_de5e_ed5e_ed00;
 
-/// MinHash sketch over the build's chunk multiset (Tier-3). `None` if no file was
-/// chunked. The server recomputes an IDF/size-weighted sketch from the raw chunk set;
+/// MinHash signature over the build’s chunk multiset. None if no file was
+/// chunked. The server recomputes an IDF/size-weighted signature from the raw chunks;
 /// this is the cheap desktop-side approximation.
-pub fn chunk_sketch(files: &[RawFile]) -> Option<Sketch> {
+pub fn chunk_signature(files: &[RawFile]) -> Option<Signature> {
     let mut any = false;
-    let mut mins = vec![u64::MAX; SKETCH_K as usize];
-    let seeds: Vec<u64> = (0..SKETCH_K)
-        .map(|i| splitmix(SKETCH_BASE_SEED ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)))
+    let mut mins = vec![u64::MAX; SIGNATURE_K as usize];
+    let seeds: Vec<u64> = (0..SIGNATURE_K)
+        .map(|i| splitmix(SIGNATURE_BASE_SEED ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)))
         .collect();
 
     for f in files {
@@ -203,10 +203,35 @@ pub fn chunk_sketch(files: &[RawFile]) -> Option<Sketch> {
     if !any {
         return None;
     }
-    Some(Sketch {
+    Some(Signature {
         kind: "minhash-v1".into(),
-        k: SKETCH_K,
-        seed: SKETCH_BASE_SEED,
+        k: SIGNATURE_K,
+        seed: SIGNATURE_BASE_SEED,
+        values: mins,
+    })
+}
+
+/// Build-level byte-shingle resemblance signature: the element-wise minimum of
+/// every large file’s OPH signature — exactly the OPH of the union of their
+/// shingles. None if no file had one. Unlike the chunk signature this survives many
+/// small *scattered* edits, where exact chunk hashes collapse.
+pub fn resemblance_signature(files: &[RawFile]) -> Option<Signature> {
+    let k = files.iter().find(|f| !f.shingle.is_empty()).map(|f| f.shingle.len())?;
+    let mut mins = vec![u64::MAX; k];
+    for f in files {
+        if f.shingle.len() != k {
+            continue; // skip stragglers from a mismatched profile
+        }
+        for (m, &v) in mins.iter_mut().zip(&f.shingle) {
+            if v < *m {
+                *m = v;
+            }
+        }
+    }
+    Some(Signature {
+        kind: "oph-shingle-v1".into(),
+        k: k as u32,
+        seed: 0,
         values: mins,
     })
 }
@@ -220,7 +245,7 @@ fn splitmix(x: u64) -> u64 {
 }
 
 /// Compact binary chunk sidecar (`<sha256>.chunks`): per-file `(hash64, len)` lists,
-/// retained for server-side IDF re-weighting and Tier-4 diff.
+/// retained for server-side IDF re-weighting and media diff.
 ///
 /// Layout (LE): magic "CCK1", u32 file_count, then per file:
 /// u16 path_len, path bytes, u32 n_chunks, n_chunks × (u64 hash, u32 len).
@@ -324,6 +349,7 @@ mod tests {
             sha256: None,
             unreadable: false,
             chunks: vec![],
+            shingle: vec![],
         }
     }
 
@@ -338,6 +364,7 @@ mod tests {
             sha256: None,
             unreadable: false,
             chunks: vec![],
+            shingle: vec![],
         }
     }
 
@@ -404,16 +431,30 @@ mod tests {
     }
 
     #[test]
-    fn chunk_sketch_is_deterministic_and_setlike() {
+    fn chunk_signature_is_deterministic_and_setlike() {
         let mut a = file("/A", A);
         a.chunks = vec![(1, 10), (2, 20), (3, 30)];
         let mut b = file("/elsewhere", B);
         b.chunks = vec![(3, 30), (2, 20), (1, 10)]; // same chunk set, different order/name
-        let sa = chunk_sketch(&[a]).unwrap();
-        let sb = chunk_sketch(&[b]).unwrap();
+        let sa = chunk_signature(&[a]).unwrap();
+        let sb = chunk_signature(&[b]).unwrap();
         assert_eq!(sa.values, sb.values); // MinHash depends only on the chunk set
         assert_eq!(sa.k as usize, sa.values.len());
-        assert!(chunk_sketch(&[file("/no-chunks", C)]).is_none());
+        assert!(chunk_signature(&[file("/no-chunks", C)]).is_none());
+    }
+
+    #[test]
+    fn resemblance_signature_is_elementwise_min_over_files() {
+        let mut a = file("/big_a", A);
+        a.shingle = vec![5, 9, 2, 8];
+        let mut b = file("/big_b", B);
+        b.shingle = vec![3, 9, 7, 1];
+        let small = file("/small", C); // no shingle → ignored
+        let s = resemblance_signature(&[a, small, b]).unwrap();
+        assert_eq!(s.kind, "oph-shingle-v1");
+        assert_eq!(s.k, 4);
+        assert_eq!(s.values, vec![3, 9, 2, 1]); // per-slot min of the two files
+        assert!(resemblance_signature(&[file("/none", A)]).is_none());
     }
 
     #[test]

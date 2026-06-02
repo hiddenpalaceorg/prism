@@ -1,23 +1,33 @@
-import { Fragment } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
-import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
-import { getBuild, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities } from "@/lib/queries";
-import type { BuildRecord } from "@/lib/types";
-import SimilarBuilds from "./SimilarBuilds";
-import FileTree from "./FileTree";
+import { getBuild, findSimilar, findByEmbedding } from "@/lib/queries";
+import { embed, toPgVector } from "@/lib/embed";
+import type { Node } from "@/lib/types";
 
 export const runtime = "nodejs";
-// The corpus only changes at ingest; render once and serve cached for an hour
-// (the moderation accept endpoint revalidates the affected paths immediately).
-// The empty generateStaticParams is load-bearing: without it a dynamic route
-// is rendered per-request and `revalidate` never engages — with it, pages are
-// ISR-cached on first visit and refreshed in the background.
-export const revalidate = 3600;
-export function generateStaticParams(): Array<{ sha256: string }> {
-  return [];
+export const dynamic = "force-dynamic";
+
+interface FlatFile {
+  path: string;
+  size?: number;
+  sha1?: string;
+  dir: boolean;
+}
+
+function flatten(nodes: Node[], prefix = ""): FlatFile[] {
+  const out: FlatFile[] = [];
+  for (const n of nodes) {
+    const path = `${prefix}/${n.name}`.replace(/\/+/g, "/");
+    if (n.type === "dir") {
+      out.push({ path, dir: true });
+      out.push(...flatten(n.children, path));
+    } else {
+      out.push({ path, dir: false, size: n.size, sha1: n.sha1 });
+    }
+  }
+  return out;
 }
 
 function humanSize(bytes?: number): string {
@@ -32,54 +42,11 @@ function humanSize(bytes?: number): string {
   return i === 0 ? `${bytes} B` : `${v.toFixed(1)} ${units[i]}`;
 }
 
-function titleize(k: string): string {
-  return k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-// Light touch-up: turn YYYYMMDD date fields into YYYY-MM-DD; leave everything else as-is.
-function formatMetaValue(key: string, value: string): string {
-  if (/date/i.test(key)) {
-    const m = value.match(/^(\d{4})(\d{2})(\d{2})$/);
-    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  }
-  return value;
-}
-
-interface MetaSection {
-  title: string;
-  entries: [string, string][];
-}
-
-// Flatten the canonical record's metadata into display sections, generically — so any
-// info/structural field (present-day or future) is shown without per-system special-casing.
-function metaSections(record: BuildRecord): MetaSection[] {
-  const sections: MetaSection[] = [];
-  const info = (record.info ?? {}) as Record<string, unknown>;
-
-  // Scalar info fields (disc_type, system_identifier, …); `system` is already a header chip.
-  const disc: [string, string][] = [];
-  for (const [k, v] of Object.entries(info)) {
-    if (v == null || k === "system" || typeof v === "object") continue;
-    disc.push([k, String(v)]);
-  }
-  if (disc.length) sections.push({ title: "Disc", entries: disc });
-
-  // Nested info objects: header, volume, exe, …
-  for (const [k, v] of Object.entries(info)) {
-    if (!v || typeof v !== "object") continue;
-    const entries = Object.entries(v as Record<string, unknown>)
-      .filter(([, vv]) => vv != null && vv !== "")
-      .map(([kk, vv]) => [kk, String(vv)] as [string, string]);
-    if (entries.length) sections.push({ title: titleize(k), entries });
-  }
-
-  // Composites: surface the incomplete-file count when present.
-  const c = record.composites;
-  if (c && typeof c.incomplete_files === "number") {
-    sections.push({ title: "Composites", entries: [["incomplete_files", String(c.incomplete_files)]] });
-  }
-
-  return sections;
+interface Neighbor {
+  sha256: string;
+  name: string;
+  system: string;
+  score?: string;
 }
 
 export default async function BuildPage({ params }: { params: Promise<{ sha256: string }> }) {
@@ -89,36 +56,33 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
   if (!build) notFound();
 
   const q = deriveQueryFeatures(build.record);
-  // Pull a wide candidate set per tier so the fused top-50 is well-populated.
-  // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const [similar, textNeighbors] = await Promise.all([
-    findSimilar(pool, q, 100),
-    findByEmbeddingOf(pool, sha256, 100),
-  ]);
-  const fused = fuseSimilar(similar, textNeighbors);
+  const similar = await findSimilar(pool, q);
+  const textNeighbors = build.record.text_doc
+    ? await findByEmbedding(pool, toPgVector(await embed(build.record.text_doc)), sha256)
+    : [];
 
-  // A tier only counts when both builds have its data — attach each build's capabilities
-  // (and the query build's) so the fusion can drop inapplicable tiers from the denominator.
-  const caps = await getCapabilities(pool, [sha256, ...fused.map((f) => f.sha256)]);
-  const queryCaps = caps.get(sha256) ?? [];
-  for (const f of fused) f.caps = caps.get(f.sha256) ?? [];
+  const sections: { title: string; items: Neighbor[] }[] = [
+    { title: "Identical content (Tier 1)", items: similar.tier1_twins.map((x) => ({ ...x })) },
+    { title: "Shared files (Tier 2)", items: similar.tier2.map((x) => ({ ...x, score: `${Math.round((x.jaccard ?? 0) * 100)}%` })) },
+    { title: "Similar chunks (Tier 3)", items: similar.tier3.map((x) => ({ ...x, score: `${Math.round((x.jaccard ?? 0) * 100)}%` })) },
+    { title: "Same boot imports (Tier 5)", items: similar.tier5_exe.map((x) => ({ ...x })) },
+    { title: "Similar executable (TLSH)", items: similar.tier5_tlsh.map((x) => ({ ...x, score: `d=${x.distance}` })) },
+    { title: "Shared audio tracks", items: similar.audio_neighbors.map((x) => ({ ...x, score: `${x.matched_tracks} tracks` })) },
+    { title: "Semantically related (text)", items: textNeighbors.map((x) => ({ sha256: x.sha256, name: x.name, system: x.system, score: x.cosine == null ? undefined : x.cosine.toFixed(2) })) },
+  ].filter((s) => s.items.length > 0);
 
-  // Ship only the initially-visible subtree; FileTree lazily fetches the rest.
-  const tree = buildTree(build.record.contents);
-  const expanded = initialExpanded(tree);
-  const counts = treeCounts(tree);
-  const meta = metaSections(build.record);
-  const filteredContentHash = build.record.composites?.filtered_content_hash;
+  const files = flatten(build.record.contents);
+  const dirCount = files.filter((f) => f.dir).length;
 
   return (
-    <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
-      <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
+    <main className="mx-auto max-w-4xl px-6 py-10">
+      <Link href="/" className="text-sm text-neutral-500 hover:underline">&larr; Search</Link>
 
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">
         {build.record.info?.title as string | undefined ?? build.name}
       </h1>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
-        <Chip>{build.system || "unknown"}</Chip>
+        <Chip>{build.system}</Chip>
         <Chip>{build.file_count} files</Chip>
         <Chip>{humanSize(build.total_size)}</Chip>
         <Chip>profile {build.fingerprint_profile}</Chip>
@@ -128,40 +92,53 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
         <Hash label="SHA-256" value={build.sha256} />
         <Hash label="SHA-1" value={build.sha1} />
         <Hash label="MD5" value={build.md5} />
-        <Hash label="Content hash" value={build.content_hash ?? "—"} />
-        {filteredContentHash && filteredContentHash !== build.content_hash && (
-          <Hash label="Filtered content hash" value={filteredContentHash} />
-        )}
+        <dt className="text-neutral-500">Content hash</dt>
+        <dd className="font-mono text-xs">{build.content_hash.slice(0, 32)}…</dd>
       </dl>
 
-      {meta.length > 0 && (
+      {sections.length > 0 && (
         <section className="mt-8">
-          <h2 className="text-lg font-medium">Metadata</h2>
-          <div className="mt-3 grid gap-x-12 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
-            {meta.map((sec) => (
-              <div key={sec.title}>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{sec.title}</h3>
-                <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
-                  {sec.entries.map(([k, v]) => (
-                    <Fragment key={k}>
-                      <dt className="text-neutral-500">{titleize(k)}</dt>
-                      <dd className="break-all">{formatMetaValue(k, v)}</dd>
-                    </Fragment>
+          <h2 className="text-lg font-medium">Similar builds</h2>
+          <div className="mt-3 space-y-5">
+            {sections.map((s) => (
+              <div key={s.title}>
+                <p className="mb-1 text-xs uppercase tracking-wide text-neutral-400">{s.title}</p>
+                <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                  {s.items.map((n) => (
+                    <li key={n.sha256} className="flex items-center justify-between py-2">
+                      <Link href={`/build/${n.sha256}`} className="hover:underline">
+                        {n.name}
+                      </Link>
+                      <span className="flex gap-3 text-xs text-neutral-500">
+                        <Chip>{n.system}</Chip>
+                        {n.score && <span className="font-mono">{n.score}</span>}
+                      </span>
+                    </li>
                   ))}
-                </dl>
+                </ul>
               </div>
             ))}
           </div>
         </section>
       )}
 
-      <SimilarBuilds builds={fused} queryCaps={queryCaps} />
-
       <section className="mt-8">
         <h2 className="text-lg font-medium">
-          Files <span className="text-sm font-normal text-neutral-400">({counts.files} files, {counts.dirs} dirs)</span>
+          Files <span className="text-sm font-normal text-neutral-400">({files.length - dirCount} files, {dirCount} dirs)</span>
         </h2>
-        <FileTree sha256={sha256} roots={pruneToExpanded(tree, expanded)} initiallyExpanded={[...expanded]} />
+        <ul className="mt-3 max-h-[28rem] overflow-auto rounded-md border border-neutral-200 text-sm dark:border-neutral-800">
+          {files.slice(0, 2000).map((f, i) => (
+            <li key={i} className="flex items-center justify-between border-b border-neutral-100 px-3 py-1 last:border-0 dark:border-neutral-900">
+              <span className={`font-mono ${f.dir ? "text-neutral-400" : ""}`}>
+                {f.dir ? "📁" : "📄"} {f.path}
+              </span>
+              {!f.dir && <span className="text-xs text-neutral-400">{humanSize(f.size)}</span>}
+            </li>
+          ))}
+        </ul>
+        {files.length > 2000 && (
+          <p className="mt-1 text-xs text-neutral-400">Showing first 2000 of {files.length} entries.</p>
+        )}
       </section>
     </main>
   );
