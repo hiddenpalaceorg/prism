@@ -64,11 +64,14 @@ impl Analyzer {
         Ok(Analyzer { cache, db, adapter: config.adapter, data_dir })
     }
 
-    /// Open a second connection to the same library DB for reads — for a GUI's
-    /// library browser, so its queries run concurrently with an in-progress import
-    /// (which holds the writer) instead of blocking on it. See WAL in [`Db::open`].
-    pub fn open_reader(&self) -> Result<Db> {
-        Db::open(&self.data_dir)
+    /// Open a lock-free read side of the library (a second DB connection + the record
+    /// cache) — for a GUI's browser, so queries *and* opening a build run concurrently
+    /// with an in-progress import (which holds the writer). See WAL in [`Db::open`].
+    pub fn open_reader(&self) -> Result<Reader> {
+        Ok(Reader {
+            db: Db::open(&self.data_dir)?,
+            cache: Cache::open(Some(&self.data_dir))?,
+        })
     }
 
     /// Analyze one image/container. Idempotent: a known sha256 is served from cache.
@@ -312,6 +315,51 @@ fn looks_importable(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
         Some(ext) => !NON_DISC_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()),
         None => true, // extensionless files (e.g. a bare track) are worth a try
+    }
+}
+
+/// Lock-free read side of the library: a second DB connection plus the on-disk record
+/// cache. A GUI holds one so browsing and opening builds keep working while an import
+/// holds the writer. Built by [`Analyzer::open_reader`].
+pub struct Reader {
+    db: Db,
+    cache: Cache,
+}
+
+impl Reader {
+    /// Search/browse the library — see [`Analyzer::search_library`].
+    pub fn search_builds(
+        &self,
+        search: Option<&str>,
+        system: Option<&str>,
+        sort: db::LibrarySort,
+        desc: bool,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<db::LibraryRow>> {
+        self.db.search_builds(search, system, sort, desc, limit, offset)
+    }
+
+    /// Distinct systems present in the library.
+    pub fn list_systems(&self) -> Result<Vec<String>> {
+        self.db.list_systems()
+    }
+
+    /// Most recently analyzed builds, newest first.
+    pub fn list_recent(&self, limit: u32) -> Result<Vec<db::LibraryRow>> {
+        self.db.list_recent(limit)
+    }
+
+    /// Load a build from the record cache by sha256 (no writer lock, no adapter run).
+    pub fn load_cached(&self, sha256: &str) -> Result<Option<Analysis>> {
+        match self.cache.load(sha256)? {
+            Some(record) => Ok(Some(Analysis {
+                record,
+                from_cache: true,
+                json_path: self.cache.json_path(sha256),
+            })),
+            None => Ok(None),
+        }
     }
 }
 
