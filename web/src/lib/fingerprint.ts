@@ -141,6 +141,39 @@ function signatureBands(sk?: Signature | null): { minhash: string[]; bands: stri
   return { minhash: mh.map(String), bands: lshBands(mh).map(String) };
 }
 
+/**
+ * The text fed to the semantic-embedding tier. NOT `text_doc`: that is the
+ * disc's title plus *every filename*, which buries the 1-3 meaningful title
+ * tokens under 60+ structural filename tokens — so unrelated discs that merely
+ * share a file layout (.BIN/.ROM/...) embed close together. We embed the build's
+ * *identity* instead: the curated Redump/No-Intro name (clean, region-tagged, and
+ * present for every build — even PS1 discs with no header title, or ones whose
+ * header title decoded to mojibake) plus any printable internal/SFO title that
+ * adds signal. File structure is already covered by the fileset/chunk tiers, and
+ * text_doc still backs the keyword/FTS search path.
+ */
+export function semanticDoc(rec: BuildRecord): string {
+  const info = (rec.info ?? {}) as Record<string, unknown>;
+  const header = (info.header ?? {}) as Record<string, unknown>;
+  const sfo = (info.sfo ?? {}) as Record<string, unknown>;
+  const parts: string[] = [];
+  const add = (x: unknown) => {
+    if (typeof x === "string" && x.trim()) parts.push(x.trim());
+  };
+  // A title is usable only if it survives as real printable text (≥2 ASCII
+  // chars) — this drops empties and mojibake like Silpheed's "\x...\x..." title.
+  const printable = (x: unknown) =>
+    typeof x === "string" && x.replace(/[^\x20-\x7e]/g, "").trim().length >= 2;
+
+  add((rec.image?.name ?? "").replace(/\.[^.]+$/, ""));
+  if (printable(header.title)) add(header.title);
+  if (printable(sfo.title)) add(sfo.title);
+  if (printable(sfo.category)) add(sfo.category);
+  // Never embed an empty string; fall back to the old doc if we somehow have no
+  // name and no usable title.
+  return parts.join(" ") || (rec.text_doc ?? "");
+}
+
 /** Derive the query features the similarity endpoint needs from a BuildRecord. */
 export function deriveQueryFeatures(rec: BuildRecord): QueryFeatures {
   const files = flattenFiles(rec.contents);

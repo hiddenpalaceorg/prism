@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
-import { deriveQueryFeatures } from "@/lib/fingerprint";
+import { deriveQueryFeatures, semanticDoc } from "@/lib/fingerprint";
 import { findSimilar, findByEmbedding, logCheck } from "@/lib/queries";
 import { embed, toPgVector } from "@/lib/embed";
 import { MAX_BODY_BYTES, validateBuildRecord } from "@/lib/validate";
@@ -38,10 +38,12 @@ export async function POST(request: NextRequest) {
     await logCheck(pool, q.sha256);
     const result = await findSimilar(pool, q);
 
-    // Text: semantic neighbors via the text embedding.
+    // Text: semantic neighbors via the text embedding (build identity, not the
+    // filename-heavy text_doc — must match what the ingester embedded).
     let text_neighbors: Awaited<ReturnType<typeof findByEmbedding>> = [];
-    if (record.text_doc) {
-      const vec = toPgVector(await embed(record.text_doc));
+    const sdoc = semanticDoc(record);
+    if (sdoc) {
+      const vec = toPgVector(await embed(sdoc));
       text_neighbors = await findByEmbedding(pool, vec, q.sha256 ?? "");
     }
 

@@ -3,7 +3,7 @@
 // bulk CLI ingester (scripts/ingest.ts) and the moderation accept endpoint.
 
 import type { Pool } from "pg";
-import { hexToId63, toSigned64, lshBands, flattenFiles, arrayLit, parseU64 } from "./fingerprint";
+import { hexToId63, toSigned64, lshBands, flattenFiles, arrayLit, parseU64, semanticDoc } from "./fingerprint";
 import { embed, toPgVector } from "./embed";
 import type { BuildRecord } from "./types";
 
@@ -49,9 +49,11 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
      JSON.stringify(st.ext_histogram ?? {}), rec.text_doc ?? "", rec.fingerprint_profile, rec]
   );
 
-  // Text embedding from the text doc.
-  if (rec.text_doc) {
-    const vec = toPgVector(await embed(rec.text_doc));
+  // Semantic embedding from the build's identity (see semanticDoc), not the
+  // filename-heavy text_doc. text_doc is still stored above for keyword/FTS.
+  const sdoc = semanticDoc(rec);
+  if (sdoc) {
+    const vec = toPgVector(await embed(sdoc));
     await db.query("UPDATE builds SET text_embedding=$1::vector WHERE sha256=$2", [vec, sha]);
   }
 
