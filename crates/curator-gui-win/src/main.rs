@@ -101,6 +101,7 @@ mod app {
     const WM_APP_PROGRESS: u32 = WM_APP + 1;
     const WM_APP_DONE: u32 = WM_APP + 2;
     const WM_APP_SERVICE: u32 = WM_APP + 3; // similarity / submit result (boxed String)
+    const WM_APP_IMPORT_DONE: u32 = WM_APP + 4; // batch folder-import summary (boxed String)
 
     const STATUS_H: i32 = 22;
     const PROGRESS_H: i32 = 16;
@@ -311,6 +312,10 @@ mod app {
                     on_service_result(hwnd, lparam);
                     LRESULT(0)
                 }
+                WM_APP_IMPORT_DONE => {
+                    on_import_done(hwnd, lparam);
+                    LRESULT(0)
+                }
                 WM_DROPFILES => {
                     on_drop(hwnd, wparam);
                     LRESULT(0)
@@ -475,7 +480,7 @@ mod app {
         let file = CreatePopupMenu().unwrap_or_default();
         let recent = CreatePopupMenu().unwrap_or_default();
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN, w!("&Open Image…\tCtrl+O"));
-        let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_FOLDER, w!("Open &Folder…"));
+        let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_FOLDER, w!("&Import Folder (recursive)…"));
         let _ = AppendMenuW(file, MF_POPUP, recent.0 as usize, w!("Open &Recent"));
         let _ = AppendMenuW(file, MF_STRING, IDM_BROWSE, w!("&Browse Library…\tCtrl+B"));
         let _ = AppendMenuW(file, MF_SEPARATOR, 0, PCWSTR::null());
@@ -533,8 +538,8 @@ mod app {
                 }
             }
             IDM_OPEN_FOLDER => {
-                if let Some(path) = pick_folder(hwnd) {
-                    start_analysis(hwnd, path);
+                if let Some(dir) = pick_folder(hwnd) {
+                    start_import(hwnd, expand_inputs(vec![dir]));
                 }
             }
             IDM_CANCEL => {
@@ -971,15 +976,151 @@ mod app {
         }
     }
 
-    /// WM_DROPFILES: analyze the first dropped path.
+    /// WM_DROPFILES: analyze a single dropped file, or batch-import when multiple
+    /// items (or a folder) are dropped.
     unsafe fn on_drop(hwnd: HWND, wparam: WPARAM) {
         let hdrop = HDROP(wparam.0 as *mut core::ffi::c_void);
-        let mut buf = [0u16; 1024];
-        let n = DragQueryFileW(hdrop, 0, Some(&mut buf));
-        DragFinish(hdrop);
-        if n > 0 {
-            start_analysis(hwnd, String::from_utf16_lossy(&buf[..n as usize]));
+        let count = DragQueryFileW(hdrop, u32::MAX, None);
+        let mut paths = Vec::new();
+        for i in 0..count {
+            let mut buf = [0u16; 1024];
+            let n = DragQueryFileW(hdrop, i, Some(&mut buf));
+            if n > 0 {
+                paths.push(String::from_utf16_lossy(&buf[..n as usize]));
+            }
         }
+        DragFinish(hdrop);
+
+        let files = expand_inputs(paths);
+        match files.len() {
+            0 => set_status(hwnd, "Nothing to import."),
+            1 => start_analysis(hwnd, files.into_iter().next().unwrap()),
+            _ => start_import(hwnd, files),
+        }
+    }
+
+    /// Expand dropped/selected paths to a flat file list: directories are walked
+    /// recursively; plain files pass through. Order is deterministic.
+    fn expand_inputs(paths: Vec<String>) -> Vec<String> {
+        let mut out = Vec::new();
+        for p in paths {
+            let path = std::path::Path::new(&p);
+            if path.is_dir() {
+                for f in curator_core::list_files_recursive(path) {
+                    out.push(f.to_string_lossy().into_owned());
+                }
+            } else if path.is_file() {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    /// Batch-import a flat list of files: analyze each, skipping any that don't parse.
+    /// Runs on a worker thread with per-item batch progress and cooperative cancel.
+    unsafe fn start_import(hwnd: HWND, files: Vec<String>) {
+        let Some(st) = state(hwnd) else { return };
+        if st.working {
+            return;
+        }
+        if files.is_empty() {
+            set_status(hwnd, "No files found to import.");
+            return;
+        }
+        st.working = true;
+        st.cancel.store(false, Ordering::SeqCst);
+        st.totals.clear();
+        st.events.lock().unwrap().clear();
+        let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM(0), LPARAM(0));
+        set_status(hwnd, &format!("Importing {} files…", files.len()));
+
+        let events = st.events.clone();
+        let cancel = st.cancel.clone();
+        let analyzer = st.analyzer.clone();
+        let adapter = st.adapter.clone();
+        let data_dir = st.data_dir.clone();
+        let hwnd_i = hwnd.0 as isize;
+
+        std::thread::spawn(move || {
+            let total = files.len() as u64;
+            let mut guard = analyzer.lock().unwrap();
+            if guard.is_none() {
+                match Analyzer::new(Config { adapter, data_dir }) {
+                    Ok(a) => *guard = Some(a),
+                    Err(e) => {
+                        post_import_done(hwnd_i, format!("Import failed: {e}"));
+                        return;
+                    }
+                }
+            }
+            let analyzer_ref = guard.as_ref().unwrap();
+            let (mut imported, mut skipped, mut cancelled) = (0u64, 0u64, false);
+            for (i, path) in files.iter().enumerate() {
+                if cancel.load(Ordering::SeqCst) {
+                    cancelled = true;
+                    break;
+                }
+                // "Item i/N: name" status line; the per-file hashing bar follows.
+                events
+                    .lock()
+                    .unwrap()
+                    .push_back(UiEvent::Batch { index: i as u64, total, name: path.clone() });
+                let _ = PostMessageW(
+                    HWND(hwnd_i as *mut core::ffi::c_void),
+                    WM_APP_PROGRESS,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+                let obs: Arc<dyn ProgressObserver> =
+                    Arc::new(WinObserver { hwnd: hwnd_i, events: events.clone(), cancel: cancel.clone() });
+                match analyzer_ref.analyze(path, obs) {
+                    Ok(_) => imported += 1,
+                    Err(curator_core::Error::Cancelled) => {
+                        cancelled = true;
+                        break;
+                    }
+                    Err(_) => skipped += 1, // unsupported/unreadable — skip and continue
+                }
+            }
+            let summary = if cancelled {
+                format!("Import cancelled — {imported} imported, {skipped} skipped.")
+            } else {
+                format!("Imported {imported}, skipped {skipped} unsupported.")
+            };
+            post_import_done(hwnd_i, summary);
+        });
+    }
+
+    fn post_import_done(hwnd_i: isize, summary: String) {
+        let ptr = Box::into_raw(Box::new(summary));
+        // SAFETY: matches the `Box<String>` `on_import_done` reclaims; if the window
+        // is gone the post fails and we take the allocation back to avoid a leak.
+        unsafe {
+            if PostMessageW(
+                HWND(hwnd_i as *mut core::ffi::c_void),
+                WM_APP_IMPORT_DONE,
+                WPARAM(0),
+                LPARAM(ptr as isize),
+            )
+            .is_err()
+            {
+                drop(Box::from_raw(ptr));
+            }
+        }
+    }
+
+    unsafe fn on_import_done(hwnd: HWND, lparam: LPARAM) {
+        let ptr = lparam.0 as *mut String;
+        if ptr.is_null() {
+            return;
+        }
+        let summary = *Box::from_raw(ptr);
+        if let Some(st) = state(hwnd) {
+            st.working = false;
+            let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM(0), LPARAM(0));
+        }
+        set_status(hwnd, &summary);
+        refresh_recent(hwnd);
     }
 
     /// Subclass proc on the panes: forward dropped files to the main window.

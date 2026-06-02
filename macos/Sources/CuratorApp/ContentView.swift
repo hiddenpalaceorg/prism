@@ -25,7 +25,7 @@ struct ContentView: View {
                     Task { @MainActor in model.reportDropFailure("Couldn't resolve the dropped item as a file.") }
                     return
                 }
-                Task { @MainActor in model.analyze(url: url) }
+                Task { @MainActor in model.open(url: url) }
             }
             return true
         }

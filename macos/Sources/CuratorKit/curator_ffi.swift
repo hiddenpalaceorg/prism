@@ -729,6 +729,12 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func librarySystems() throws  -> [String]
     
     /**
+     * Recursively list every file under `root`, sorted. Used by folder import:
+     * the UI walks the tree, then calls `analyze` on each and skips non-discs.
+     */
+    func listFiles(root: String) throws  -> [String]
+    
+    /**
      * Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
      */
     func loadBuild(sha256: String) throws  -> AnalysisSummary?
@@ -876,6 +882,19 @@ open func librarySystems()throws  -> [String]  {
     return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
     uniffi_curator_ffi_fn_method_engine_library_systems(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Recursively list every file under `root`, sorted. Used by folder import:
+     * the UI walks the tree, then calls `analyze` on each and skips non-discs.
+     */
+open func listFiles(root: String)throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+    uniffi_curator_ffi_fn_method_engine_list_files(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(root),$0
     )
 })
 }
@@ -1903,6 +1922,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_library_systems() != 32687) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_curator_ffi_checksum_method_engine_list_files() != 6362) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_load_build() != 6979) {

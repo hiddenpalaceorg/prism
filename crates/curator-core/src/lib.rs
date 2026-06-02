@@ -272,6 +272,60 @@ impl Analyzer {
     }
 }
 
+/// Recursively collect every regular file under `root`, depth-first, sorted for a
+/// deterministic order. Symlinks are skipped (avoids cycles). Unreadable directories
+/// are silently skipped. Backs the GUIs' folder import, which then tries to analyze
+/// each file and skips those that don't parse.
+pub fn list_files_recursive(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            match entry.file_type() {
+                Ok(ft) if ft.is_dir() => stack.push(entry.path()),
+                Ok(ft) if ft.is_file() => out.push(entry.path()),
+                _ => {} // symlinks / specials: skip
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::list_files_recursive;
+
+    #[test]
+    fn recurses_files_skips_dirs_and_is_sorted() {
+        let root = std::env::temp_dir().join(format!("curator-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub/deep")).unwrap();
+        std::fs::write(root.join("b.iso"), b"x").unwrap();
+        std::fs::write(root.join("a.zip"), b"x").unwrap();
+        std::fs::write(root.join("sub/c.bin"), b"x").unwrap();
+        std::fs::write(root.join("sub/deep/d.cue"), b"x").unwrap();
+
+        let files = list_files_recursive(&root);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/"))
+            .collect();
+        // Every regular file, no directories, deterministic (sorted) order.
+        assert_eq!(rel, ["a.zip", "b.iso", "sub/c.bin", "sub/deep/d.cue"]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_root_yields_empty() {
+        let root = std::env::temp_dir().join("curator-walk-nope-zzz");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(list_files_recursive(&root).is_empty());
+    }
+}
+
 /// A `Write` that tees everything into a SHA-256 hasher on its way to `inner`.
 struct HashingWriter<'a, W: Write> {
     inner: &'a mut W,
