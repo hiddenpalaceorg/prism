@@ -307,6 +307,15 @@ impl Engine {
         Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).library_systems()?)
     }
 
+    /// Recursively list every file under `root`, sorted. Used by folder import:
+    /// the UI walks the tree, then calls `analyze` on each and skips non-discs.
+    pub fn list_files(&self, root: String) -> Result<Vec<String>, CuratorError> {
+        Ok(curator_core::list_files_recursive(std::path::Path::new(&root))
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect())
+    }
+
     /// Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
     pub fn load_build(&self, sha256: String) -> Result<Option<AnalysisSummary>, CuratorError> {
         match self.inner.lock().unwrap_or_else(|e| e.into_inner()).load_cached(&sha256)? {

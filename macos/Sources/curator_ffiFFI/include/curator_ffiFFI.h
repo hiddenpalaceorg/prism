@@ -357,6 +357,11 @@ uint64_t uniffi_curator_ffi_fn_method_engine_library_size(uint64_t ptr, RustCall
 RustBuffer uniffi_curator_ffi_fn_method_engine_library_systems(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LIST_FILES
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LIST_FILES
+RustBuffer uniffi_curator_ffi_fn_method_engine_list_files(uint64_t ptr, RustBuffer root, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LOAD_BUILD
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_LOAD_BUILD
 RustBuffer uniffi_curator_ffi_fn_method_engine_load_build(uint64_t ptr, RustBuffer sha256, RustCallStatus *_Nonnull out_status
@@ -676,6 +681,12 @@ uint16_t uniffi_curator_ffi_checksum_method_engine_library_size(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SYSTEMS
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SYSTEMS
 uint16_t uniffi_curator_ffi_checksum_method_engine_library_systems(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIST_FILES
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIST_FILES
+uint16_t uniffi_curator_ffi_checksum_method_engine_list_files(void
     
 );
 #endif

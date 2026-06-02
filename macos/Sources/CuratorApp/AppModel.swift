@@ -287,9 +287,81 @@ final class AppModel: ObservableObject {
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Analyze"
+        panel.prompt = "Open"
         if panel.runModal() == .OK, let url = panel.url {
+            open(url: url)
+        }
+    }
+
+    /// Analyze a single file, or recursively import a dropped/chosen folder.
+    func open(url: URL) {
+        var isDir: ObjCBool = false
+        FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        if isDir.boolValue {
+            importFolder(url: url)
+        } else {
             analyze(url: url)
+        }
+    }
+
+    /// Recursively import every file under `url`: analyze each, skipping any that
+    /// don't parse as a disc. Runs off the main actor with per-item progress.
+    func importFolder(url: URL) {
+        guard !isWorking else { return }
+        isWorking = true
+        errorMessage = nil
+        counters = []
+        status = "Scanning \(url.lastPathComponent)…"
+        let cancel = CancelHandle()
+        cancelHandle = cancel
+        let forwarder = ProgressForwarder { [weak self] update in
+            Task { @MainActor in self?.apply(update) }
+        }
+        let root = url.path
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                let engine = try await MainActor.run { try self.makeEngine() }
+                let files = (try? engine.listFiles(root: root)) ?? []
+                var imported = 0, skipped = 0, cancelled = false
+                for (i, path) in files.enumerated() {
+                    if cancel.isCancelled() { cancelled = true; break }
+                    await MainActor.run {
+                        self.status = "Importing \(i + 1)/\(files.count): \((path as NSString).lastPathComponent)"
+                    }
+                    do {
+                        _ = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<AnalysisSummary, Error>) in
+                            self.analysisQueue.async {
+                                do { cont.resume(returning: try engine.analyze(path: path, listener: forwarder, cancel: cancel)) }
+                                catch { cont.resume(throwing: error) }
+                            }
+                        }
+                        imported += 1
+                    } catch CuratorError.Cancelled {
+                        cancelled = true
+                        break
+                    } catch {
+                        skipped += 1 // unsupported/unreadable — skip and continue
+                    }
+                }
+                let summary = cancelled
+                    ? "Import cancelled — \(imported) imported, \(skipped) skipped."
+                    : "Imported \(imported), skipped \(skipped) unsupported."
+                await MainActor.run {
+                    self.isWorking = false
+                    self.counters = []
+                    self.status = summary
+                    self.loadLibraryAtLaunch() // refresh systems + results
+                }
+            } catch {
+                await MainActor.run {
+                    self.isWorking = false
+                    self.status = "Import failed."
+                    self.errorMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                    self.showingError = true
+                }
+            }
         }
     }
 
