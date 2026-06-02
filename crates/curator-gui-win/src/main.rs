@@ -29,6 +29,7 @@ mod app {
     use std::sync::{Arc, Mutex};
 
     use curator_core::adapter::AdapterCommand;
+    use curator_core::db::CatalogSort;
     use curator_core::{render, Analyzer, BuildRecord, Config, Event, Node, ProgressObserver};
 
     use windows::core::{w, PCWSTR, PWSTR, Result};
@@ -53,7 +54,8 @@ mod app {
         LVCF_WIDTH, LVIF_GROUPID, LVIF_TEXT, LVM_DELETEALLITEMS, LVM_ENABLEGROUPVIEW,
         LVM_GETITEMTEXTW, LVM_INSERTCOLUMNW, LVM_INSERTGROUP, LVM_INSERTITEMW, LVM_REMOVEALLGROUPS,
         LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMW, LVS_EX_DOUBLEBUFFER,
-        LVS_EX_FULLROWSELECT, LVS_EX_LABELTIP, LVS_NOCOLUMNHEADER, LVS_REPORT, NMHDR, NMITEMACTIVATE,
+        LVS_EX_FULLROWSELECT, LVS_EX_LABELTIP, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SINGLESEL,
+        LVN_COLUMNCLICK, NMHDR, NMITEMACTIVATE, NMLISTVIEW,
         NMTREEVIEWW, NM_DBLCLK, PBM_SETPOS, PBM_SETRANGE32, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0,
         TVITEMW, TVIF_PARAM, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM, TVM_INSERTITEMW,
         TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
@@ -75,6 +77,7 @@ mod app {
     const IDM_VIEW_XML: usize = 8;
     const IDM_VIEW_JSON: usize = 9;
     const IDM_EXPORT: usize = 10;
+    const IDM_BROWSE: usize = 11;
     const IDM_RECENT_BASE: usize = 2000;
     const MAX_RECENT: u32 = 15;
 
@@ -474,6 +477,7 @@ mod app {
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN, w!("&Open Image…\tCtrl+O"));
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_FOLDER, w!("Open &Folder…"));
         let _ = AppendMenuW(file, MF_POPUP, recent.0 as usize, w!("Open &Recent"));
+        let _ = AppendMenuW(file, MF_STRING, IDM_BROWSE, w!("&Browse Catalog…\tCtrl+B"));
         let _ = AppendMenuW(file, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(file, MF_STRING, IDM_EXPORT, w!("&Export Catalog for Upload…"));
         let _ = AppendMenuW(file, MF_SEPARATOR, 0, PCWSTR::null());
@@ -540,6 +544,7 @@ mod app {
                 }
             }
             IDM_EXPORT => export_catalog(hwnd),
+            IDM_BROWSE => browse_catalog_cmd(hwnd),
             IDM_SIMILAR => find_similar(hwnd),
             IDM_SUBMIT => submit_build(hwnd),
             IDM_VIEW_OVERVIEW => set_view(hwnd, DocView::Overview),
@@ -931,15 +936,26 @@ mod app {
 
     /// Reopen a catalogued build from cache (no re-analysis).
     unsafe fn open_recent(hwnd: HWND, idx: usize) {
+        let sha = {
+            let Some(st) = state(hwnd) else { return };
+            st.recent.get(idx).cloned()
+        };
+        if let Some(sha) = sha {
+            open_sha256(hwnd, &sha);
+        }
+    }
+
+    /// Load a catalogued build from cache by sha256 and display it (no re-analysis).
+    /// Shared by the Recent menu and the catalog browser.
+    unsafe fn open_sha256(hwnd: HWND, sha: &str) {
         // A single `&mut AppState`, scoped so it is dropped before `display_build` (which
         // re-derives its own &mut); holding two simultaneously would be aliasing UB.
         let loaded = {
             let Some(st) = state(hwnd) else { return };
-            let Some(sha) = st.recent.get(idx).cloned() else { return };
             if st.working || !ensure_analyzer(st) {
                 return;
             }
-            st.analyzer.lock().unwrap().as_ref().and_then(|a| a.load_cached(&sha).ok().flatten())
+            st.analyzer.lock().unwrap().as_ref().and_then(|a| a.load_cached(sha).ok().flatten())
         };
         match loaded {
             Some(analysis) => {
@@ -1807,6 +1823,332 @@ mod app {
         let mut buf = vec![0u16; len as usize + 1];
         let n = GetWindowTextW(edit, &mut buf);
         String::from_utf16_lossy(&buf[..n as usize])
+    }
+
+    // ---- catalog browser (modal: search + sortable list of every analyzed build) ----
+
+    const IDC_BROWSE_SEARCH: usize = 200;
+    const IDC_BROWSE_COMBO: usize = 201;
+    const IDC_BROWSE_LIST: usize = 202;
+
+    /// State for the modal browser window (UI thread only).
+    struct BrowseState {
+        analyzer: Arc<Mutex<Option<Analyzer>>>,
+        search: HWND,
+        combo: HWND,
+        list: HWND,
+        /// sha256 backing each ListView row, by index.
+        rows: Vec<String>,
+        /// Systems shown in the filter combo (combo index 0 = "All systems").
+        systems: Vec<String>,
+        sort: CatalogSort,
+        desc: bool,
+        result: Option<String>,
+        done: bool,
+    }
+
+    /// File ▸ Browse Catalog. Opens the modal browser; if the user picks a build,
+    /// loads it from cache into the main window.
+    unsafe fn browse_catalog_cmd(hwnd: HWND) {
+        let analyzer = {
+            let Some(st) = state(hwnd) else { return };
+            if st.working {
+                set_status(hwnd, "Busy — wait for the current analysis to finish.");
+                return;
+            }
+            if !ensure_analyzer(st) {
+                set_status(hwnd, "Catalog unavailable.");
+                return;
+            }
+            st.analyzer.clone()
+        };
+        if let Some(sha) = browse_catalog(hwnd, analyzer) {
+            open_sha256(hwnd, &sha);
+        }
+    }
+
+    /// Run the modal browser; returns the chosen build's sha256, if any.
+    unsafe fn browse_catalog(owner: HWND, analyzer: Arc<Mutex<Option<Analyzer>>>) -> Option<String> {
+        let hinstance = GetModuleHandleW(None).ok()?;
+        let class = w!("CuratorBrowse");
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(browse_proc),
+            hInstance: hinstance.into(),
+            lpszClassName: class,
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hbrBackground: HBRUSH(6 as *mut core::ffi::c_void), // COLOR_WINDOW + 1
+            ..Default::default()
+        };
+        RegisterClassW(&wc); // idempotent enough for a one-window app
+
+        let systems = analyzer
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|a| a.catalog_systems().ok())
+            .unwrap_or_default();
+
+        let mut bs = BrowseState {
+            analyzer,
+            search: HWND::default(),
+            combo: HWND::default(),
+            list: HWND::default(),
+            rows: Vec::new(),
+            systems,
+            sort: CatalogSort::Date,
+            desc: true,
+            result: None,
+            done: false,
+        };
+
+        let dlg = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            class,
+            w!("Browse Catalog"),
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            760,
+            500,
+            owner,
+            None,
+            hinstance,
+            Some(&mut bs as *mut BrowseState as *const core::ffi::c_void),
+        )
+        .ok()?;
+
+        let _ = EnableWindow(owner, false);
+        let mut msg = MSG::default();
+        while !bs.done && GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            if !IsDialogMessageW(dlg, &msg).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        let _ = EnableWindow(owner, true);
+        let _ = SetForegroundWindow(owner);
+        let _ = DestroyWindow(dlg);
+        bs.result.take()
+    }
+
+    unsafe fn browse_add_columns(list: HWND) {
+        for (idx, title, cx) in [
+            (0i32, w!("Title"), 320i32),
+            (1, w!("System"), 120),
+            (2, w!("Files"), 70),
+            (3, w!("Size"), 90),
+            (4, w!("Analyzed"), 110),
+        ] {
+            let mut col = LVCOLUMNW::default();
+            col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+            col.fmt = LVCFMT_LEFT;
+            col.cx = cx;
+            col.iSubItem = idx;
+            col.pszText = PWSTR(title.as_ptr() as *mut u16);
+            let _ = SendMessageW(list, LVM_INSERTCOLUMNW, WPARAM(idx as usize), LPARAM(&col as *const _ as isize));
+        }
+    }
+
+    /// Re-run the catalog query for the current search/filter/sort and repopulate.
+    unsafe fn browse_refresh(bs_ptr: *mut BrowseState) {
+        let Some(bs) = bs_ptr.as_mut() else { return };
+        let query = read_edit_text(bs.search);
+        let query = query.trim();
+        let sel = SendMessageW(bs.combo, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0;
+        let system = if sel <= 0 { None } else { bs.systems.get((sel - 1) as usize).map(|s| s.as_str()) };
+        let rows = bs
+            .analyzer
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|a| {
+                a.search_catalog(
+                    if query.is_empty() { None } else { Some(query) },
+                    system,
+                    bs.sort,
+                    bs.desc,
+                    10_000,
+                    0,
+                )
+                .ok()
+            })
+            .unwrap_or_default();
+
+        let _ = SendMessageW(bs.list, LVM_DELETEALLITEMS, WPARAM(0), LPARAM(0));
+        bs.rows.clear();
+        for (i, r) in rows.iter().enumerate() {
+            browse_insert_row(bs.list, i as i32, r);
+            bs.rows.push(r.sha256.clone());
+        }
+    }
+
+    unsafe fn browse_insert_row(list: HWND, i: i32, r: &curator_core::db::CatalogRow) {
+        let cells = [
+            r.name.clone(),
+            r.system.clone(),
+            r.file_count.to_string(),
+            human_size(r.total_size),
+            fmt_date(r.analyzed_at),
+        ];
+        let mut name_w = wide(&cells[0]);
+        let mut item = LVITEMW::default();
+        item.mask = LVIF_TEXT;
+        item.iItem = i;
+        item.iSubItem = 0;
+        item.pszText = PWSTR(name_w.as_mut_ptr());
+        let inserted =
+            SendMessageW(list, LVM_INSERTITEMW, WPARAM(0), LPARAM(&item as *const _ as isize)).0 as i32;
+        for sub in 1..cells.len() {
+            let mut cw = wide(&cells[sub]);
+            let mut s = LVITEMW::default();
+            s.mask = LVIF_TEXT;
+            s.iItem = inserted;
+            s.iSubItem = sub as i32;
+            s.pszText = PWSTR(cw.as_mut_ptr());
+            let _ = SendMessageW(list, LVM_SETITEMW, WPARAM(0), LPARAM(&s as *const _ as isize));
+        }
+    }
+
+    /// Unix seconds → `YYYY-MM-DD` (UTC). Empty when out of range.
+    fn fmt_date(secs: i64) -> String {
+        chrono::DateTime::from_timestamp(secs, 0)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default()
+    }
+
+    extern "system" fn browse_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        unsafe {
+            match msg {
+                WM_CREATE => {
+                    let cs = lparam.0 as *const CREATESTRUCTW;
+                    let bs_ptr = (*cs).lpCreateParams as *mut BrowseState;
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, bs_ptr as isize);
+                    let hinst = (*cs).hInstance;
+
+                    let search = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("EDIT"),
+                        PCWSTR::null(),
+                        WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+                        0, 0, 0, 0, hwnd,
+                        HMENU(IDC_BROWSE_SEARCH as *mut core::ffi::c_void), hinst, None,
+                    )
+                    .unwrap_or_default();
+                    let combo = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("COMBOBOX"),
+                        PCWSTR::null(),
+                        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+                        0, 0, 0, 0, hwnd,
+                        HMENU(IDC_BROWSE_COMBO as *mut core::ffi::c_void), hinst, None,
+                    )
+                    .unwrap_or_default();
+                    let list = CreateWindowExW(
+                        WINDOW_EX_STYLE(0),
+                        w!("SysListView32"),
+                        PCWSTR::null(),
+                        WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE((LVS_REPORT | LVS_SINGLESEL) as u32),
+                        0, 0, 0, 0, hwnd,
+                        HMENU(IDC_BROWSE_LIST as *mut core::ffi::c_void), hinst, None,
+                    )
+                    .unwrap_or_default();
+                    let _ = SendMessageW(
+                        list,
+                        LVM_SETEXTENDEDLISTVIEWSTYLE,
+                        WPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as usize),
+                        LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as isize),
+                    );
+                    browse_add_columns(list);
+                    let font = GetStockObject(DEFAULT_GUI_FONT);
+                    for h in [search, combo, list] {
+                        SendMessageW(h, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+                    }
+
+                    if let Some(bs) = bs_ptr.as_mut() {
+                        bs.search = search;
+                        bs.combo = combo;
+                        bs.list = list;
+                        let mut all = wide("All systems");
+                        let _ = SendMessageW(combo, CB_ADDSTRING, WPARAM(0), LPARAM(all.as_mut_ptr() as isize));
+                        for s in &bs.systems {
+                            let mut sw = wide(s);
+                            let _ = SendMessageW(combo, CB_ADDSTRING, WPARAM(0), LPARAM(sw.as_mut_ptr() as isize));
+                        }
+                        let _ = SendMessageW(combo, CB_SETCURSEL, WPARAM(0), LPARAM(0));
+                    }
+                    browse_refresh(bs_ptr);
+                    LRESULT(0)
+                }
+                WM_SIZE => {
+                    let bs_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut BrowseState;
+                    if let Some(bs) = bs_ptr.as_ref() {
+                        let w = (lparam.0 & 0xffff) as i32;
+                        let h = ((lparam.0 >> 16) & 0xffff) as i32;
+                        let (pad, top_h, combo_w) = (8i32, 24i32, 200i32);
+                        let _ = MoveWindow(bs.search, pad, pad, (w - combo_w - pad * 3).max(80), top_h, true);
+                        let _ = MoveWindow(bs.combo, w - combo_w - pad, pad, combo_w, 240, true);
+                        let list_y = pad + top_h + pad;
+                        let _ = MoveWindow(bs.list, pad, list_y, (w - pad * 2).max(0), (h - list_y - pad).max(0), true);
+                    }
+                    LRESULT(0)
+                }
+                WM_COMMAND => {
+                    let id = (wparam.0 & 0xffff) as usize;
+                    let code = ((wparam.0 >> 16) & 0xffff) as u32;
+                    let bs_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut BrowseState;
+                    if (id == IDC_BROWSE_SEARCH && code == EN_CHANGE)
+                        || (id == IDC_BROWSE_COMBO && code == CBN_SELCHANGE)
+                    {
+                        browse_refresh(bs_ptr);
+                    }
+                    LRESULT(0)
+                }
+                WM_NOTIFY => {
+                    let nmhdr = &*(lparam.0 as *const NMHDR);
+                    let bs_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut BrowseState;
+                    let mut refresh = false;
+                    if let Some(bs) = bs_ptr.as_mut() {
+                        if nmhdr.hwndFrom == bs.list && nmhdr.code == NM_DBLCLK as u32 {
+                            let nia = &*(lparam.0 as *const NMITEMACTIVATE);
+                            if nia.iItem >= 0 {
+                                if let Some(sha) = bs.rows.get(nia.iItem as usize).cloned() {
+                                    bs.result = Some(sha);
+                                    bs.done = true;
+                                }
+                            }
+                        } else if nmhdr.hwndFrom == bs.list && nmhdr.code == LVN_COLUMNCLICK as u32 {
+                            let nlv = &*(lparam.0 as *const NMLISTVIEW);
+                            let col = match nlv.iSubItem {
+                                0 => CatalogSort::Name,
+                                1 => CatalogSort::System,
+                                2 => CatalogSort::Files,
+                                3 => CatalogSort::Size,
+                                _ => CatalogSort::Date,
+                            };
+                            if bs.sort == col {
+                                bs.desc = !bs.desc;
+                            } else {
+                                bs.sort = col;
+                                bs.desc = !matches!(col, CatalogSort::Name | CatalogSort::System);
+                            }
+                            refresh = true;
+                        }
+                    }
+                    if refresh {
+                        browse_refresh(bs_ptr);
+                    }
+                    LRESULT(0)
+                }
+                WM_CLOSE => {
+                    let bs_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut BrowseState;
+                    if let Some(bs) = bs_ptr.as_mut() {
+                        bs.done = true;
+                    }
+                    LRESULT(0)
+                }
+                _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+            }
+        }
     }
 
     /// Bridges core progress to the UI thread: queues an event and pokes the window.

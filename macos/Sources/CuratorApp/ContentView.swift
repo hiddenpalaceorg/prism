@@ -12,7 +12,7 @@ struct ContentView: View {
         } detail: {
             DetailView()
         }
-        .onAppear { model.loadRecentAtLaunch() }
+        .onAppear { model.loadCatalogAtLaunch() }
         .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
             guard !model.isWorking, let provider = providers.first else { return false }
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
@@ -109,39 +109,146 @@ struct SidebarView: View {
                         }
                     }
                 }
-            } else if !model.recent.isEmpty {
-                RecentList()
             } else {
                 ContentUnavailableViewCompat(
                     title: "No image loaded",
                     systemImage: "opticaldisc",
-                    message: "Open — or drag in — a disc image, container, or folder."
+                    message: "Browse the catalog on the right, or open — or drag in — a disc image, container, or folder."
                 )
             }
         }
     }
 }
 
-struct RecentList: View {
+// MARK: - Catalog browser (searchable + sortable list of every analyzed build)
+
+/// Fixed column widths shared by the header and rows so they line up. The title
+/// column flexes to fill the rest.
+private enum CatalogCol {
+    static let system: CGFloat = 130
+    static let files: CGFloat = 64
+    static let size: CGFloat = 88
+    static let date: CGFloat = 130
+}
+
+struct CatalogBrowser: View {
     @EnvironmentObject var model: AppModel
+
+    private var filtering: Bool { !model.catalogSearch.isEmpty || !model.catalogSystemFilter.isEmpty }
+
     var body: some View {
-        List {
-            Section("Recent builds") {
-                ForEach(model.recent, id: \.sha256) { e in
-                    Button { model.openRecent(sha256: e.sha256) } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(e.name).lineLimit(1)
-                            Text("\(e.system) · \(e.fileCount) files · \(humanSize(e.totalSize))")
-                                .font(.caption).foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search title or system", text: $model.catalogSearch)
+                    .textFieldStyle(.plain)
+                    .onChange(of: model.catalogSearch) { _ in model.refreshCatalog() }
+                Divider().frame(height: 16)
+                Picker("", selection: $model.catalogSystemFilter) {
+                    Text("All systems").tag("")
+                    ForEach(model.catalogSystems, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 180)
+                .onChange(of: model.catalogSystemFilter) { _ in model.refreshCatalog() }
+            }
+            .padding(8)
+            Divider()
+            CatalogHeader()
+            Divider()
+            if model.catalogResults.isEmpty {
+                Spacer()
+                ContentUnavailableViewCompat(
+                    title: filtering ? "No matches" : "Catalog is empty",
+                    systemImage: "tray",
+                    message: filtering
+                        ? "Try a different search or system filter."
+                        : "Analyze or import discs to populate the catalog."
+                )
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(model.catalogResults, id: \.sha256) { e in
+                            Button { model.openRecent(sha256: e.sha256) } label: {
+                                CatalogRow(entry: e)
+                            }
+                            .buttonStyle(.plain)
+                            Divider()
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                 }
             }
+            HStack {
+                Text("\(model.catalogResults.count) build\(model.catalogResults.count == 1 ? "" : "s")")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.vertical, 4)
         }
+        .onAppear { model.loadCatalogAtLaunch() }
     }
+}
+
+struct CatalogHeader: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            sortButton("Title", .name).frame(maxWidth: .infinity, alignment: .leading)
+            sortButton("System", .system).frame(width: CatalogCol.system, alignment: .leading)
+            sortButton("Files", .files).frame(width: CatalogCol.files, alignment: .trailing)
+            sortButton("Size", .size).frame(width: CatalogCol.size, alignment: .trailing)
+            sortButton("Analyzed", .date).frame(width: CatalogCol.date, alignment: .trailing)
+        }
+        .font(.caption.bold())
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12).padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private func sortButton(_ label: String, _ column: CatalogSort) -> some View {
+        Button { model.sortCatalog(by: column) } label: {
+            HStack(spacing: 2) {
+                Text(label)
+                if model.catalogSort == column {
+                    Image(systemName: model.catalogSortDescending ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct CatalogRow: View {
+    let entry: CatalogEntry
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(entry.name).lineLimit(1).truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(entry.system).foregroundStyle(.secondary)
+                .frame(width: CatalogCol.system, alignment: .leading)
+            Text("\(entry.fileCount)").foregroundStyle(.secondary).monospacedDigit()
+                .frame(width: CatalogCol.files, alignment: .trailing)
+            Text(humanSize(entry.totalSize)).foregroundStyle(.secondary).monospacedDigit()
+                .frame(width: CatalogCol.size, alignment: .trailing)
+            Text(relativeDate(entry.analyzedAt)).foregroundStyle(.secondary)
+                .frame(width: CatalogCol.date, alignment: .trailing)
+        }
+        .lineLimit(1)
+        .padding(.horizontal, 12).padding(.vertical, 5)
+        .contentShape(Rectangle())
+    }
+}
+
+/// Unix seconds → a short relative string like "3d ago".
+func relativeDate(_ unix: Int64) -> String {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter.localizedString(for: Date(timeIntervalSince1970: TimeInterval(unix)), relativeTo: Date())
 }
 
 // MARK: - Detail pane
@@ -170,11 +277,7 @@ struct DetailView: View {
                 }
                 .padding(.top, 6)
             } else {
-                ContentUnavailableViewCompat(
-                    title: "Curator",
-                    systemImage: "opticaldisc",
-                    message: model.errorMessage ?? "Analysis details appear here."
-                )
+                CatalogBrowser()
             }
         }
     }

@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 curator-core = { path = "../curator-core" }
 serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Embeds a Common-Controls v6 manifest (build.rs) so ListView groups and modern visual
 # styles work. Cross-toolchain (MSVC + GNU), no external resource compiler needed.

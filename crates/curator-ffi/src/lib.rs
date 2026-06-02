@@ -71,7 +71,29 @@ pub struct AnalysisSummary {
     pub json: String,
 }
 
-/// A catalog entry for the recent-builds list.
+/// Column the catalog browser sorts on.
+#[derive(uniffi::Enum)]
+pub enum CatalogSort {
+    Name,
+    System,
+    Files,
+    Size,
+    Date,
+}
+
+impl From<CatalogSort> for curator_core::db::CatalogSort {
+    fn from(s: CatalogSort) -> Self {
+        match s {
+            CatalogSort::Name => curator_core::db::CatalogSort::Name,
+            CatalogSort::System => curator_core::db::CatalogSort::System,
+            CatalogSort::Files => curator_core::db::CatalogSort::Files,
+            CatalogSort::Size => curator_core::db::CatalogSort::Size,
+            CatalogSort::Date => curator_core::db::CatalogSort::Date,
+        }
+    }
+}
+
+/// A catalog entry for the recent-builds list and the catalog browser.
 #[derive(uniffi::Record)]
 pub struct CatalogEntry {
     pub sha256: String,
@@ -101,6 +123,17 @@ fn build_summary(analysis: &Analysis) -> Result<AnalysisSummary, CuratorError> {
         xml,
         json,
     })
+}
+
+fn entry_from_row(r: curator_core::db::CatalogRow) -> CatalogEntry {
+    CatalogEntry {
+        sha256: r.sha256,
+        name: r.name,
+        system: r.system,
+        file_count: r.file_count,
+        total_size: r.total_size,
+        analyzed_at: r.analyzed_at,
+    }
 }
 
 fn node_to_ffi(node: &Node) -> FileNode {
@@ -244,17 +277,34 @@ impl Engine {
     /// The most recently analyzed builds, newest first.
     pub fn recent_builds(&self, limit: u32) -> Result<Vec<CatalogEntry>, CuratorError> {
         let rows = self.inner.lock().unwrap_or_else(|e| e.into_inner()).recent_builds(limit)?;
-        Ok(rows
-            .into_iter()
-            .map(|r| CatalogEntry {
-                sha256: r.sha256,
-                name: r.name,
-                system: r.system,
-                file_count: r.file_count,
-                total_size: r.total_size,
-                analyzed_at: r.analyzed_at,
-            })
-            .collect())
+        Ok(rows.into_iter().map(entry_from_row).collect())
+    }
+
+    /// Search/browse the catalog: `search` matches name or system, `system` filters
+    /// to one, sorted by `sort` (descending when `descending`), paged by limit/offset.
+    pub fn search_catalog(
+        &self,
+        search: Option<String>,
+        system: Option<String>,
+        sort: CatalogSort,
+        descending: bool,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<CatalogEntry>, CuratorError> {
+        let rows = self.inner.lock().unwrap_or_else(|e| e.into_inner()).search_catalog(
+            search.as_deref(),
+            system.as_deref(),
+            sort.into(),
+            descending,
+            limit,
+            offset,
+        )?;
+        Ok(rows.into_iter().map(entry_from_row).collect())
+    }
+
+    /// Distinct systems in the catalog (for the browser's filter control).
+    pub fn catalog_systems(&self) -> Result<Vec<String>, CuratorError> {
+        Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).catalog_systems()?)
     }
 
     /// Reload a catalogued build from cache by sha256 (no adapter run). `None` if absent.
