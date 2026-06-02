@@ -790,7 +790,12 @@ mod app {
         while let Some(ev) = queue.pop_front() {
             match ev {
                 UiEvent::Batch { index, total, name } => {
-                    st.import_base = format!("Importing {} of {}: {}", index + 1, total, name);
+                    // Show just the file name, not the full path.
+                    let file = std::path::Path::new(&name)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or(name);
+                    st.import_base = format!("Importing {} of {}: {}", index + 1, total, file);
                     set_status(hwnd, &st.import_base);
                 }
                 UiEvent::Open { id, label, total } => {
