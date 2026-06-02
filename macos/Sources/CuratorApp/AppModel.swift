@@ -68,6 +68,16 @@ final class AppModel: ObservableObject {
     @Published var catalogCount: UInt64 = 0
     @Published var recent: [CatalogEntry] = []
 
+    // Catalog browser (searchable + sortable list of every analyzed build).
+    @Published var catalogResults: [CatalogEntry] = []
+    @Published var catalogSearch = ""
+    @Published var catalogSystemFilter = ""        // "" = all systems
+    @Published var catalogSystems: [String] = []
+    @Published var catalogSort: CatalogSort = .date
+    @Published var catalogSortDescending = true
+    /// Upper bound on rows pulled into the browser at once.
+    private let catalogPageLimit: UInt32 = 10_000
+
     // Web service (read-only similarity + submit).
     @Published var similarity: SimilarityResponse?
     @Published var isQuerying = false
@@ -113,6 +123,40 @@ final class AppModel: ObservableObject {
     func refreshCatalogCount() {
         catalogCount = (try? engine?.catalogSize()) ?? catalogCount
         recent = (try? engine?.recentBuilds(limit: 25)) ?? recent
+    }
+
+    /// Build the engine, then load the systems filter + current result page.
+    /// Safe to call repeatedly (e.g. each time the browser appears).
+    func loadCatalogAtLaunch() {
+        guard (try? makeEngine()) != nil else { return }
+        catalogSystems = (try? engine?.catalogSystems()) ?? catalogSystems
+        refreshCatalog()
+    }
+
+    /// Re-run the catalog query for the current search / filter / sort.
+    func refreshCatalog() {
+        guard let e = try? makeEngine() else { return }
+        let q = catalogSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        catalogResults = (try? e.searchCatalog(
+            search: q.isEmpty ? nil : q,
+            system: catalogSystemFilter.isEmpty ? nil : catalogSystemFilter,
+            sort: catalogSort,
+            descending: catalogSortDescending,
+            limit: catalogPageLimit,
+            offset: 0
+        )) ?? []
+    }
+
+    /// Header click: same column flips direction; a new column resets to a sensible
+    /// default (text ascending, counts/dates descending).
+    func sortCatalog(by column: CatalogSort) {
+        if catalogSort == column {
+            catalogSortDescending.toggle()
+        } else {
+            catalogSort = column
+            catalogSortDescending = !(column == .name || column == .system)
+        }
+        refreshCatalog()
     }
 
     /// Populate the recent list at launch (builds the engine lazily).

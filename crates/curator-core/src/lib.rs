@@ -175,6 +175,25 @@ impl Analyzer {
         self.db.list_recent(limit)
     }
 
+    /// Search/browse the catalog (name+system substring, optional system filter,
+    /// sortable, paged). Backs the catalog browser in the GUIs.
+    pub fn search_catalog(
+        &self,
+        search: Option<&str>,
+        system: Option<&str>,
+        sort: db::CatalogSort,
+        desc: bool,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<db::CatalogRow>> {
+        self.db.search_builds(search, system, sort, desc, limit, offset)
+    }
+
+    /// Distinct systems in the catalog (for the browser's filter control).
+    pub fn catalog_systems(&self) -> Result<Vec<String>> {
+        self.db.list_systems()
+    }
+
     /// Reload a previously analyzed build from the sha256 cache (no adapter run).
     pub fn load_cached(&self, sha256: &str) -> Result<Option<Analysis>> {
         match self.cache.load(sha256)? {
