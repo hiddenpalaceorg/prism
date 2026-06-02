@@ -85,19 +85,48 @@ async function main() {
     connectionString: process.env.DATABASE_URL || "postgres:///curator_test",
   });
   let n = 0;
+  let lineNo = 0;
+  const failures: { line: number; sha?: string; name?: string; error: string }[] = [];
   try {
     const { lines, done } = openRecords(bundle);
     const rl = readline.createInterface({ input: lines, crlfDelay: Infinity });
     for await (const line of rl) {
+      lineNo++;
       if (!line.trim()) continue;
-      await ingestRecordTx(pool, JSON.parse(line) as BuildRecord);
-      n++;
+      // Isolate each record: ingestRecordTx is its own transaction (rolled back
+      // on error), so a single malformed/unstorable build is logged and skipped
+      // rather than aborting the whole import and stranding later records.
+      let rec: BuildRecord;
+      try {
+        rec = JSON.parse(line) as BuildRecord;
+      } catch (e) {
+        failures.push({ line: lineNo, error: `JSON parse: ${(e as Error).message}` });
+        continue;
+      }
+      try {
+        await ingestRecordTx(pool, rec);
+        n++;
+      } catch (e) {
+        failures.push({
+          line: lineNo,
+          sha: rec.image?.sha256,
+          name: rec.image?.name,
+          error: (e as Error).message,
+        });
+      }
     }
     await done;
   } finally {
     await pool.end();
   }
   console.log(`ingested ${n} builds`);
+  if (failures.length) {
+    console.error(`\n${failures.length} record(s) failed and were skipped:`);
+    for (const f of failures) {
+      console.error(`  line ${f.line}${f.name ? ` (${f.name})` : ""}: ${f.error}`);
+    }
+    process.exitCode = 1;
+  }
 }
 
 main().catch((e) => {

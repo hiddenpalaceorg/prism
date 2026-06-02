@@ -12,7 +12,29 @@ export interface Queryable {
   query(text: string, params?: unknown[]): Promise<unknown>;
 }
 
+// Postgres text/jsonb cannot store a literal NUL (U+0000), so a disc-header
+// field that smuggled one through (see the adapter's _nullify) would otherwise
+// abort the whole INSERT. Strip NUL from every string in the record — in the
+// columns we extract and in the `record` jsonb we store verbatim — before it
+// reaches the DB. Minimal on purpose: NUL is the only byte Postgres rejects, so
+// we leave all other text untouched and don't second-guess the adapter.
+function stripNulls<T>(value: T): T {
+  if (typeof value === "string") {
+    return (value.includes("\u0000") ? value.replace(/\u0000/g, "") : value) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map(stripNulls) as T;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = stripNulls(v);
+    return out as T;
+  }
+  return value;
+}
+
 export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<void> {
+  rec = stripNulls(rec);
   const sha = rec.image.sha256;
   const st = rec.structural;
   const comp = rec.composites;

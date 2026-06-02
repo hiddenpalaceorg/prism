@@ -88,9 +88,17 @@ def _clean_path(p):
     return "/" + "/".join(parts)
 
 
+# Fixed-width disc-header fields are NUL/garbage-padded: ps2exe decodes the
+# whole field, so trailing (or embedded) control bytes ride along. Strip C0
+# controls and DEL — they carry no meaning here and a literal NUL cannot even
+# be stored in the downstream Postgres jsonb/text columns.
+_CONTROL_CHARS = {c: None for c in range(0x20)}
+_CONTROL_CHARS[0x7F] = None
+
+
 def _nullify(v):
     if isinstance(v, str):
-        v = v.strip()
+        v = v.translate(_CONTROL_CHARS).strip()
         return v or None
     return v
 
