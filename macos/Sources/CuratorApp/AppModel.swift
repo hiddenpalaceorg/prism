@@ -87,6 +87,8 @@ final class AppModel: ObservableObject {
     private let service = CuratorService()
     private var engine: Engine?
     private var cancelHandle: CancelHandle?
+    /// True during a recursive folder import — see `apply(_:)` for why.
+    private var isImporting = false
     /// Dedicated queue for the blocking synchronous FFI `analyze` call, so it
     /// doesn't occupy a Swift-concurrency cooperative-pool thread.
     private let analysisQueue = DispatchQueue(label: "curator.analysis")
@@ -309,6 +311,7 @@ final class AppModel: ObservableObject {
     func importFolder(url: URL) {
         guard !isWorking else { return }
         isWorking = true
+        isImporting = true
         errorMessage = nil
         counters = []
         summary = nil // show the (live-updating) library browser while importing
@@ -356,6 +359,7 @@ final class AppModel: ObservableObject {
                     : "Imported \(imported), skipped \(skipped) unsupported."
                 await MainActor.run {
                     self.isWorking = false
+                    self.isImporting = false
                     self.counters = []
                     self.status = summary
                     self.loadLibraryAtLaunch() // refresh systems + results
@@ -363,6 +367,7 @@ final class AppModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.isWorking = false
+                    self.isImporting = false
                     self.status = "Import failed."
                     self.errorMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
                     self.showingError = true
@@ -432,7 +437,9 @@ final class AppModel: ObservableObject {
         case let .close(id):
             counters.removeAll { $0.id == id }
         case let .message(text):
-            status = text
+            // During a batch import, keep the "Importing i/N" line (counters still
+            // show per-file hashing); a single analyze surfaces the message.
+            if !isImporting { status = text }
         }
     }
 
