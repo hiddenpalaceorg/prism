@@ -42,7 +42,10 @@ mod app {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
-    use windows::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW};
+    use windows::Win32::UI::Controls::Dialogs::{
+        GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT,
+        OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    };
     use windows::Win32::UI::Controls::{
         InitCommonControlsEx, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_PROGRESS_CLASS,
         ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCOLUMNW, LVGA_HEADER_LEFT,
@@ -71,6 +74,7 @@ mod app {
     const IDM_VIEW_OVERVIEW: usize = 7;
     const IDM_VIEW_XML: usize = 8;
     const IDM_VIEW_JSON: usize = 9;
+    const IDM_EXPORT: usize = 10;
     const IDM_RECENT_BASE: usize = 2000;
     const MAX_RECENT: u32 = 15;
 
@@ -471,6 +475,8 @@ mod app {
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_FOLDER, w!("Open &Folder…"));
         let _ = AppendMenuW(file, MF_POPUP, recent.0 as usize, w!("Open &Recent"));
         let _ = AppendMenuW(file, MF_SEPARATOR, 0, PCWSTR::null());
+        let _ = AppendMenuW(file, MF_STRING, IDM_EXPORT, w!("&Export Catalog for Upload…"));
+        let _ = AppendMenuW(file, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(file, MF_STRING, IDM_EXIT, w!("E&xit"));
         let analysis = CreatePopupMenu().unwrap_or_default();
         let _ = AppendMenuW(analysis, MF_STRING, IDM_CANCEL, w!("&Cancel"));
@@ -533,6 +539,7 @@ mod app {
                     set_status(hwnd, "Cancelling…");
                 }
             }
+            IDM_EXPORT => export_catalog(hwnd),
             IDM_SIMILAR => find_similar(hwnd),
             IDM_SUBMIT => submit_build(hwnd),
             IDM_VIEW_OVERVIEW => set_view(hwnd, DocView::Overview),
@@ -585,6 +592,31 @@ mod app {
         CoTaskMemFree(Some(pidl as *const core::ffi::c_void));
         if ok {
             Some(String::from_utf16_lossy(&path).trim_end_matches('\0').to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Save-As dialog for the export bundle. Defaults to `collection.curator.zip`
+    /// and appends `.zip` if the user omits an extension.
+    unsafe fn pick_save_file(hwnd: HWND) -> Option<String> {
+        let mut buf = [0u16; 1024];
+        for (i, c) in "collection.curator.zip".encode_utf16().enumerate() {
+            buf[i] = c;
+        }
+        let mut ofn = OPENFILENAMEW {
+            lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+            hwndOwner: hwnd,
+            lpstrFile: PWSTR(buf.as_mut_ptr()),
+            nMaxFile: buf.len() as u32,
+            lpstrFilter: w!("Curator bundle (*.zip)\0*.zip\0All files\0*.*\0"),
+            lpstrDefExt: w!("zip"),
+            Flags: OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST,
+            ..Default::default()
+        };
+        if GetSaveFileNameW(&mut ofn).as_bool() {
+            let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            Some(String::from_utf16_lossy(&buf[..end]))
         } else {
             None
         }
@@ -1404,6 +1436,35 @@ mod app {
                 }
                 Ok((code, b)) => format!("Server error {code}: {}", b.trim()),
                 Err(e) => format!("Cannot reach service: {e}"),
+            };
+            post_service_result(hwnd_i, text);
+        });
+    }
+
+    /// Export the whole local catalog to a single `.zip` the user can copy to the
+    /// server machine and ingest. Runs off the UI thread (a big catalog is slow).
+    unsafe fn export_catalog(hwnd: HWND) {
+        let Some(st) = state(hwnd) else { return };
+        if st.working {
+            set_status(hwnd, "Busy — wait for the current analysis to finish.");
+            return;
+        }
+        if !ensure_analyzer(st) {
+            set_status(hwnd, "Catalog unavailable.");
+            return;
+        }
+        let analyzer = st.analyzer.clone();
+        let Some(path) = pick_save_file(hwnd) else { return };
+        set_status(hwnd, "Exporting catalog…");
+        let hwnd_i = hwnd.0 as isize;
+        std::thread::spawn(move || {
+            let text = match analyzer.lock().unwrap().as_ref() {
+                Some(a) => match a.export_bundle(std::path::Path::new(&path)) {
+                    Ok(0) => "Catalog is empty — analyze a disc first.".to_string(),
+                    Ok(n) => format!("Exported {n} builds → {path}"),
+                    Err(e) => format!("Export failed: {e}"),
+                },
+                None => "Catalog unavailable.".to_string(),
             };
             post_service_result(hwnd_i, text);
         });

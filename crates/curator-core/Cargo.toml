@@ -18,3 +18,5 @@ blake3.workspace = true
 fastcdc.workspace = true
 rusqlite.workspace = true
 directories.workspace = true
+zip.workspace = true
+chrono.workspace = true

@@ -711,6 +711,13 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func catalogSize() throws  -> UInt64
     
     /**
+     * Export the catalog as a portable `.zip` bundle (`manifest.json` +
+     * `builds.jsonl`) to `out_path` — the format to copy between machines and
+     * ingest into the web service. Returns the number of records written.
+     */
+    func exportBundle(outPath: String) throws  -> UInt64
+    
+    /**
      * Export the catalog as JSON Lines to `out_path` (the desktop→web feed). Returns
      * the number of records written.
      */
@@ -820,6 +827,20 @@ open func catalogSize()throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
     uniffi_curator_ffi_fn_method_engine_catalog_size(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Export the catalog as a portable `.zip` bundle (`manifest.json` +
+     * `builds.jsonl`) to `out_path` — the format to copy between machines and
+     * ingest into the web service. Returns the number of records written.
+     */
+open func exportBundle(outPath: String)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+    uniffi_curator_ffi_fn_method_engine_export_bundle(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(outPath),$0
     )
 })
 }
@@ -1717,6 +1738,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_catalog_size() != 48424) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_curator_ffi_checksum_method_engine_export_bundle() != 11349) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_export_jsonl() != 15472) {

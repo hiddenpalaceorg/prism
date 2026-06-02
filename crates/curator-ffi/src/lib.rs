@@ -272,4 +272,15 @@ impl Engine {
             .map_err(|e| CuratorError::Failed { message: format!("creating {out_path}: {e}") })?;
         Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).export_jsonl(std::io::BufWriter::new(file))?)
     }
+
+    /// Export the catalog as a portable `.zip` bundle (`manifest.json` +
+    /// `builds.jsonl`) to `out_path` — the format to copy between machines and
+    /// ingest into the web service. Returns the number of records written.
+    pub fn export_bundle(&self, out_path: String) -> Result<u64, CuratorError> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .export_bundle(std::path::Path::new(&out_path))?)
+    }
 }

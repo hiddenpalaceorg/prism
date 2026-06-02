@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 import AppKit
 import CuratorKit
 
@@ -245,6 +246,53 @@ final class AppModel: ObservableObject {
         panel.prompt = "Analyze"
         if panel.runModal() == .OK, let url = panel.url {
             analyze(url: url)
+        }
+    }
+
+    /// Export the whole local catalog to a single `.zip` to copy to the server
+    /// machine and ingest. The export runs off the main thread (a big catalog is
+    /// slow); the FFI call goes on the same dedicated queue as `analyze`.
+    func exportCatalog() {
+        guard !isWorking else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export Catalog for Upload"
+        panel.prompt = "Export"
+        panel.nameFieldStringValue = "collection.curator.zip"
+        panel.allowedContentTypes = [.zip]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let outPath = url.path
+
+        isWorking = true
+        errorMessage = nil
+        status = "Exporting catalog…"
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                let engine = try await MainActor.run { try self.makeEngine() }
+                let count: UInt64 = try await withCheckedThrowingContinuation { continuation in
+                    self.analysisQueue.async {
+                        do {
+                            continuation.resume(returning: try engine.exportBundle(outPath: outPath))
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+                await MainActor.run {
+                    self.isWorking = false
+                    self.status = count == 0
+                        ? "Catalog is empty — analyze a disc first."
+                        : "Exported \(count) builds → \(outPath)"
+                }
+            } catch {
+                await MainActor.run {
+                    self.isWorking = false
+                    self.status = "Export failed."
+                    self.errorMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                    self.showingError = true
+                }
+            }
         }
     }
 
