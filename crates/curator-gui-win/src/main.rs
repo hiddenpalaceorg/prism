@@ -142,6 +142,8 @@ mod app {
         /// True during a recursive folder import (vs. a single analyze): keeps the
         /// "Importing x of y" status from being overwritten by per-file counter labels.
         importing: bool,
+        /// The current "Importing x of y: name" line, so per-file progress can append a %.
+        import_base: String,
         /// Canonical JSON of the loaded build (for similarity/submit), if any.
         last_json: Option<String>,
         /// Document-pane content, by view. `view` selects which one is shown.
@@ -531,6 +533,7 @@ mod app {
             totals: HashMap::new(),
             working: false,
             importing: false,
+            import_base: String::new(),
             last_json: None,
             view: DocView::Overview,
             doc_overview: Vec::new(),
@@ -787,30 +790,38 @@ mod app {
         while let Some(ev) = queue.pop_front() {
             match ev {
                 UiEvent::Batch { index, total, name } => {
-                    set_status(hwnd, &format!("Importing {} of {}: {}", index + 1, total, name));
+                    st.import_base = format!("Importing {} of {}: {}", index + 1, total, name);
+                    set_status(hwnd, &st.import_base);
                 }
                 UiEvent::Open { id, label, total } => {
                     if let Some(t) = total {
                         st.totals.insert(id, t);
                     }
                     let _ = SendMessageW(st.progress, PBM_SETRANGE32, WPARAM(0), LPARAM(1000));
-                    // During a batch import keep the "Importing x of y" line; the bar still
-                    // animates per file. A single analyze shows the per-stage label.
+                    // A single analyze shows the per-stage label; an import keeps its
+                    // "Importing x of y" line (per-file % is appended on Progress).
                     if !importing {
                         set_status(hwnd, &label);
                     }
                 }
                 UiEvent::Progress { id, count } => {
-                    if let Some(t) = st.totals.get(&id) {
-                        if *t > 0.0 {
-                            let pos = ((count / *t) * 1000.0) as usize;
-                            let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM(pos), LPARAM(0));
+                    if let Some(t) = st.totals.get(&id).copied() {
+                        if t > 0.0 {
+                            let frac = (count / t).clamp(0.0, 1.0);
+                            let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM((frac * 1000.0) as usize), LPARAM(0));
+                            // Show within-file progress in the status line during import.
+                            if importing {
+                                set_status(hwnd, &format!("{} — {}%", st.import_base, (frac * 100.0) as u32));
+                            }
                         }
                     }
                 }
                 UiEvent::Close { id } => {
                     st.totals.remove(&id);
                     let _ = SendMessageW(st.progress, PBM_SETPOS, WPARAM(0), LPARAM(0));
+                    if importing {
+                        set_status(hwnd, &st.import_base);
+                    }
                 }
                 UiEvent::Message(text) => {
                     if !importing {
