@@ -49,7 +49,10 @@ export default function Home() {
     <main className="mx-auto max-w-3xl px-6 py-12">
       <div className="flex items-baseline justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Curator</h1>
-        <Link href="/moderate" className="text-sm text-neutral-500 hover:underline">Moderation &rarr;</Link>
+        <span className="flex gap-4 text-sm text-neutral-500">
+          <Link href="/builds" className="hover:underline">Browse builds &rarr;</Link>
+          <Link href="/moderate" className="hover:underline">Moderation &rarr;</Link>
+        </span>
       </div>
       <p className="mt-1 text-sm text-neutral-500">
         Search known builds by filename or hash.
@@ -80,7 +83,7 @@ export default function Home() {
             <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
               {hits.map((h) => (
                 <li key={h.sha256} className="py-3">
-                  <Link href={`/build/${h.sha256}`} className="font-medium hover:underline">
+                  <Link href={`/builds/${h.sha256}`} className="font-medium hover:underline">
                     {h.name}
                   </Link>
                   <div className="mt-0.5 flex gap-3 text-xs text-neutral-500">

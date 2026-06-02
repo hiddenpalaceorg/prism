@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import RowLink from "../RowLink";
+import Link from "next/link";
 import { TIERS, applicableTiers, fusedScore, type FusedBuild, type TierKey } from "@/lib/tiers";
 
 const MIN_SCORE = 0.01; // > 1%
@@ -75,50 +75,30 @@ export default function SimilarBuilds({ builds, queryCaps }: { builds: FusedBuil
           {active.size === 0 ? "Select at least one tier." : "No builds above 1% for the selected tiers."}
         </p>
       ) : (
-        <table className="mt-4 w-full border-collapse text-sm">
-          <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900/60">
-            {ranked.map(({ b, score, applic }) => (
-              <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
-                <td className="max-w-[55vw] sm:max-w-xs h-full p-0 font-medium first:[&>a]:pl-0">
-                  <RowLink href={`/builds/${b.sha256}`} focusable className="px-3 hover:underline">
-                    <span className="block truncate">{b.name}</span>
-                    {/* On mobile the per-tier breakdown column is hidden; stack it under the name instead. */}
-                    <TierBreakdown b={b} applic={applic} className="mt-1 font-normal text-neutral-400 sm:hidden" />
-                  </RowLink>
-                </td>
-                <td className="w-px h-full p-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3">
-                    <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs whitespace-nowrap dark:bg-neutral-800">{b.system || "unknown"}</span>
-                  </RowLink>
-                </td>
-                {/* per-tier contributions (active tiers this build actually matched) — desktop only */}
-                <td className="hidden sm:table-cell h-full p-0 text-neutral-400">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3">
-                    <TierBreakdown b={b} applic={applic} />
-                  </RowLink>
-                </td>
-                <td className="w-12 h-full p-0 last:[&>a]:pr-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3 text-right font-mono text-xs font-semibold tabular-nums">{(score * 100).toFixed(1)}%</RowLink>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <ul className="mt-4 divide-y divide-neutral-200 dark:divide-neutral-800">
+          {ranked.map(({ b, score, applic }) => (
+            <li key={b.sha256} className="py-2.5">
+              <div className="flex items-center justify-between gap-4">
+                <Link href={`/builds/${b.sha256}`} className="min-w-0 truncate font-medium hover:underline">
+                  {b.name}
+                </Link>
+                <span className="flex shrink-0 items-center gap-2 text-xs">
+                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">{b.system}</span>
+                  <span className="w-12 text-right font-mono font-semibold">{(score * 100).toFixed(1)}%</span>
+                </span>
+              </div>
+              {/* per-tier contributions (active tiers this build actually matched) */}
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-neutral-400">
+                {TIERS.filter((t) => applic.has(t.key) && (b.scores[t.key] ?? 0) > 0).map((t) => (
+                  <span key={t.key}>
+                    {t.label} <span className="font-mono">{Math.round((b.scores[t.key] as number) * 100)}%</span>
+                  </span>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
-  );
-}
-
-// The active tiers this build actually matched, as "label %" chips. Shared by the
-// desktop breakdown column and the mobile under-name line.
-function TierBreakdown({ b, applic, className = "" }: { b: FusedBuild; applic: Set<TierKey>; className?: string }) {
-  return (
-    <span className={`flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] ${className}`}>
-      {TIERS.filter((t) => applic.has(t.key) && (b.scores[t.key] ?? 0) > 0).map((t) => (
-        <span key={t.key}>
-          {t.label} <span className="font-mono">{Math.round((b.scores[t.key] as number) * 100)}%</span>
-        </span>
-      ))}
-    </span>
   );
 }

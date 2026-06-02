@@ -1,8 +1,8 @@
 // Ingest a desktop export bundle (JSONL of BuildRecords) into Postgres.
 // Usage: npm run ingest -- <bundle.jsonl>   (env DATABASE_URL)
 //
-// Populates builds (+ text embedding), files, build_fileset (Tier 2),
-// build_sketch (Tier 3), exe_fp (Tier 5), audio_fp (Tier 4). The per-record work
+// Populates builds (+ text embedding), files, build_fileset,
+// build_chunk_signature, exe_fp, audio_fp. The per-record work
 // lives in src/lib/ingest.ts so the moderation accept endpoint reuses it.
 
 import fs from "node:fs";

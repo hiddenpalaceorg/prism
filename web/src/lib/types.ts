@@ -36,7 +36,7 @@ export type Node =
       unreadable?: boolean;
     };
 
-export interface Sketch {
+export interface Signature {
   kind: string;
   k: number;
   seed: string;
@@ -52,7 +52,10 @@ export interface BuildRecord {
   structural: Structural;
   text_doc: string;
   contents: Node[];
-  sketch?: Sketch | null;
+  /** MinHash signature over the content-defined chunk set. */
+  chunk_signature?: Signature | null;
+  /** Byte-shingle resemblance (OPH) — robust to scattered small edits. */
+  resemblance?: Signature | null;
   exe_fp?: { tlsh?: string; imphash?: string } | null;
   media?: MediaFp[];
 }
@@ -73,10 +76,12 @@ export interface SimilarityHit {
 }
 
 export interface SimilarityResult {
-  tier1_twins: { sha256: string; name: string; system: string }[];
-  tier2: SimilarityHit[];
-  tier3: SimilarityHit[];
-  tier5_exe: { sha256: string; name: string; system: string }[];
-  tier5_tlsh: { sha256: string; name: string; system: string; distance: number }[];
+  identical_content: { sha256: string; name: string; system: string }[];
+  shared_files: SimilarityHit[];
+  similar_chunks: SimilarityHit[];
+  /** Byte-shingle resemblance neighbors (scattered-edit tolerant). */
+  resemblance: SimilarityHit[];
+  exe_imports: { sha256: string; name: string; system: string }[];
+  exe_similar: { sha256: string; name: string; system: string; distance: number }[];
   audio_neighbors: { sha256: string; name: string; system: string; matched_tracks: number; best: number }[];
 }

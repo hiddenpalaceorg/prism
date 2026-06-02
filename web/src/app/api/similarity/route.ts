@@ -10,7 +10,7 @@ import type { BuildRecord } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// POST a canonical BuildRecord; returns fused Tier 1/2/3 neighbors. Read-only:
+// POST a canonical BuildRecord; returns fused similar-build neighbors. Read-only:
 // the submitted build is logged (by sha256) but not ingested.
 export async function POST(request: NextRequest) {
   if (!rateLimit(`similarity:${clientKey(request)}`, 30, 60_000)) {
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     await logCheck(pool, q.sha256);
     const result = await findSimilar(pool, q);
 
-    // Tier-text: semantic neighbors via the text embedding.
+    // Text: semantic neighbors via the text embedding.
     let text_neighbors: Awaited<ReturnType<typeof findByEmbedding>> = [];
     if (record.text_doc) {
       const vec = toPgVector(await embed(record.text_doc));

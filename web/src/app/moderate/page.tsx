@@ -120,7 +120,7 @@ export default function Moderate() {
           {items.map((s) => (
             <li key={s.sha256} className="flex items-center justify-between gap-4 py-3">
               <div className="min-w-0">
-                <Link href={`/build/${s.sha256}`} className="font-medium hover:underline">
+                <Link href={`/builds/${s.sha256}`} className="font-medium hover:underline">
                   {s.name ?? s.sha256}
                 </Link>
                 <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-neutral-500">

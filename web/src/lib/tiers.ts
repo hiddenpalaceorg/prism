@@ -21,12 +21,12 @@ export interface TierDef {
 // Weights sum to 1.0. Precise identity/overlap tiers count most; fuzzy & auxiliary
 // signals less. Tune here — both the ranking and the filter chips read from this.
 export const TIERS: TierDef[] = [
-  { key: "content", label: "Identical content", weight: 0.25 },
+  { key: "content", label: "Identical content", weight: 0.2 },
   { key: "files", label: "Shared files", weight: 0.2 },
   { key: "chunks", label: "Similar chunks", weight: 0.15 },
   { key: "resemblance", label: "Resembling content", weight: 0.15 },
   { key: "audio", label: "Shared audio", weight: 0.1 },
-  { key: "text", label: "Semantic (text)", weight: 0.05 },
+  { key: "text", label: "Semantic (text)", weight: 0.1 },
   { key: "imphash", label: "Same boot imports", weight: 0.05 },
   { key: "tlsh", label: "Similar executable", weight: 0.05 },
 ];

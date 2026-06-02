@@ -4,11 +4,12 @@ import type { Pool } from "pg";
 import { minhashJaccard, setJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
 import { tlshDiff } from "./tlsh";
 import type { BuildRecord, SimilarityResult } from "./types";
+import type { FusedBuild, TierKey } from "./tiers";
 
 const AUDIO_MATCH_THRESHOLD = 0.3;
 const TLSH_MAX_DISTANCE = 120; // below this ≈ similar executable
 
-/** Tier-4: builds sharing audio tracks (per-track Jaccard over chroma sub-fp sets). */
+/** Audio: builds sharing audio tracks (per-track Jaccard over chroma sub-fp sets). */
 export async function findAudioSimilar(
   pool: Pool,
   tracks: AudioTrack[],
@@ -47,17 +48,85 @@ export async function findAudioSimilar(
     .slice(0, limit);
 }
 
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/**
+ * Collapse the per-tier similarity lists (+ text neighbors) into one per-build matrix
+ * of similarities in [0,1], for weighted fusion + filtering on the client. Distances
+ * are converted to similarities (TLSH: 1 - d/max). One row per build that hit any tier.
+ */
+export function fuseSimilar(s: SimilarityResult, text: EmbeddingHit[]): FusedBuild[] {
+  const map = new Map<string, FusedBuild>();
+  const add = (sha: string, name: string, system: string, key: TierKey, sim: number) => {
+    if (!(sim > 0)) return;
+    let e = map.get(sha);
+    if (!e) {
+      e = { sha256: sha, name, system, scores: {}, caps: [] };
+      map.set(sha, e);
+    }
+    if (!e.name && name) e.name = name;
+    if (!e.system && system) e.system = system;
+    e.scores[key] = Math.max(e.scores[key] ?? 0, sim);
+  };
+  for (const x of s.identical_content) add(x.sha256, x.name, x.system, "content", 1);
+  for (const x of s.shared_files) add(x.sha256, x.name, x.system, "files", clamp01(x.jaccard ?? 0));
+  for (const x of s.similar_chunks) add(x.sha256, x.name, x.system, "chunks", clamp01(x.jaccard ?? 0));
+  for (const x of s.resemblance) add(x.sha256, x.name, x.system, "resemblance", clamp01(x.jaccard ?? 0));
+  for (const x of s.exe_imports) add(x.sha256, x.name, x.system, "imphash", 1);
+  for (const x of s.exe_similar) add(x.sha256, x.name, x.system, "tlsh", clamp01(1 - x.distance / TLSH_MAX_DISTANCE));
+  for (const x of s.audio_neighbors) add(x.sha256, x.name, x.system, "audio", clamp01(x.best));
+  for (const x of text) add(x.sha256, x.name, x.system, "text", clamp01(x.cosine));
+  return [...map.values()];
+}
+
+/**
+ * Which similarity tiers each build has the underlying data for. A tier is only fair
+ * to count when *both* builds support it, so the fusion intersects these (see
+ * `applicableTiers`). One indexed lookup over the candidate set.
+ */
+export async function getCapabilities(pool: Pool, shas: string[]): Promise<Map<string, TierKey[]>> {
+  const out = new Map<string, TierKey[]>();
+  if (!shas.length) return out;
+  const r = await pool.query(
+    `SELECT b.sha256,
+       (b.content_hash IS NOT NULL)   AS content,
+       (fs.build_sha256 IS NOT NULL)  AS files,
+       (sk.build_sha256 IS NOT NULL)  AS chunks,
+       (rs.build_sha256 IS NOT NULL)  AS resemblance,
+       (ex.imphash IS NOT NULL)       AS imphash,
+       (ex.tlsh IS NOT NULL)          AS tlsh,
+       (au.build_sha256 IS NOT NULL)  AS audio,
+       (b.text_embedding IS NOT NULL) AS text
+     FROM builds b
+     LEFT JOIN build_fileset fs     ON fs.build_sha256=b.sha256
+     LEFT JOIN build_chunk_signature sk      ON sk.build_sha256=b.sha256
+     LEFT JOIN build_resemblance rs ON rs.build_sha256=b.sha256
+     LEFT JOIN exe_fp ex            ON ex.build_sha256=b.sha256
+     LEFT JOIN (SELECT DISTINCT build_sha256 FROM audio_fp) au ON au.build_sha256=b.sha256
+     WHERE b.sha256 = ANY($1)`,
+    [shas]
+  );
+  const KEYS: TierKey[] = ["content", "files", "chunks", "resemblance", "imphash", "tlsh", "audio", "text"];
+  for (const row of r.rows) {
+    out.set(
+      row.sha256,
+      KEYS.filter((k) => row[k])
+    );
+  }
+  return out;
+}
+
 /** Log a similarity check by sha256 (read-only telemetry). */
 export async function logCheck(pool: Pool, sha256: string | null): Promise<void> {
   if (!sha256) return;
   await pool.query("INSERT INTO similarity_log (sha256) VALUES ($1)", [sha256]);
 }
 
-/** Fuse Tier 1/2/3 neighbors for a query build's derived features. */
+/** Fuse all-tier neighbors for a query build's derived features. */
 export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Promise<SimilarityResult> {
   const exclude = q.sha256 || "";
   const out: SimilarityResult = {
-    tier1_twins: [], tier2: [], tier3: [], tier5_exe: [], tier5_tlsh: [], audio_neighbors: [],
+    identical_content: [], shared_files: [], similar_chunks: [], resemblance: [], exe_imports: [], exe_similar: [], audio_neighbors: [],
   };
 
   if (q.content_hash) {
@@ -65,7 +134,7 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
       "SELECT sha256, name, system FROM builds WHERE content_hash=$1 AND sha256<>$2",
       [q.content_hash, exclude]
     );
-    out.tier1_twins = r.rows;
+    out.identical_content = r.rows;
   }
 
   if (q.fileset.length) {
@@ -81,18 +150,18 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
        ORDER BY jaccard DESC LIMIT $3`,
       [arrayLit(q.fileset), exclude, limit]
     );
-    out.tier2 = r.rows.map((x) => ({ ...x, jaccard: Number(x.jaccard) }));
+    out.shared_files = r.rows.map((x) => ({ ...x, jaccard: Number(x.jaccard) }));
   }
 
   if (q.bands?.length && q.minhash?.length) {
     const cand = await pool.query(
       `SELECT s.build_sha256 AS sha256, b.name, b.system, s.minhash
-       FROM build_sketch s JOIN builds b ON b.sha256=s.build_sha256
+       FROM build_chunk_signature s JOIN builds b ON b.sha256=s.build_sha256
        WHERE s.build_sha256<>$2 AND s.lsh_bands && $1::bigint[]`,
       [arrayLit(q.bands), exclude]
     );
     const mine = q.minhash;
-    out.tier3 = cand.rows
+    out.similar_chunks = cand.rows
       .map((r) => ({
         sha256: r.sha256 as string,
         name: r.name as string,
@@ -103,7 +172,29 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
       .slice(0, limit);
   }
 
-  // Tier-5: same boot-exe imports (PE imphash equality). TLSH-distance ranking is a
+  // Resemblance: byte-shingle — candidates by shared LSH bands, ranked by
+  // OPH slot agreement. Catches builds whose big files differ only by scattered small
+  // edits (where chunk hashes collapse).
+  if (q.resemblanceBands?.length && q.resemblanceMinhash?.length) {
+    const cand = await pool.query(
+      `SELECT s.build_sha256 AS sha256, b.name, b.system, s.minhash
+       FROM build_resemblance s JOIN builds b ON b.sha256=s.build_sha256
+       WHERE s.build_sha256<>$2 AND s.lsh_bands && $1::bigint[]`,
+      [arrayLit(q.resemblanceBands), exclude]
+    );
+    const mine = q.resemblanceMinhash;
+    out.resemblance = cand.rows
+      .map((r) => ({
+        sha256: r.sha256 as string,
+        name: r.name as string,
+        system: r.system as string,
+        jaccard: minhashJaccard(mine, r.minhash as string[]),
+      }))
+      .sort((a, b) => b.jaccard - a.jaccard)
+      .slice(0, limit);
+  }
+
+  // Exe imports: same boot-exe imports (PE imphash equality). TLSH-distance ranking is a
   // future refinement (needs a TLSH compare in the web stack).
   if (q.imphash) {
     const r = await pool.query(
@@ -112,10 +203,10 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
        WHERE e.imphash=$1 AND e.build_sha256<>$2`,
       [q.imphash, exclude]
     );
-    out.tier5_exe = r.rows;
+    out.exe_imports = r.rows;
   }
 
-  // Tier-5 TLSH: rank stored exe digests by distance (linear scan; small corpus).
+  // Exe TLSH: rank stored exe digests by distance (linear scan; small corpus).
   // A TLSH forest would index this at scale.
   if (q.tlsh) {
     const r = await pool.query(
@@ -126,7 +217,7 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
        LIMIT 5000`,
       [exclude]
     );
-    out.tier5_tlsh = r.rows
+    out.exe_similar = r.rows
       .map((row) => ({ sha256: row.sha256, name: row.name, system: row.system, distance: tlshDiff(q.tlsh!, row.tlsh) ?? Infinity }))
       .filter((x) => x.distance <= TLSH_MAX_DISTANCE)
       .sort((a, b) => a.distance - b.distance)
@@ -147,7 +238,25 @@ export interface EmbeddingHit {
   cosine: number;
 }
 
-/** Tier-text: nearest builds by text-embedding cosine (pgvector). */
+/**
+ * Text neighbors for a build already in the corpus — uses its stored embedding
+ * (no re-embedding at query time). Empty if the build has no embedding.
+ */
+export async function findByEmbeddingOf(pool: Pool, sha256: string, limit = 20): Promise<EmbeddingHit[]> {
+  const r = await pool.query(
+    `WITH me AS (SELECT text_embedding FROM builds WHERE sha256=$1)
+     SELECT b.sha256, b.name, b.system, 1 - (b.text_embedding <=> me.text_embedding) AS cosine
+     FROM builds b CROSS JOIN me
+     WHERE b.sha256<>$1 AND b.text_embedding IS NOT NULL AND me.text_embedding IS NOT NULL
+     ORDER BY b.text_embedding <=> me.text_embedding
+     LIMIT $2`,
+    [sha256, limit]
+  );
+  return r.rows.map((x) => ({ ...x, cosine: Number(x.cosine) }));
+}
+
+/** Text: nearest builds by text-embedding cosine (pgvector). For a query vector
+ *  (e.g. a live submission not yet in the corpus); corpus builds use findByEmbeddingOf. */
 export async function findByEmbedding(
   pool: Pool,
   vectorLiteral: string,
@@ -222,6 +331,25 @@ export interface BuildRow {
   fingerprint_profile: string;
   ingested_at: string;
   record: BuildRecord;
+}
+
+export interface BuildListItem {
+  sha256: string;
+  name: string;
+  system: string;
+  file_count: number;
+  total_size: number;
+  ingested_at: string;
+}
+
+/// List catalogued builds, most recently ingested first (for the /builds index).
+export async function listBuilds(pool: Pool, limit = 500): Promise<BuildListItem[]> {
+  const r = await pool.query(
+    `SELECT sha256, name, system, file_count, total_size, ingested_at
+     FROM builds ORDER BY ingested_at DESC LIMIT $1`,
+    [limit]
+  );
+  return r.rows as BuildListItem[];
 }
 
 /// Fetch one catalogued build (with its full canonical record) by sha256.
