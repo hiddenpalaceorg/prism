@@ -21,50 +21,58 @@ const TLSH_MAX_DISTANCE = 120; // below this ≈ similar executable
 // makes `&&` match nearly the whole table.
 const AUDIO_DF_CAP_FRACTION = 0.05;
 
-// IDF-weighted Jaccard for ONE query track ($1 = its sub-fp set), computed
-// entirely in Postgres so candidate fingerprint arrays never travel to Node
-// (which made audio-heavy builds take ~17s). idf(h)=ln((N+1)/(df+1)); N=$4.
-// Restrict to distinctive fps (df≤cap=$5), find candidate tracks sharing one via
-// the GIN index, then per candidate track sum idf over the distinctive
-// intersection/union and return the best per-build score ≥ threshold $3.
+// IDF-weighted Jaccard, computed entirely in Postgres so candidate fingerprint
+// arrays never travel to Node (which made audio-heavy builds take ~17s). ALL of
+// the query build's tracks are scored in one query: $1/$2 are parallel arrays of
+// (track index, sub-fp). idf(h)=ln((N+1)/(df+1)), N=$3; restrict to distinctive
+// fps (df≤cap=$4); per (query track, candidate track) sum idf over the
+// distinctive intersection/union; a build "matches" a query track when its best
+// candidate track scores ≥ threshold $5. Returns matched_tracks + best per build.
 const AUDIO_SIM_SQL = `
-WITH q AS (
-  SELECT i.hash AS h, ln(($4::float + 1) / (i.doc_count + 1)) AS w
-  FROM unnest($1::bigint[]) AS u(h)
+WITH qf AS (
+  SELECT u.qt, u.h, ln(($3::float + 1) / (i.doc_count + 1)) AS w
+  FROM unnest($1::int[], $2::bigint[]) AS u(qt, h)
   JOIN audio_idf i ON i.hash = u.h
-  WHERE i.doc_count <= $5::int
+  WHERE i.doc_count <= $4::int
 ),
-qw AS (SELECT COALESCE(sum(w), 0) AS wq, COALESCE(array_agg(h), '{}'::bigint[]) AS hs FROM q),
+qt_w AS (SELECT qt, sum(w) AS wq FROM qf GROUP BY qt),
+allq AS (SELECT COALESCE(array_agg(DISTINCT h), '{}'::bigint[]) AS hs FROM qf),
 cand AS (
   SELECT a.build_sha256, a.ctid, a.subfp
-  FROM audio_fp a, qw
-  WHERE a.build_sha256 <> $2 AND cardinality(qw.hs) > 0 AND a.subfp && qw.hs
+  FROM audio_fp a, allq
+  WHERE a.build_sha256 <> $6 AND cardinality(allq.hs) > 0 AND a.subfp && allq.hs
 ),
 ce AS (
-  SELECT c.build_sha256, c.ctid,
-         ln(($4::float + 1) / (i.doc_count + 1)) AS w,
-         (q.h IS NOT NULL) AS in_q
+  SELECT c.build_sha256, c.ctid, cu.h, ln(($3::float + 1) / (i.doc_count + 1)) AS w
   FROM cand c
   CROSS JOIN LATERAL unnest(c.subfp) AS cu(h)
   JOIN audio_idf i ON i.hash = cu.h
-  LEFT JOIN q ON q.h = cu.h
-  WHERE i.doc_count <= $5::int
+  WHERE i.doc_count <= $4::int
 ),
-pertrack AS (
-  SELECT build_sha256, ctid,
-         COALESCE(sum(w) FILTER (WHERE in_q), 0) AS inter,
-         COALESCE(sum(w), 0) AS csum
-  FROM ce GROUP BY build_sha256, ctid
+csum AS (SELECT build_sha256, ctid, sum(w) AS cs FROM ce GROUP BY build_sha256, ctid),
+pair AS (   -- (query track, candidate track) distinctive-intersection weight
+  SELECT qf.qt, ce.build_sha256, ce.ctid, sum(ce.w) AS inter
+  FROM qf JOIN ce ON ce.h = qf.h
+  GROUP BY qf.qt, ce.build_sha256, ce.ctid
 ),
 scored AS (
-  SELECT build_sha256, inter / NULLIF((SELECT wq FROM qw) + (csum - inter), 0) AS j
-  FROM pertrack
+  SELECT p.qt, p.build_sha256,
+         p.inter / NULLIF(qt_w.wq + (csum.cs - p.inter), 0) AS j
+  FROM pair p
+  JOIN qt_w ON qt_w.qt = p.qt
+  JOIN csum ON csum.build_sha256 = p.build_sha256 AND csum.ctid = p.ctid
+),
+per_qt_build AS (   -- best candidate track per (query track, build)
+  SELECT qt, build_sha256, max(j) AS bj FROM scored GROUP BY qt, build_sha256
 )
-SELECT s.build_sha256 AS sha256, b.name, b.system, MAX(s.j) AS j
-FROM scored s JOIN builds b ON b.sha256 = s.build_sha256
-WHERE s.j IS NOT NULL
-GROUP BY s.build_sha256, b.name, b.system
-HAVING MAX(s.j) >= $3::float`;
+SELECT pqb.build_sha256 AS sha256, b.name, b.system,
+       count(*) FILTER (WHERE pqb.bj >= $5::float) AS matched_tracks,
+       max(pqb.bj) AS best
+FROM per_qt_build pqb JOIN builds b ON b.sha256 = pqb.build_sha256
+GROUP BY pqb.build_sha256, b.name, b.system
+HAVING count(*) FILTER (WHERE pqb.bj >= $5::float) > 0
+ORDER BY matched_tracks DESC, best DESC
+LIMIT $7::int`;
 
 /** Audio: builds sharing audio tracks (per-track IDF-weighted Jaccard over chroma sub-fp sets). */
 export async function findAudioSimilar(
@@ -79,34 +87,32 @@ export async function findAudioSimilar(
   const n = (nr[0]?.n as number) ?? 0;
   if (!n) return [];
   const cap = Math.max(50, Math.floor(n * AUDIO_DF_CAP_FRACTION));
-  const perBuild = new Map<
-    string,
-    { sha256: string; name: string; system: string; matched_tracks: number; best: number }
-  >();
-  for (const qt of tracks) {
-    if (!qt.subfp.length) continue;
-    // One Postgres round-trip per track: scoring happens server-side, so we only
-    // get back qualifying builds (≥ threshold) with a score — not their fp arrays.
-    const r = await pool.query(AUDIO_SIM_SQL, [
-      arrayLit(qt.subfp),
-      exclude,
-      AUDIO_MATCH_THRESHOLD,
-      n,
-      cap,
-    ]);
-    for (const row of r.rows) {
-      const j = Number(row.j);
-      const e =
-        perBuild.get(row.sha256) ||
-        { sha256: row.sha256, name: row.name, system: row.system, matched_tracks: 0, best: 0 };
-      e.matched_tracks += 1;
-      e.best = Math.max(e.best, j);
-      perBuild.set(row.sha256, e);
+  // Flatten all tracks into parallel (track index, sub-fp) arrays for one query.
+  const qtIdx: number[] = [];
+  const fps: Array<string | number> = [];
+  tracks.forEach((qt, i) => {
+    for (const h of qt.subfp) {
+      qtIdx.push(i);
+      fps.push(h);
     }
-  }
-  return [...perBuild.values()]
-    .sort((a, b) => b.matched_tracks - a.matched_tracks || b.best - a.best)
-    .slice(0, limit);
+  });
+  if (!fps.length) return [];
+  const r = await pool.query(AUDIO_SIM_SQL, [
+    arrayLit(qtIdx),
+    arrayLit(fps),
+    n,
+    cap,
+    AUDIO_MATCH_THRESHOLD,
+    exclude,
+    limit,
+  ]);
+  return r.rows.map((row) => ({
+    sha256: row.sha256 as string,
+    name: row.name as string,
+    system: row.system as string,
+    matched_tracks: Number(row.matched_tracks),
+    best: Number(row.best),
+  }));
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
