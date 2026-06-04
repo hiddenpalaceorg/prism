@@ -1,7 +1,7 @@
 // Search + similarity queries (the data layer behind the API routes).
 
 import type { Pool } from "pg";
-import { minhashJaccard, setJaccard, weightedSetJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
+import { minhashJaccard, setJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
 import { tlshDiff } from "./tlsh";
 import type { BuildRecord, SimilarityResult } from "./types";
 import type { FusedBuild, TierKey } from "./tiers";
@@ -13,23 +13,58 @@ import type { FusedBuild, TierKey } from "./tiers";
 const AUDIO_MATCH_THRESHOLD = 0.55;
 const TLSH_MAX_DISTANCE = 120; // below this ≈ similar executable
 
-/**
- * Per-hash IDF over the audio corpus: idf(h) = ln((N+1)/(df(h)+1)), where N is
- * the number of builds with audio and df the builds containing the hash. A hash
- * in every build → idf≈0; a hash unseen in the corpus (a novel query) → max idf.
- */
-async function loadAudioIdf(pool: Pool): Promise<(h: string) => number> {
-  const [{ rows: nrows }, { rows: dfrows }] = await Promise.all([
-    pool.query("SELECT count(DISTINCT build_sha256)::int AS n FROM audio_fp"),
-    pool.query("SELECT hash::text AS h, doc_count::int AS df FROM audio_idf"),
-  ]);
-  const n = (nrows[0]?.n as number) ?? 0;
-  const df = new Map<string, number>();
-  for (const row of dfrows) df.set(row.h as string, row.df as number);
-  // df 0 (a hash absent from the corpus, e.g. a novel query build) falls out as
-  // ln((N+1)/1) = max idf; a hash in all N builds falls out as ln(1) = 0.
-  return (h: string) => Math.log((n + 1) / ((df.get(h) ?? 0) + 1));
-}
+// A fingerprint present in more than this fraction of the audio corpus is too
+// common to discriminate (idf≈0): it can't push a match over AUDIO_MATCH_THRESHOLD.
+// We restrict both the candidate probe and the scoring to fingerprints with
+// df≤cap; ubiquitous ones add ~0 weight, so genuine siblings (which share
+// distinctive peaks) are still found. Without this, one near-universal CDDA peak
+// makes `&&` match nearly the whole table.
+const AUDIO_DF_CAP_FRACTION = 0.05;
+
+// IDF-weighted Jaccard for ONE query track ($1 = its sub-fp set), computed
+// entirely in Postgres so candidate fingerprint arrays never travel to Node
+// (which made audio-heavy builds take ~17s). idf(h)=ln((N+1)/(df+1)); N=$4.
+// Restrict to distinctive fps (df≤cap=$5), find candidate tracks sharing one via
+// the GIN index, then per candidate track sum idf over the distinctive
+// intersection/union and return the best per-build score ≥ threshold $3.
+const AUDIO_SIM_SQL = `
+WITH q AS (
+  SELECT i.hash AS h, ln(($4::float + 1) / (i.doc_count + 1)) AS w
+  FROM unnest($1::bigint[]) AS u(h)
+  JOIN audio_idf i ON i.hash = u.h
+  WHERE i.doc_count <= $5::int
+),
+qw AS (SELECT COALESCE(sum(w), 0) AS wq, COALESCE(array_agg(h), '{}'::bigint[]) AS hs FROM q),
+cand AS (
+  SELECT a.build_sha256, a.ctid, a.subfp
+  FROM audio_fp a, qw
+  WHERE a.build_sha256 <> $2 AND cardinality(qw.hs) > 0 AND a.subfp && qw.hs
+),
+ce AS (
+  SELECT c.build_sha256, c.ctid,
+         ln(($4::float + 1) / (i.doc_count + 1)) AS w,
+         (q.h IS NOT NULL) AS in_q
+  FROM cand c
+  CROSS JOIN LATERAL unnest(c.subfp) AS cu(h)
+  JOIN audio_idf i ON i.hash = cu.h
+  LEFT JOIN q ON q.h = cu.h
+  WHERE i.doc_count <= $5::int
+),
+pertrack AS (
+  SELECT build_sha256, ctid,
+         COALESCE(sum(w) FILTER (WHERE in_q), 0) AS inter,
+         COALESCE(sum(w), 0) AS csum
+  FROM ce GROUP BY build_sha256, ctid
+),
+scored AS (
+  SELECT build_sha256, inter / NULLIF((SELECT wq FROM qw) + (csum - inter), 0) AS j
+  FROM pertrack
+)
+SELECT s.build_sha256 AS sha256, b.name, b.system, MAX(s.j) AS j
+FROM scored s JOIN builds b ON b.sha256 = s.build_sha256
+WHERE s.j IS NOT NULL
+GROUP BY s.build_sha256, b.name, b.system
+HAVING MAX(s.j) >= $3::float`;
 
 /** Audio: builds sharing audio tracks (per-track IDF-weighted Jaccard over chroma sub-fp sets). */
 export async function findAudioSimilar(
@@ -38,32 +73,35 @@ export async function findAudioSimilar(
   exclude: string,
   limit = 20
 ) {
-  const idf = await loadAudioIdf(pool);
+  const { rows: nr } = await pool.query(
+    "SELECT count(DISTINCT build_sha256)::int AS n FROM audio_fp"
+  );
+  const n = (nr[0]?.n as number) ?? 0;
+  if (!n) return [];
+  const cap = Math.max(50, Math.floor(n * AUDIO_DF_CAP_FRACTION));
   const perBuild = new Map<
     string,
     { sha256: string; name: string; system: string; matched_tracks: number; best: number }
   >();
   for (const qt of tracks) {
     if (!qt.subfp.length) continue;
-    const r = await pool.query(
-      `SELECT a.build_sha256 AS sha256, b.name, b.system, a.subfp
-       FROM audio_fp a JOIN builds b ON b.sha256=a.build_sha256
-       WHERE a.build_sha256<>$2 AND a.subfp && $1::bigint[]`,
-      [arrayLit(qt.subfp), exclude]
-    );
-    // best matching candidate track per build for this query track
-    const bestPerBuild = new Map<string, { name: string; system: string; j: number }>();
+    // One Postgres round-trip per track: scoring happens server-side, so we only
+    // get back qualifying builds (≥ threshold) with a score — not their fp arrays.
+    const r = await pool.query(AUDIO_SIM_SQL, [
+      arrayLit(qt.subfp),
+      exclude,
+      AUDIO_MATCH_THRESHOLD,
+      n,
+      cap,
+    ]);
     for (const row of r.rows) {
-      const j = weightedSetJaccard(qt.subfp, row.subfp as string[], idf);
-      if (j < AUDIO_MATCH_THRESHOLD) continue;
-      const prev = bestPerBuild.get(row.sha256);
-      if (!prev || j > prev.j) bestPerBuild.set(row.sha256, { name: row.name, system: row.system, j });
-    }
-    for (const [sha, v] of bestPerBuild) {
-      const e = perBuild.get(sha) || { sha256: sha, name: v.name, system: v.system, matched_tracks: 0, best: 0 };
+      const j = Number(row.j);
+      const e =
+        perBuild.get(row.sha256) ||
+        { sha256: row.sha256, name: row.name, system: row.system, matched_tracks: 0, best: 0 };
       e.matched_tracks += 1;
-      e.best = Math.max(e.best, v.j);
-      perBuild.set(sha, e);
+      e.best = Math.max(e.best, j);
+      perBuild.set(row.sha256, e);
     }
   }
   return [...perBuild.values()]
