@@ -1,8 +1,7 @@
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
-import { getBuild, findSimilar, findByEmbedding } from "@/lib/queries";
-import { embed, toPgVector } from "@/lib/embed";
+import { getBuild, findSimilar, findByEmbeddingOf } from "@/lib/queries";
 import { isSha256 } from "@/lib/validate";
 
 export const runtime = "nodejs";
@@ -21,11 +20,10 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
   const q = deriveQueryFeatures(build.record);
   const similar = await findSimilar(pool, q);
 
-  let text_neighbors: Awaited<ReturnType<typeof findByEmbedding>> = [];
-  if (build.record.text_doc) {
-    const vec = toPgVector(await embed(build.record.text_doc));
-    text_neighbors = await findByEmbedding(pool, vec, sha256);
-  }
+  // Use the build's STORED embedding (pgvector) rather than re-running the
+  // transformers model on its text_doc at request time — same neighbors, no
+  // model load/inference on the hot path (the GUIs hit this endpoint).
+  const text_neighbors = await findByEmbeddingOf(pool, sha256);
 
   return Response.json({ build, similar: { ...similar, text_neighbors } });
 }
