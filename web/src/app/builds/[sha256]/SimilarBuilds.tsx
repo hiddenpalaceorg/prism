@@ -75,29 +75,31 @@ export default function SimilarBuilds({ builds, queryCaps }: { builds: FusedBuil
           {active.size === 0 ? "Select at least one tier." : "No builds above 1% for the selected tiers."}
         </p>
       ) : (
-        <ul className="mt-4 divide-y divide-neutral-200 dark:divide-neutral-800">
-          {ranked.map(({ b, score, applic }) => (
-            <li key={b.sha256} className="py-2.5">
-              <div className="flex items-center justify-between gap-4">
-                <Link href={`/builds/${b.sha256}`} className="min-w-0 truncate font-medium hover:underline">
-                  {b.name}
-                </Link>
-                <span className="flex shrink-0 items-center gap-2 text-xs">
-                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">{b.system}</span>
-                  <span className="w-12 text-right font-mono font-semibold">{(score * 100).toFixed(1)}%</span>
-                </span>
-              </div>
-              {/* per-tier contributions (active tiers this build actually matched) */}
-              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-neutral-400">
-                {TIERS.filter((t) => applic.has(t.key) && (b.scores[t.key] ?? 0) > 0).map((t) => (
-                  <span key={t.key}>
-                    {t.label} <span className="font-mono">{Math.round((b.scores[t.key] as number) * 100)}%</span>
+        <table className="mt-4 w-full border-collapse text-sm">
+          <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900/60">
+            {ranked.map(({ b, score, applic }) => (
+              <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
+                <td className="max-w-xs truncate px-3 py-1.5 font-medium first:pl-0">
+                  <Link href={`/builds/${b.sha256}`} className="hover:underline">{b.name}</Link>
+                </td>
+                <td className="w-px px-3 py-1.5">
+                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs whitespace-nowrap dark:bg-neutral-800">{b.system}</span>
+                </td>
+                {/* per-tier contributions (active tiers this build actually matched) */}
+                <td className="px-3 py-1.5 text-[11px] text-neutral-400">
+                  <span className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    {TIERS.filter((t) => applic.has(t.key) && (b.scores[t.key] ?? 0) > 0).map((t) => (
+                      <span key={t.key}>
+                        {t.label} <span className="font-mono">{Math.round((b.scores[t.key] as number) * 100)}%</span>
+                      </span>
+                    ))}
                   </span>
-                ))}
-              </div>
-            </li>
-          ))}
-        </ul>
+                </td>
+                <td className="w-12 px-3 py-1.5 text-right font-mono text-xs font-semibold tabular-nums last:pr-0">{(score * 100).toFixed(1)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </section>
   );
