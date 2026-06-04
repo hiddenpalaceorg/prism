@@ -6,8 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Serialization shape of the build record. Bump on additive field changes.
-pub const RECORD_SCHEMA_VERSION: u32 = 2;
+/// Serialization shape of the build record. Stays at 1 during development — the
+/// shape is still in flux, so additive field changes don't bump it; bump at the
+/// first release boundary, once consumers must distinguish shapes.
+pub const RECORD_SCHEMA_VERSION: u32 = 1;
 /// Algorithm manifest in force. See `fingerprint::profile`.
 pub const FINGERPRINT_PROFILE: &str = "v1";
 
