@@ -451,7 +451,12 @@ def analyze(path):
 
         info = _gather_info(processor, reader, system, mods)
         files = _hash_files(reader, manager)
-        media = _scan_audio_tracks(readers, mods, manager)
+        # Only CD/GD-ROM systems carry CDDA worth fingerprinting. Gating here
+        # skips the audio scan for DVD/UMD/Blu-ray/STFS systems (xbox, xbox360,
+        # xbla, psp, ps3, gamecube, wii, ps2) and undetected discs — which have
+        # no CDDA anyway, and whose non-bootable content packages otherwise trip
+        # ps2exe's re-iteration bug (ConsumedArchiveEntry) in the scan.
+        media = _scan_audio_tracks(readers, mods, manager) if system in AUDIO_SYSTEMS else []
         exe_fp = None
         exe = info.get("exe")
         if exe and exe.get("filename"):
@@ -506,6 +511,13 @@ def _exe_fingerprint(reader, exe_path):
     if not th and not imphash:
         return None
     return {"tlsh": th, "imphash": imphash}
+
+
+# CD/GD-ROM systems whose dumps can carry red-book (CDDA) audio tracks. Other
+# detected systems are DVD/UMD/Blu-ray/digital (no CDDA), so the audio scan is
+# skipped for them — see analyze(). ps2exe system ids; ps2 is deliberately out
+# (DVD-era, CDDA vanishingly rare, and its content packages trip the scan bug).
+AUDIO_SYSTEMS = frozenset({"megacd", "saturn", "ps1", "3do", "cdi", "cd32", "dreamcast"})
 
 
 def _scan_audio_tracks(readers, mods, manager):
