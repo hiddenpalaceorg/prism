@@ -83,7 +83,7 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
         <Hash label="SHA-1" value={build.sha1} />
         <Hash label="MD5" value={build.md5} />
         <dt className="text-neutral-500">Content hash</dt>
-        <dd className="font-mono text-xs">{build.content_hash.slice(0, 32)}…</dd>
+        <dd className="font-mono text-xs">{build.content_hash ? `${build.content_hash.slice(0, 32)}…` : "—"}</dd>
       </dl>
 
       <SimilarBuilds builds={fused} queryCaps={queryCaps} />
