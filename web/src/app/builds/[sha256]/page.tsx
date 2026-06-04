@@ -65,7 +65,7 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
   const dirCount = files.filter((f) => f.dir).length;
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-10">
+    <main className="mx-auto max-w-none px-8 py-10">
       <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
 
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">
