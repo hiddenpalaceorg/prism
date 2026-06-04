@@ -7,10 +7,22 @@ use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::error::{Error, Result};
 use crate::progress::{AdapterEvent, ProgressObserver};
+
+/// Deserialize a value that may be JSON `null` into `T::default()`. ps2exe emits
+/// `null` (not "") for required strings it can't determine — notably `system` on
+/// a file it doesn't recognize as a known disc. `#[serde(default)]` only covers a
+/// *missing* key, so required `String` fields pair it with this for explicit null.
+fn null_to_default<'de, D, T>(d: D) -> std::result::Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
 
 /// How to invoke the adapter. Defaults to running it via uv from the workspace.
 #[derive(Debug, Clone)]
@@ -62,7 +74,9 @@ pub struct RawExeFp {
 
 #[derive(Debug, Deserialize)]
 pub struct RawMedia {
+    #[serde(default, deserialize_with = "null_to_default")]
     pub path: String,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub kind: String,
     /// Acoustic sub-fingerprint set (audio); values < 2^53 so JSON-number safe.
     #[serde(default)]
@@ -71,7 +85,7 @@ pub struct RawMedia {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct RawInfo {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub system: String,
     #[serde(default)]
     pub system_identifier: Option<String>,
@@ -140,6 +154,7 @@ pub struct RawSfo {
 #[derive(Debug, Deserialize)]
 pub struct RawFile {
     /// Full path from the volume root, e.g. `/DATA/0.BIN`.
+    #[serde(default, deserialize_with = "null_to_default")]
     pub path: String,
     #[serde(default)]
     pub is_dir: bool,
