@@ -63,7 +63,7 @@ a = Analysis(
     # Set $LIBARCHIVE to the bundled lib before the first import. ps2exe's lazy
     # fallback (catch TypeError, set env, retry) breaks when frozen because the
     # bootloader's ctypes hook re-raises that TypeError as PyInstallerImportError.
-    runtime_hooks=["rthook_libarchive.py"],
+    runtime_hooks=["rthook_libarchive.py", "rthook_rarfile.py"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
