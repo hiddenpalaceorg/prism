@@ -263,6 +263,32 @@ def _process_streaming(path, basename, parent_dir, locator, vtype, mods, manager
     return info, files, exe_fp, system
 
 
+def _has_boot_exe(processor, reader):
+    """1 if this volume's filesystem holds the boot executable IP.BIN names, else 0.
+
+    Dreamcast's IP.BIN bootstrap (shared across every high-density volume) records
+    the boot filename at offset 0x60; the volume that actually *boots* is the one
+    whose filesystem contains that file. Ranking on this is deterministic — the
+    chosen volume is, by construction, the one hash_exe() can read the date from.
+    File count stays only as a tiebreaker/fallback (see _process_gdrom), so a
+    multi-partition disc's asset volume no longer outvotes the boot volume on sheer
+    file count, and demos with no resolvable boot file still fall through cleanly."""
+    get_name = getattr(processor, "get_exe_filename", None)
+    if get_name is None:
+        return 0
+    try:
+        boot = get_name()
+    except Exception:  # noqa: BLE001 — garbage IP.BIN region on a non-boot volume
+        return 0
+    if not boot:
+        return 0
+    try:
+        reader.get_file(boot.strip())
+        return 1
+    except Exception:  # noqa: BLE001 — boot file is not in this volume's filesystem
+        return 0
+
+
 def _process_gdrom(path, basename, parent_dir, mods, manager):
     """Fingerprint a Dreamcast GD-ROM whose game spans the high-density area.
 
@@ -282,7 +308,7 @@ def _process_gdrom(path, basename, parent_dir, mods, manager):
             list(container.iso_iterator(container.get_root_dir(), recursive=True, include_dirs=False))
             if container else [None]
         )
-        best = None  # (file_count, processor, reader, system)
+        best = None  # (score, processor, reader, system); score = (has_boot_exe, file_count)
         for entry in members:
             if container is not None:
                 name = os.path.basename(container.get_file_path(entry))
@@ -306,12 +332,14 @@ def _process_gdrom(path, basename, parent_dir, mods, manager):
                 except Exception:  # noqa: BLE001 — a later HD volume can't reopen consumed tracks
                     continue
                 reader = processor.iso_path_reader  # reassembled (or the raw volume on fallback)
-                count = _score_volume(reader)[1]
-                if best is None or count > best[0]:
-                    best = (count, processor, reader, system)
+                # Prefer the volume that holds the IP.BIN-named boot exe (deterministic);
+                # break ties / fall back on file count for discs with no resolvable boot.
+                score = (_has_boot_exe(processor, reader), _score_volume(reader)[1])
+                if best is None or score > best[0]:
+                    best = (score, processor, reader, system)
         if best is None:
             raise _NoHighDensityVolume(path)
-        _count, processor, reader, system = best
+        _score, processor, reader, system = best
         info = _gather_info(processor, reader, system, mods)
         files = _hash_files(reader, manager)
         exe_fp = _exe_fp_for(info, reader)
@@ -606,7 +634,14 @@ def analyze(path):
             raise SystemExit(f"no readable volume found in {path!r} (unsupported format?)")
         locator, chosen = max(candidates, key=lambda c: _score_volume(c[1]))
         vtype = getattr(chosen, "volume_type", None)
-        needs_assembly = bool(getattr(getattr(chosen, "fp", None), "starting_sector", 0))
+        # Route to GD-ROM assembly whenever ANY high-density volume exists — the
+        # Dreamcast boot game always lives there. Keying on the richest volume's start
+        # sector (old behaviour) mis-routes discs whose LOW-density area is a fat
+        # PC/asset partition (jpg/bmp galleries) that outweighs the few-file boot
+        # track: they got streamed from the wrong volume and lost the exe date.
+        needs_assembly = any(
+            getattr(getattr(r, "fp", None), "starting_sector", 0) for _loc, r in candidates
+        )
 
     # Processing pass: read the chosen volume's bytes. GD-ROM high-density volumes go
     # through track reassembly; everything else reopens straight to its volume.
