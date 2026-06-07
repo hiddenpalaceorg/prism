@@ -123,34 +123,199 @@ def _safe_dict(fn):
         return {}
 
 
-def _choose_primary(readers):
-    return max(readers, key=lambda r: _VOLUME_PRIORITY.get(getattr(r, "volume_type", ""), 0))
+# Capped so ranking never walks a whole multi-thousand-file DVD tree; any real
+# game clears it, while a Dreamcast low-density track tops out at its 3 boilerplate
+# files — enough to lose the tiebreaker to the high-density game volume.
+_SCORE_FILE_CAP = 256
 
 
-def _find_filesystem_reader(reader, mods, manager, depth=0):
-    """Return a non-archive (filesystem) reader, descending into archives if needed."""
-    if not isinstance(reader, mods["compressed"]):
-        return reader
-    if depth > 4:
-        return None
+def _score_volume(reader):
+    """Rank a candidate volume for selection as the disc's primary filesystem.
+
+    Richer volume types win first (UDF/Joliet over bare ISO 9660); ties break on
+    file count. The tiebreaker is what rescues Dreamcast GD-ROMs: the low-density
+    track holds only three boilerplate ISO files, while the high-density track —
+    same `iso9660` type — carries the actual game, so it wins on count."""
+    priority = _VOLUME_PRIORITY.get(getattr(reader, "volume_type", ""), 0)
+    count = 0
+    try:
+        for _ in reader.iso_iterator(reader.get_root_dir(), recursive=True):
+            count += 1
+            if count >= _SCORE_FILE_CAP:
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    return (priority, count)
+
+
+def _enumerate_volumes(fp, basename, parent, mods, manager):
+    """Every leaf filesystem volume reachable from `fp`, paired with the list of
+    archive-member names ('locator') needed to re-reach it (empty = top level).
+
+    Reading member *directories* in a single archive pass is fine; reading member
+    *content* is not, on a one-pass stream. So callers select a volume here, then
+    reopen it via `_open_volume` to actually read bytes."""
     factory = mods["factory"]
-    for entry in reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=False):
-        name = os.path.basename(reader.get_file_path(entry))
-        try:
-            fh = reader.open_file(entry)
-            if hasattr(fh, "__enter__"):
-                fh.__enter__()
-        except Exception:  # noqa: BLE001
-            continue
-        try:
-            sub_readers, _exc = factory.get_iso_path_readers(fh, name, reader, manager)
-        except Exception:  # noqa: BLE001
-            sub_readers = []
-        for sr in sub_readers:
-            leaf = _find_filesystem_reader(sr, mods, manager, depth + 1)
-            if leaf is not None:
-                return leaf
+    readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
+    found = []
+
+    def walk(reader, locator, depth):
+        if not isinstance(reader, mods["compressed"]):
+            found.append((locator, reader))
+            return
+        if depth > 4:
+            return
+        for entry in reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=False):
+            name = os.path.basename(reader.get_file_path(entry))
+            try:
+                fh = reader.open_file(entry)
+                if hasattr(fh, "__enter__"):
+                    fh.__enter__()
+                sub_readers, _e = factory.get_iso_path_readers(fh, name, reader, manager)
+            except Exception:  # noqa: BLE001
+                continue
+            for sr in sub_readers:
+                walk(sr, locator + [name], depth + 1)
+
+    for r in readers:
+        walk(r, [], 0)
+    return found
+
+
+def _open_volume(fp, basename, parent, locator, vtype, mods, manager):
+    """Reopen the volume identified by (`locator`, `vtype`) on a fresh `fp`, opening
+    *only* the members along `locator`. Touching sibling members first would strand
+    a Dreamcast high-density track's content on a single-pass archive stream."""
+    factory = mods["factory"]
+    readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
+
+    def pick(candidates):
+        if not candidates:
+            return None
+        match = [r for r in candidates if getattr(r, "volume_type", None) == vtype]
+        return (match or candidates)[0]
+
+    if not locator:
+        fs = [r for r in readers if not isinstance(r, mods["compressed"])]
+        return pick(fs or readers)
+
+    current = readers
+    for name in locator:
+        container = next((r for r in current if isinstance(r, mods["compressed"])), None)
+        if container is None:
+            return None
+        target = next(
+            (e for e in container.iso_iterator(container.get_root_dir(), recursive=True, include_dirs=False)
+             if os.path.basename(container.get_file_path(e)) == name),
+            None,
+        )
+        if target is None:
+            return None
+        fh = container.open_file(target)
+        if hasattr(fh, "__enter__"):
+            fh.__enter__()
+        current, _e = factory.get_iso_path_readers(fh, name, container, manager)
+    return pick(current)
+
+
+class _NoHighDensityVolume(Exception):
+    """Raised when a disc flagged for GD-ROM assembly exposes no high-density volume
+    on the processing pass — the caller falls back to a plain streaming read."""
+
+
+def _exe_fp_for(info, reader):
+    exe = info.get("exe")
+    if exe and exe.get("filename"):
+        return _exe_fingerprint(reader, exe["filename"])
     return None
+
+
+def _safe_processor(processor_class, reader, name, system, manager, mods):
+    """Build the processor, falling back to the base initializer if the subclass one
+    raises. Dreamcast's __init__ reassembles GD-ROM tracks from the .cue/.gdi; on
+    non-standard discs (MIL-CD, cheat carts, demos) whose data track sits outside the
+    expected slot that assembly can throw, and a plain read of the chosen volume is
+    the best we can still do."""
+    try:
+        return processor_class(reader, name, system, manager)
+    except Exception:  # noqa: BLE001
+        proc = processor_class.__new__(processor_class)
+        mods["base"].__init__(proc, reader, name, system, manager)
+        return proc
+
+
+def _process_streaming(path, basename, parent_dir, locator, vtype, mods, manager):
+    """Fingerprint the already-chosen volume by reopening straight to it. Used for
+    every disc whose game lives in a single self-contained volume (PS1/2/3, Saturn,
+    Mega CD, 3DO, combined Dreamcast images, …)."""
+    factory, base, generic = mods["factory"], mods["base"], mods["generic"]
+    with open(path, "rb") as fp:
+        parent = mods["directory"](parent_dir)
+        reader = _open_volume(fp, basename, parent, locator, vtype, mods, manager)
+        if reader is None:
+            raise SystemExit(f"could not reopen chosen volume in {path!r}")
+        system = base.get_system_type(reader) or "unknown"
+        processor_class = factory.get_iso_processor_class(system) or generic
+        processor = _safe_processor(processor_class, reader, basename, system, manager, mods)
+        info = _gather_info(processor, reader, system, mods)
+        files = _hash_files(reader, manager)
+        exe_fp = _exe_fp_for(info, reader)
+    return info, files, exe_fp, system
+
+
+def _process_gdrom(path, basename, parent_dir, mods, manager):
+    """Fingerprint a Dreamcast GD-ROM whose game spans the high-density area.
+
+    The boot volume's files can straddle several tracks, so we let the Dreamcast
+    processor reassemble the image from the .cue/.gdi. That assembly reopens sibling
+    tracks, which a single-pass archive only permits while we are still on the
+    triggering member — so the processor must be built in the same pass that opens
+    the high-density track (no prior enumeration of this stream). The reassembled
+    reader is seekable (its tracks are mmapped), so we rank candidates by file count
+    and hash only the richest."""
+    factory, base, generic = mods["factory"], mods["base"], mods["generic"]
+    with open(path, "rb") as fp:
+        parent = mods["directory"](parent_dir)
+        readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
+        container = next((r for r in readers if isinstance(r, mods["compressed"])), None)
+        members = (
+            list(container.iso_iterator(container.get_root_dir(), recursive=True, include_dirs=False))
+            if container else [None]
+        )
+        best = None  # (file_count, processor, reader, system)
+        for entry in members:
+            if container is not None:
+                name = os.path.basename(container.get_file_path(entry))
+                try:
+                    fh = container.open_file(entry)
+                    if hasattr(fh, "__enter__"):
+                        fh.__enter__()
+                    volumes, _e = factory.get_iso_path_readers(fh, name, container, manager)
+                except Exception:  # noqa: BLE001
+                    continue
+            else:
+                name, volumes = basename, readers
+            for vol in volumes:
+                # Only high-density volumes carry the boot game and trigger assembly.
+                if not getattr(getattr(vol, "fp", None), "starting_sector", 0):
+                    continue
+                system = base.get_system_type(vol) or "dreamcast"
+                processor_class = factory.get_iso_processor_class(system) or generic
+                try:
+                    processor = _safe_processor(processor_class, vol, name, system, manager, mods)
+                except Exception:  # noqa: BLE001 — a later HD volume can't reopen consumed tracks
+                    continue
+                reader = processor.iso_path_reader  # reassembled (or the raw volume on fallback)
+                count = _score_volume(reader)[1]
+                if best is None or count > best[0]:
+                    best = (count, processor, reader, system)
+        if best is None:
+            raise _NoHighDensityVolume(path)
+        _count, processor, reader, system = best
+        info = _gather_info(processor, reader, system, mods)
+        files = _hash_files(reader, manager)
+        exe_fp = _exe_fp_for(info, reader)
+    return info, files, exe_fp, system
 
 
 def _gather_info(processor, reader, system, mods):
@@ -426,42 +591,50 @@ def analyze(path):
     manager = ProgressManager()
 
     basename = os.path.basename(path)
+    parent_dir = pathlib.Path(path).resolve().parent
+
+    # Selection pass: enumerate every candidate volume (directory level only — a
+    # one-pass archive can't seek back to member *content* later) and choose the
+    # richest. This is what rescues Dreamcast GD-ROMs: the boot game lives in the
+    # high-density volume, not the first (low-density) one the old "first readable"
+    # pick returned. A non-zero start sector marks that high-density volume, whose
+    # files may span several tracks needing .cue/.gdi reassembly.
     with open(path, "rb") as fp:
-        parent = mods["directory"](pathlib.Path(path).resolve().parent)
-
-        readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
-        if not readers:
+        parent = mods["directory"](parent_dir)
+        candidates = _enumerate_volumes(fp, basename, parent, mods, manager)
+        if not candidates:
             raise SystemExit(f"no readable volume found in {path!r} (unsupported format?)")
+        locator, chosen = max(candidates, key=lambda c: _score_volume(c[1]))
+        vtype = getattr(chosen, "volume_type", None)
+        needs_assembly = bool(getattr(getattr(chosen, "fp", None), "starting_sector", 0))
 
-        fs_readers = [r for r in readers if not isinstance(r, mods["compressed"])]
-        if fs_readers:
-            reader = _choose_primary(fs_readers)
-        else:
-            reader = None
-            for r in readers:
-                reader = _find_filesystem_reader(r, mods, manager)
-                if reader is not None:
-                    break
-            if reader is None:
-                reader = _choose_primary(readers)
+    # Processing pass: read the chosen volume's bytes. GD-ROM high-density volumes go
+    # through track reassembly; everything else reopens straight to its volume.
+    if needs_assembly:
+        try:
+            info, files, exe_fp, system = _process_gdrom(path, basename, parent_dir, mods, manager)
+        except _NoHighDensityVolume:
+            # Non-standard disc: assembly found nothing. Read the chosen volume plainly.
+            info, files, exe_fp, system = _process_streaming(
+                path, basename, parent_dir, locator, vtype, mods, manager
+            )
+    else:
+        info, files, exe_fp, system = _process_streaming(
+            path, basename, parent_dir, locator, vtype, mods, manager
+        )
 
-        system = base.get_system_type(reader)
-        processor_class = factory.get_iso_processor_class(system) or generic
-        processor = processor_class(reader, basename, system, manager)
+    # Audio pass: CDDA scan over the container, on its own fresh pass since processing
+    # consumed the stream. Only CD/GD-ROM systems carry red-book audio worth
+    # fingerprinting; gating here also avoids the DVD/UMD/Blu-ray/STFS systems whose
+    # content packages trip ps2exe's re-iteration bug (ConsumedArchiveEntry).
+    media = []
+    if system in AUDIO_SYSTEMS:
+        with open(path, "rb") as fp:
+            parent = mods["directory"](parent_dir)
+            audio_readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
+            media = _scan_audio_tracks(audio_readers, mods, manager)
 
-        info = _gather_info(processor, reader, system, mods)
-        files = _hash_files(reader, manager)
-        # Only CD/GD-ROM systems carry CDDA worth fingerprinting. Gating here
-        # skips the audio scan for DVD/UMD/Blu-ray/STFS systems (xbox, xbox360,
-        # xbla, psp, ps3, gamecube, wii, ps2) and undetected discs — which have
-        # no CDDA anyway, and whose non-bootable content packages otherwise trip
-        # ps2exe's re-iteration bug (ConsumedArchiveEntry) in the scan.
-        media = _scan_audio_tracks(readers, mods, manager) if system in AUDIO_SYSTEMS else []
-        exe_fp = None
-        exe = info.get("exe")
-        if exe and exe.get("filename"):
-            exe_fp = _exe_fingerprint(reader, exe["filename"])
-        return {"info": info, "files": files, "media": media, "exe_fp": exe_fp}
+    return {"info": info, "files": files, "media": media, "exe_fp": exe_fp}
 
 
 def _exe_fingerprint(reader, exe_path):
