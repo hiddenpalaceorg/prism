@@ -388,10 +388,6 @@ struct BuildOverview: View {
                 Section("Structure") {
                     row("Files", "\(s.fileCount ?? summary.fileCount)")
                     row("Total size", humanSize(s.totalSize ?? summary.totalSize))
-                    if let d = s.maxDepth { row("Max depth", "\(d)") }
-                    if let hist = s.extHistogram, !hist.isEmpty {
-                        row("Top extensions", topExtensions(hist))
-                    }
                 }
             }
         }

@@ -1561,18 +1561,6 @@ mod app {
         let mut r = Rows::new();
         r.add("Files", st.file_count.to_string());
         r.add("Total size", human_size(st.total_size));
-        r.add("Max depth", st.max_depth.to_string());
-        if !st.ext_histogram.is_empty() {
-            let mut exts: Vec<_> = st.ext_histogram.iter().collect();
-            exts.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-            let top = exts
-                .iter()
-                .take(8)
-                .map(|(k, v)| format!("{}×{}", if k.is_empty() { "(none)" } else { k }, v))
-                .collect::<Vec<_>>()
-                .join(", ");
-            r.add("Top extensions", top);
-        }
         out.extend(section("Structure", r.0));
 
         out
