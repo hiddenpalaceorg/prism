@@ -407,13 +407,17 @@ export interface BuildListItem {
   file_count: number;
   total_size: number;
   ingested_at: string;
+  /** Disc mastering date — volume creation, else the header release date. */
+  build_date: string | null;
 }
 
-/// List stored builds, most recently ingested first (for the /builds index).
-export async function listBuilds(pool: Pool, limit = 500): Promise<BuildListItem[]> {
+/// List stored builds alphabetically (for the /builds index, which filters client-side).
+export async function listBuilds(pool: Pool, limit = 10000): Promise<BuildListItem[]> {
   const r = await pool.query(
-    `SELECT sha256, name, system, file_count, total_size, ingested_at
-     FROM builds ORDER BY ingested_at DESC LIMIT $1`,
+    `SELECT sha256, name, system, file_count, total_size, ingested_at,
+            COALESCE(record->'info'->'volume'->>'creation_date',
+                     record->'info'->'header'->>'release_date') AS build_date
+     FROM builds ORDER BY lower(name) LIMIT $1`,
     [limit]
   );
   return r.rows as BuildListItem[];
