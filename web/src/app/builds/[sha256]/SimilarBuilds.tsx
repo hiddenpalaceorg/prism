@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import RowLink from "../RowLink";
 import { TIERS, applicableTiers, fusedScore, type FusedBuild, type TierKey } from "@/lib/tiers";
 
 const MIN_SCORE = 0.01; // > 1%
@@ -79,23 +79,29 @@ export default function SimilarBuilds({ builds, queryCaps }: { builds: FusedBuil
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900/60">
             {ranked.map(({ b, score, applic }) => (
               <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
-                <td className="max-w-xs truncate px-3 py-1.5 font-medium first:pl-0">
-                  <Link href={`/builds/${b.sha256}`} className="hover:underline">{b.name}</Link>
+                <td className="max-w-xs h-full p-0 font-medium first:[&>a]:pl-0">
+                  <RowLink href={`/builds/${b.sha256}`} focusable className="truncate px-3 hover:underline">{b.name}</RowLink>
                 </td>
-                <td className="w-px px-3 py-1.5">
-                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs whitespace-nowrap dark:bg-neutral-800">{b.system}</span>
+                <td className="w-px h-full p-0">
+                  <RowLink href={`/builds/${b.sha256}`} className="px-3">
+                    <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs whitespace-nowrap dark:bg-neutral-800">{b.system}</span>
+                  </RowLink>
                 </td>
                 {/* per-tier contributions (active tiers this build actually matched) */}
-                <td className="px-3 py-1.5 text-[11px] text-neutral-400">
-                  <span className="flex flex-wrap gap-x-3 gap-y-0.5">
-                    {TIERS.filter((t) => applic.has(t.key) && (b.scores[t.key] ?? 0) > 0).map((t) => (
-                      <span key={t.key}>
-                        {t.label} <span className="font-mono">{Math.round((b.scores[t.key] as number) * 100)}%</span>
-                      </span>
-                    ))}
-                  </span>
+                <td className="h-full p-0 text-[11px] text-neutral-400">
+                  <RowLink href={`/builds/${b.sha256}`} className="px-3">
+                    <span className="flex flex-wrap gap-x-3 gap-y-0.5">
+                      {TIERS.filter((t) => applic.has(t.key) && (b.scores[t.key] ?? 0) > 0).map((t) => (
+                        <span key={t.key}>
+                          {t.label} <span className="font-mono">{Math.round((b.scores[t.key] as number) * 100)}%</span>
+                        </span>
+                      ))}
+                    </span>
+                  </RowLink>
                 </td>
-                <td className="w-12 px-3 py-1.5 text-right font-mono text-xs font-semibold tabular-nums last:pr-0">{(score * 100).toFixed(1)}%</td>
+                <td className="w-12 h-full p-0 last:[&>a]:pr-0">
+                  <RowLink href={`/builds/${b.sha256}`} className="px-3 text-right font-mono text-xs font-semibold tabular-nums">{(score * 100).toFixed(1)}%</RowLink>
+                </td>
               </tr>
             ))}
           </tbody>
