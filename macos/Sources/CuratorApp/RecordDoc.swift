@@ -123,11 +123,3 @@ func prettyDate(_ s: String?) -> String? {
     }
     return s
 }
-
-/// "iso×1, bin×3, …" — the busiest file extensions, for the Overview's structure section.
-func topExtensions(_ hist: [String: UInt64], limit: Int = 8) -> String {
-    hist.sorted { $0.value > $1.value }
-        .prefix(limit)
-        .map { "\($0.key.isEmpty ? "(none)" : $0.key)×\($0.value)" }
-        .joined(separator: ", ")
-}
