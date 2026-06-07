@@ -1,4 +1,8 @@
-@import "tailwindcss";
+/* Constrain Tailwind v4's automatic content detection to this app's own source.
+   Without source(), it walks up to the git root (7.8GB+ of
+   build dumps, crates, and binaries) and tries to read every non-gitignored file
+   into the class scanner — which balloons to >100GB RAM and OOMs the machine. */
+@import "tailwindcss" source("../");
 
 :root {
   --background: #ffffff;
