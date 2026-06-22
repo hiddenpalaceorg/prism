@@ -39,6 +39,20 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
   const st = rec.structural;
   const comp = rec.composites;
 
+  // Skip-if-unchanged: a build's derived data (embedding, files, fingerprints)
+  // is a pure function of its record, so re-ingesting an identical record would
+  // recompute everything to the same values — wasting an embedding inference and
+  // a full file rewrite per build. JSONB `=` is order-independent, so this is a
+  // correct equality test; comparing against the stored record (post-stripNulls,
+  // exactly as it was inserted) means a re-run of the same export touches each
+  // unchanged build with a single indexed lookup instead. ingestRecordTx is
+  // all-or-nothing, so an existing build row always has consistent derived data.
+  const seen = (await db.query(
+    "SELECT 1 FROM builds WHERE sha256=$1 AND record = $2::jsonb",
+    [sha, JSON.stringify(rec)]
+  )) as { rows: unknown[] };
+  if (seen.rows.length > 0) return;
+
   await db.query(
     `INSERT INTO builds (sha256,name,system,size,md5,sha1,content_hash,filtered_content_hash,
         file_count,total_size,max_depth,ext_histogram,text_doc,fingerprint_profile,record)
