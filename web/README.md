@@ -5,11 +5,9 @@ listing of known builds and the read-only **similarity service** the desktop GUI
 
 ## Status
 
-Working: DB schema, ingester, search + similarity + submission **API routes**, and a
-minimal search UI. Validated against Postgres on the Sonic CD lineage.
-
-To build: pgvector **text embedding** at ingest, richer UI (build detail / similarity
-browse), submission moderation.
+DB schema, ingester (with pgvector **text embedding**), search + similarity +
+submission **API routes**, a search UI, build-detail and similarity-browse pages, and
+submission moderation. Validated against Postgres on the Sonic CD lineage.
 
 ## Setup
 
@@ -25,8 +23,9 @@ DATABASE_URL=postgres:///curator npm run dev
 # from a desktop export bundle (curator export -o builds.jsonl)
 DATABASE_URL=postgres:///curator npm run ingest -- builds.jsonl
 ```
-Populates `builds`, `files`, `build_fileset`, `build_chunk_signature`, and
-derives LSH bands. `text_embedding` is left NULL pending the embedding model.
+Populates `builds`, `files`, `build_fileset`, `build_chunk_signature`,
+`build_resemblance`, `exe_fp`, and `audio_fp`, computing the `text_embedding`
+(all-MiniLM-L6-v2) and LSH bands at ingest.
 
 ## API
 

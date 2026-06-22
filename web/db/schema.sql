@@ -30,7 +30,7 @@ CREATE TABLE builds (
     max_depth             INT NOT NULL DEFAULT 0,
     ext_histogram         JSONB NOT NULL DEFAULT '{}',
     text_doc              TEXT NOT NULL DEFAULT '',
-    text_embedding        vector(384),              -- bge-small-en, computed at ingest
+    text_embedding        vector(384),              -- all-MiniLM-L6-v2, computed at ingest
     fingerprint_profile   TEXT NOT NULL,
     record                JSONB NOT NULL,           -- full canonical record
     ingested_at           TIMESTAMPTZ NOT NULL DEFAULT now()
