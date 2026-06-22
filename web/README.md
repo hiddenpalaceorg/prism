@@ -1,13 +1,6 @@
 # curator-web
 
-Next.js 16 (App Router, TypeScript, Tailwind 4) + Postgres: a searchable public
-listing of known builds and the read-only **similarity service** the desktop GUIs call.
-
-## Status
-
-DB schema, ingester (with pgvector **text embedding**), search + similarity +
-submission **API routes**, a search UI, build-detail and similarity-browse pages, and
-submission moderation. Validated against Postgres on the Sonic CD lineage.
+A searchable public listing of known builds and the read-only similarity service the desktop GUIs call.
 
 ## Setup
 
@@ -35,15 +28,3 @@ Populates `builds`, `files`, `build_fileset`, `build_chunk_signature`,
   (read-only, not ingested) and returns fused similar-build neighbors.
 - `POST /api/submissions` — body `{ nickname, record }`; enqueues for moderation
   (dedup by sha256). `GET /api/submissions/<sha256>` returns status.
-
-## Layout
-
-```
-src/app/            UI (page.tsx) + API route handlers
-src/lib/            db pool, fingerprint helpers, queries, shared types
-scripts/            ingest.ts, similar.ts (run via tsx)
-db/schema.sql       Postgres schema (tiers 1–5 + FTS + pgvector)
-```
-
-`src/lib/fingerprint.ts` mirrors the desktop fingerprint math (file-hash sets, LSH
-bands) so query features derive identically from a `BuildRecord`.
