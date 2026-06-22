@@ -97,10 +97,16 @@ _CONTROL_CHARS[0x7F] = None
 
 
 def _nullify(v):
-    if isinstance(v, str):
-        v = v.translate(_CONTROL_CHARS).strip()
-        return v or None
-    return v
+    # These header/volume/SFO fields are string-typed in the consumer's schema,
+    # but ps2exe hands a few back as ints (e.g. SFO parental_level). Coerce any
+    # non-None, non-str scalar to a string so a numeric value can't break the
+    # consumer's string deserialization; None stays None.
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        v = str(v)
+    v = v.translate(_CONTROL_CHARS).strip()
+    return v or None
 
 
 def _fmt_date(d):
