@@ -1,0 +1,156 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  rust:
+    name: rust core + cli + ffi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Cargo test + build (toolchain pinned by rust-toolchain.toml)
+        run: |
+          cargo test --workspace
+          cargo build --workspace
+
+  windows-build:
+    name: windows GUI build (single exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ps2exe (the adapter freeze needs it)
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+      - name: freeze adapter (PyInstaller one-file)
+        working-directory: ps2exe-adapter
+        run: uv run --group dev pyinstaller --noconfirm curator-adapter.spec
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          # gui-win is excluded from the root workspace; it has its own target dir.
+          workspaces: crates/curator-gui-win
+          key: windows-msvc
+      - name: build GUI with the adapter embedded (single self-contained exe)
+        # build.rs embeds $CURATOR_ADAPTER_EXE; the GUI extracts it to TEMP on launch.
+        env:
+          CURATOR_ADAPTER_EXE: ${{ github.workspace }}\ps2exe-adapter\dist\curator-adapter.exe
+        run: cargo build --release --manifest-path crates/curator-gui-win/Cargo.toml
+      - name: upload single exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: curator-gui-win-${{ github.sha }}
+          path: crates/curator-gui-win/target/release/curator-gui-win.exe
+          if-no-files-found: error
+
+  macos-build:
+    name: macOS app build (.app artifact)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ps2exe (the adapter freeze needs it)
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+      - name: cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: macos/.build
+          # Invalidate when Swift sources, the package, or the FFI/core surface (which
+          # the regenerated UniFFI bindings derive from) change; restore-keys lets a
+          # stale .build seed an incremental rebuild.
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('macos/Package.swift', 'macos/Sources/**', 'crates/curator-ffi/src/**', 'crates/curator-core/src/**') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+      - name: build Curator.app (release, adapter frozen + embedded by build-app.sh)
+        run: bash macos/build-app.sh release
+      - name: ad-hoc codesign (reduces Gatekeeper friction on download)
+        run: codesign --force --deep --sign - macos/dist/Curator.app
+      - name: zip the bundle (ditto preserves the .app structure)
+        run: ditto -c -k --keepParent macos/dist/Curator.app macos/dist/Curator-app.zip
+      - name: upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Curator-macos-${{ github.sha }}
+          path: macos/dist/Curator-app.zip
+          if-no-files-found: error
+
+  release:
+    name: publish downloadable builds
+    runs-on: ubuntu-latest
+    needs: [windows-build, macos-build]
+    # Pushes only: fork PRs lack (and shouldn't have) release-write permission.
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: stage assets with random, unguessable names
+        run: |
+          set -euo pipefail
+          token=$(openssl rand -hex 6)
+          mkdir out
+          # Windows is a single self-contained .exe (adapter embedded); macOS is the .app zip.
+          cp dl/curator-gui-win-*/curator-gui-win.exe "out/Curator-win-${token}.exe"
+          cp dl/Curator-macos-*/Curator-app.zip        "out/Curator-mac-${token}.zip"
+          ls -la out
+      - name: publish per-branch draft release (rolling; hidden from /releases, no git tag)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME//\//-}"          # sanitize slashes (feature/x -> feature-x)
+          tag="ci-${branch}"
+          title="CI build (${GITHUB_REF_NAME} @ ${GITHUB_SHA:0:8})"
+          notes="Latest automated build of \`${GITHUB_REF_NAME}\` (${GITHUB_SHA}). Draft, unsigned/ad-hoc-signed."
+          # One rolling draft per branch: recreate it each push so the randomly-named
+          # assets don't accumulate (--draft pushes no git tag; the tag is just a label).
+          gh release delete "$tag" --yes 2>/dev/null || true
+          gh release create "$tag" out/* --target "$GITHUB_SHA" --title "$title" --notes "$notes" --draft
+          url=$(gh release view "$tag" --json url -q .url)
+          {
+            echo "### Draft build — not listed on /releases, sign-in required"
+            echo "Draft page: $url"
+            echo ""
+            echo "Assets:"
+            gh release view "$tag" --json assets -q '.assets[] | "- \(.name)"'
+            echo ""
+            echo "Download: \`gh release download $tag\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  web:
+    name: web (tsc + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+
+  adapter:
+    name: python adapter (audio fp)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ps2exe-adapter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+      - name: pytest (skips the heavy ps2exe stack; pins match pyproject)
+        run: uv run --no-project --with numpy --with blake3==1.0.8 --with fastcdc==1.7.0 --with pytest pytest tests/ -q
