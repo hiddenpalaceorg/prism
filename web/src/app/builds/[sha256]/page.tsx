@@ -3,43 +3,22 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
+import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
 import { getBuild, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities } from "@/lib/queries";
-import type { BuildRecord, Node } from "@/lib/types";
+import type { BuildRecord } from "@/lib/types";
 import SimilarBuilds from "./SimilarBuilds";
+import FileTree from "./FileTree";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-interface FlatFile {
-  path: string;
-  size?: number;
-  sha1?: string;
-  date?: string;
-  dir: boolean;
+// The corpus only changes at ingest; render once and serve cached for an hour
+// (the moderation accept endpoint revalidates the affected paths immediately).
+// The empty generateStaticParams is load-bearing: without it a dynamic route
+// is rendered per-request and `revalidate` never engages — with it, pages are
+// ISR-cached on first visit and refreshed in the background.
+export const revalidate = 3600;
+export function generateStaticParams(): Array<{ sha256: string }> {
+  return [];
 }
-
-function flatten(nodes: Node[], prefix = ""): FlatFile[] {
-  const out: FlatFile[] = [];
-  for (const n of nodes) {
-    const path = `${prefix}/${n.name}`.replace(/\/+/g, "/");
-    if (n.type === "dir") {
-      out.push({ path, dir: true, date: n.date });
-      out.push(...flatten(n.children, path));
-    } else {
-      out.push({ path, dir: false, size: n.size, sha1: n.sha1, date: n.date });
-    }
-  }
-  return out;
-}
-
-function formatDate(date?: string): string {
-  if (!date) return "—";
-  // Records carry ISO-ish timestamps; normalize to "YYYY-MM-DD HH:MM".
-  const m = date.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
-  return m ? `${m[1]} ${m[2]}` : date;
-}
-
-const MAX_FILE_ROWS = 500;
 
 function humanSize(bytes?: number): string {
   if (bytes == null) return "—";
@@ -111,9 +90,11 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
 
   const q = deriveQueryFeatures(build.record);
   // Pull a wide candidate set per tier so the fused top-50 is well-populated.
-  const similar = await findSimilar(pool, q, 100);
   // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const textNeighbors = await findByEmbeddingOf(pool, sha256, 100);
+  const [similar, textNeighbors] = await Promise.all([
+    findSimilar(pool, q, 100),
+    findByEmbeddingOf(pool, sha256, 100),
+  ]);
   const fused = fuseSimilar(similar, textNeighbors);
 
   // A tier only counts when both builds have its data — attach each build's capabilities
@@ -122,20 +103,22 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
   const queryCaps = caps.get(sha256) ?? [];
   for (const f of fused) f.caps = caps.get(f.sha256) ?? [];
 
-  const files = flatten(build.record.contents);
-  const dirCount = files.filter((f) => f.dir).length;
+  // Ship only the initially-visible subtree; FileTree lazily fetches the rest.
+  const tree = buildTree(build.record.contents);
+  const expanded = initialExpanded(tree);
+  const counts = treeCounts(tree);
   const meta = metaSections(build.record);
   const filteredContentHash = build.record.composites?.filtered_content_hash;
 
   return (
-    <main className="mx-auto max-w-none px-8 py-10">
+    <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
       <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
 
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">
         {build.record.info?.title as string | undefined ?? build.name}
       </h1>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
-        <Chip>{build.system}</Chip>
+        <Chip>{build.system || "unknown"}</Chip>
         <Chip>{build.file_count} files</Chip>
         <Chip>{humanSize(build.total_size)}</Chip>
         <Chip>profile {build.fingerprint_profile}</Chip>
@@ -176,38 +159,9 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
 
       <section className="mt-8">
         <h2 className="text-lg font-medium">
-          Files <span className="text-sm font-normal text-neutral-400">({files.length - dirCount} files, {dirCount} dirs)</span>
+          Files <span className="text-sm font-normal text-neutral-400">({counts.files} files, {counts.dirs} dirs)</span>
         </h2>
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wide text-neutral-500 dark:border-neutral-800">
-                <th className="px-3 py-2 font-medium">Name</th>
-                <th className="px-3 py-2 text-right font-medium">Size</th>
-                <th className="px-3 py-2 font-medium">Modified</th>
-              </tr>
-            </thead>
-            <tbody>
-              {files.slice(0, MAX_FILE_ROWS).map((f, i) => (
-                <tr
-                  key={i}
-                  className="border-b border-neutral-100 last:border-0 hover:bg-neutral-50 dark:border-neutral-900 dark:hover:bg-neutral-900/40"
-                >
-                  <td className={`px-3 py-1 font-mono ${f.dir ? "text-neutral-400" : ""}`}>
-                    {f.path}
-                  </td>
-                  <td className="px-3 py-1 text-right tabular-nums text-neutral-500">
-                    {f.dir ? "" : humanSize(f.size)}
-                  </td>
-                  <td className="px-3 py-1 font-mono text-xs text-neutral-500">{formatDate(f.date)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {files.length > MAX_FILE_ROWS && (
-          <p className="mt-2 text-xs text-neutral-400">Showing first {MAX_FILE_ROWS} of {files.length} entries.</p>
-        )}
+        <FileTree sha256={sha256} roots={pruneToExpanded(tree, expanded)} initiallyExpanded={[...expanded]} />
       </section>
     </main>
   );
