@@ -88,7 +88,7 @@ export default function Home() {
                   </Link>
                   <div className="mt-0.5 flex gap-3 text-xs text-neutral-500">
                     <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
-                      {h.system}
+                      {h.system || "unknown"}
                     </span>
                     <span className="font-mono">{h.sha256.slice(0, 16)}…</span>
                     {h.sim != null && <span>sim {h.sim.toFixed(2)}</span>}
