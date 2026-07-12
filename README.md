@@ -102,6 +102,36 @@ self-contained Windows `.exe` (the adapter embedded, extracted to `%TEMP%` on la
 the adapter-embedded macOS `.app` — see `.github/workflows/ci.yml`.
 Remaining for a shippable app: macOS code-signing/notarization.
 
+## Building from source on Linux (servers)
+
+For a headless box that builds the library from a local dump collection (no GUI,
+no prebuilt artifact), build the CLI from source. `scripts/bootstrap-linux.sh`
+takes a bare host to a working `curator` with **no root**: it installs rustup and
+uv into the user's home (uv supplies the pinned Python 3.10 and the adapter's
+locked deps) and compiles `curator-cli`. The one system dependency is
+`libarchive.so`, which ships with virtually every Linux base install.
+
+```sh
+git clone --recurse-submodules <repo> curator && cd curator
+bash scripts/bootstrap-linux.sh        # idempotent; prints CURATOR_BIN + CURATOR_ADAPTER_DIR
+```
+
+To build (or extend) a library from whole dump-set directories and export an
+ingestable feed, use `scripts/curator-build-set.sh` — it shards analysis across
+CPUs into independent `--data-dir` stores (no SQLite-writer contention), and is
+resumable and incremental:
+
+```sh
+scripts/curator-build-set.sh analyze --bin target/release/curator \
+  --adapter ps2exe-adapter --lib ~/curator-lib/main --jobs 6 -- /path/to/Console-A /path/to/Console-B
+scripts/curator-build-set.sh export  --bin target/release/curator \
+  --lib ~/curator-lib/main --out feed.jsonl     # ingest with web/scripts/ingest.ts
+```
+
+Driving this end-to-end against the remote dump server (sync → bootstrap →
+analyze → export → ingest → verify web) is automated by the `remote-library`
+skill (`.claude/skills/remote-library`).
+
 ## Notes
 
 - The adapter pins **pycdlib 1.14** and **Python 3.10** — required by ps2exe's patches
