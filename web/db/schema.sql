@@ -60,6 +60,20 @@ CREATE INDEX idx_files_sha1      ON files(sha1);
 CREATE INDEX idx_files_md5       ON files(md5);
 CREATE INDEX idx_files_sha256    ON files(sha256);
 
+-- ── per-build viewable assets (images/audio/text ≤ 20MB) ─────────────────────
+-- Metadata for the build page's inline asset viewer; the bytes live in the
+-- content-addressed blob store on disk (ASSET_STORE_DIR), filled at ingest.
+CREATE TABLE build_asset (
+    build_sha256 TEXT NOT NULL REFERENCES builds(sha256) ON DELETE CASCADE,
+    path         TEXT NOT NULL,           -- full path within the build (matches files.path)
+    sha256       TEXT NOT NULL,           -- content hash = key into the blob store
+    size         BIGINT NOT NULL,
+    mime         TEXT NOT NULL,           -- as served; text is always text/plain
+    kind         TEXT NOT NULL,           -- image|audio|video|text
+    PRIMARY KEY (build_sha256, path)
+);
+CREATE INDEX idx_build_asset_sha256 ON build_asset(sha256);
+
 -- ── identical-file overlap (set of truncated file-content hashes) ─────
 -- bigint[] of file sha1s truncated to 63 bits; smlar (or intarray &&) for Jaccard.
 CREATE TABLE build_fileset (

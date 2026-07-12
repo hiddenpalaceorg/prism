@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "ingest": "tsx scripts/ingest.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
