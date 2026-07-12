@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { submissionStatus, setSubmissionStatus } from "@/lib/queries";
 import { ingestRecord, refreshAudioIdf } from "@/lib/ingest";
@@ -74,5 +75,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   } finally {
     c.release();
   }
+  // Build pages are cached (revalidate = 3600); make the new build visible now.
+  revalidatePath(`/builds/${sha256}`);
   return Response.json({ sha256, status: "accepted" });
 }
