@@ -1,18 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { Node } from "@/lib/types";
-
-interface TreeNode {
-  name: string; // basename, or "a/b/c" for a compressed single-child chain
-  path: string; // full path from root
-  dir: boolean;
-  size?: number;
-  date?: string;
-  children: TreeNode[];
-  fileCount: number; // directories: total files in the subtree
-  totalSize: number; // directories: total bytes in the subtree
-}
+import { useCallback, useState } from "react";
+import {
+  collectDirPaths,
+  findByPath,
+  fullyLoaded,
+  graftChildren,
+  type TreeNode,
+} from "@/lib/filetree";
 
 function humanSize(bytes?: number): string {
   if (bytes == null) return "—";
@@ -37,67 +32,6 @@ function formatDate(date?: string): string {
 const ROW_H = 28;
 const HEADER_H = 28;
 
-const join = (a: string, b: string) => `${a}/${b}`.replace(/\/+/g, "/");
-
-// Directories sort first, then alphabetically (case-insensitive), like a file browser.
-function compareNodes(a: Node, b: Node): number {
-  if ((a.type === "dir") !== (b.type === "dir")) return a.type === "dir" ? -1 : 1;
-  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-}
-
-function buildTree(nodes: Node[], prefix: string): TreeNode[] {
-  return [...nodes].sort(compareNodes).map((n) => {
-    const path = join(prefix, n.name);
-    if (n.type !== "dir") {
-      return { name: n.name, path, dir: false, size: n.size, date: n.date, children: [], fileCount: 0, totalSize: n.size ?? 0 };
-    }
-    // Collapse chains of single-child directories into one row (a/b/c).
-    let name = n.name;
-    let cur = path;
-    let date = n.date;
-    let children = n.children;
-    while (children.length === 1 && children[0].type === "dir") {
-      const only = children[0];
-      name = join(name, only.name);
-      cur = join(cur, only.name);
-      date = only.date ?? date;
-      children = only.children;
-    }
-    const built = buildTree(children, cur);
-    const fileCount = built.reduce((acc, c) => acc + (c.dir ? c.fileCount : 1), 0);
-    const totalSize = built.reduce((acc, c) => acc + (c.dir ? c.totalSize : c.size ?? 0), 0);
-    return { name, path: cur, dir: true, date, children: built, fileCount, totalSize };
-  });
-}
-
-// Expand greedily, depth-first, until roughly `budget` rows would be visible — so small
-// builds open fully while huge ones start mostly collapsed.
-function initialExpanded(roots: TreeNode[], budget = 200): Set<string> {
-  const set = new Set<string>();
-  let count = 0;
-  const visit = (nodes: TreeNode[]) => {
-    for (const n of nodes) {
-      if (count++ > budget) return;
-      if (n.dir && n.children.length) {
-        set.add(n.path);
-        visit(n.children);
-      }
-    }
-  };
-  visit(roots);
-  return set;
-}
-
-function collectDirPaths(nodes: TreeNode[], out: string[] = []): string[] {
-  for (const n of nodes) {
-    if (n.dir) {
-      out.push(n.path);
-      collectDirPaths(n.children, out);
-    }
-  }
-  return out;
-}
-
 interface Row {
   node: TreeNode;
   depth: number;
@@ -111,30 +45,98 @@ function visibleRows(nodes: TreeNode[], expanded: Set<string>, depth = 0, out: R
   return out;
 }
 
-export default function FileTree({ nodes }: { nodes: Node[] }) {
-  const tree = useMemo(() => buildTree(nodes, ""), [nodes]);
-  const allDirs = useMemo(() => collectDirPaths(tree), [tree]);
-  const [expanded, setExpanded] = useState<Set<string>>(() => initialExpanded(tree));
+// The server ships only the initially-visible subtree (collapsed dirs are
+// stubs carrying their aggregates); expanding a stub fetches its children from
+// /api/build/<sha256>/tree. "Expand all" fetches the full tree once.
+export default function FileTree({
+  sha256,
+  roots,
+  initiallyExpanded,
+}: {
+  sha256: string;
+  roots: TreeNode[];
+  initiallyExpanded: string[];
+}) {
+  const [tree, setTree] = useState<TreeNode[]>(roots);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initiallyExpanded));
+  const [loading, setLoading] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
 
-  const rows = useMemo(() => visibleRows(tree, expanded), [tree, expanded]);
+  const rows = visibleRows(tree, expanded);
 
-  const toggle = (path: string) =>
-    setExpanded((prev) => {
+  const setBusy = (path: string, busy: boolean) =>
+    setLoading((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      if (busy) next.add(path);
+      else next.delete(path);
       return next;
     });
+
+  const toggle = useCallback(
+    async (path: string) => {
+      if (expanded.has(path)) {
+        setExpanded((prev) => {
+          const next = new Set(prev);
+          next.delete(path);
+          return next;
+        });
+        return;
+      }
+      const node = findByPath(tree, path);
+      if (!node || !node.dir) return;
+      if (!node.loaded) {
+        if (loading.has(path)) return;
+        setBusy(path, true);
+        try {
+          const res = await fetch(`/api/build/${sha256}/tree?path=${encodeURIComponent(path)}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data: { children: TreeNode[] } = await res.json();
+          setTree((prev) => graftChildren(prev, path, data.children));
+          setError(null);
+        } catch {
+          setError("Failed to load folder contents — try again.");
+          return;
+        } finally {
+          setBusy(path, false);
+        }
+      }
+      setExpanded((prev) => new Set(prev).add(path));
+    },
+    [expanded, tree, loading, sha256]
+  );
+
+  const [expandingAll, setExpandingAll] = useState(false);
+  const expandAll = useCallback(async () => {
+    let full = tree;
+    if (!fullyLoaded(tree)) {
+      setExpandingAll(true);
+      try {
+        const res = await fetch(`/api/build/${sha256}/tree`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: { roots: TreeNode[] } = await res.json();
+        full = data.roots;
+        setTree(full);
+        setError(null);
+      } catch {
+        setError("Failed to load the full tree — try again.");
+        return;
+      } finally {
+        setExpandingAll(false);
+      }
+    }
+    setExpanded(new Set(collectDirPaths(full)));
+  }, [tree, sha256]);
 
   return (
     <>
       <div className="mt-3 flex gap-3 text-xs text-neutral-500">
-        <button className="hover:underline" onClick={() => setExpanded(new Set(allDirs))}>
-          Expand all
+        <button className="hover:underline disabled:opacity-50" onClick={() => void expandAll()} disabled={expandingAll}>
+          {expandingAll ? "Expanding…" : "Expand all"}
         </button>
         <button className="hover:underline" onClick={() => setExpanded(new Set())}>
           Collapse all
         </button>
+        {error && <span className="text-red-500">{error}</span>}
       </div>
       <div className="mt-2">
         <div
@@ -147,6 +149,7 @@ export default function FileTree({ nodes }: { nodes: Node[] }) {
         </div>
         {rows.map(({ node, depth }) => {
           const open = expanded.has(node.path);
+          const busy = loading.has(node.path);
           return (
             <div
               key={node.path}
@@ -165,10 +168,10 @@ export default function FileTree({ nodes }: { nodes: Node[] }) {
               >
                 {node.dir ? (
                   <button
-                    onClick={() => toggle(node.path)}
+                    onClick={() => void toggle(node.path)}
                     className="flex w-full min-w-0 items-center gap-1 text-left text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
                   >
-                    <span className="w-3 shrink-0 text-[10px]">{open ? "▾" : "▸"}</span>
+                    <span className="w-3 shrink-0 text-[10px]">{busy ? "⋯" : open ? "▾" : "▸"}</span>
                     <span className="truncate">{node.name}/</span>
                     <span className="shrink-0 text-xs text-neutral-400">({node.fileCount})</span>
                   </button>
