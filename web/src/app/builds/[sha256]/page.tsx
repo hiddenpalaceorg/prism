@@ -3,34 +3,21 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
+import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
 import { getBuild, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities } from "@/lib/queries";
-import type { BuildRecord, Node } from "@/lib/types";
+import type { BuildRecord } from "@/lib/types";
 import SimilarBuilds from "./SimilarBuilds";
 import FileTree from "./FileTree";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-interface FlatFile {
-  path: string;
-  size?: number;
-  sha1?: string;
-  date?: string;
-  dir: boolean;
-}
-
-function flatten(nodes: Node[], prefix = ""): FlatFile[] {
-  const out: FlatFile[] = [];
-  for (const n of nodes) {
-    const path = `${prefix}/${n.name}`.replace(/\/+/g, "/");
-    if (n.type === "dir") {
-      out.push({ path, dir: true, date: n.date });
-      out.push(...flatten(n.children, path));
-    } else {
-      out.push({ path, dir: false, size: n.size, sha1: n.sha1, date: n.date });
-    }
-  }
-  return out;
+// The corpus only changes at ingest; render once and serve cached for an hour
+// (the moderation accept endpoint revalidates the affected paths immediately).
+// The empty generateStaticParams is load-bearing: without it a dynamic route
+// is rendered per-request and `revalidate` never engages — with it, pages are
+// ISR-cached on first visit and refreshed in the background.
+export const revalidate = 3600;
+export function generateStaticParams(): Array<{ sha256: string }> {
+  return [];
 }
 
 function humanSize(bytes?: number): string {
@@ -103,9 +90,11 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
 
   const q = deriveQueryFeatures(build.record);
   // Pull a wide candidate set per tier so the fused top-50 is well-populated.
-  const similar = await findSimilar(pool, q, 100);
   // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const textNeighbors = await findByEmbeddingOf(pool, sha256, 100);
+  const [similar, textNeighbors] = await Promise.all([
+    findSimilar(pool, q, 100),
+    findByEmbeddingOf(pool, sha256, 100),
+  ]);
   const fused = fuseSimilar(similar, textNeighbors);
 
   // A tier only counts when both builds have its data — attach each build's capabilities
@@ -114,8 +103,10 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
   const queryCaps = caps.get(sha256) ?? [];
   for (const f of fused) f.caps = caps.get(f.sha256) ?? [];
 
-  const files = flatten(build.record.contents);
-  const dirCount = files.filter((f) => f.dir).length;
+  // Ship only the initially-visible subtree; FileTree lazily fetches the rest.
+  const tree = buildTree(build.record.contents);
+  const expanded = initialExpanded(tree);
+  const counts = treeCounts(tree);
   const meta = metaSections(build.record);
   const filteredContentHash = build.record.composites?.filtered_content_hash;
 
@@ -168,9 +159,9 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
 
       <section className="mt-8">
         <h2 className="text-lg font-medium">
-          Files <span className="text-sm font-normal text-neutral-400">({files.length - dirCount} files, {dirCount} dirs)</span>
+          Files <span className="text-sm font-normal text-neutral-400">({counts.files} files, {counts.dirs} dirs)</span>
         </h2>
-        <FileTree nodes={build.record.contents} />
+        <FileTree sha256={sha256} roots={pruneToExpanded(tree, expanded)} initiallyExpanded={[...expanded]} />
       </section>
     </main>
   );

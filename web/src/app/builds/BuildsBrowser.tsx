@@ -1,10 +1,9 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import RowLink from "./RowLink";
-import type { BuildListItem } from "@/lib/queries";
-
-const DISPLAY_CAP = 500;
+import type { BuildListItem, BuildSortKey } from "@/lib/queries";
 
 function humanSize(bytes?: number): string {
   if (bytes == null) return "—";
@@ -25,60 +24,73 @@ function formatDate(date: string | null): string {
   return m ? m[1] : date;
 }
 
-type SortKey = "name" | "system" | "build_date" | "file_count" | "total_size";
+interface Props {
+  rows: BuildListItem[];
+  total: number;
+  systems: string[];
+  page: number; // 1-based
+  perPage: number;
+  q: string;
+  system: string;
+  sort: BuildSortKey;
+  dir: "asc" | "desc";
+}
 
-export default function BuildsBrowser({ builds }: { builds: BuildListItem[] }) {
-  const [query, setQuery] = useState("");
-  const [system, setSystem] = useState("");
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "name", dir: 1 });
-  // Defer the query the filter reads so typing stays responsive on large lists.
-  const deferredQuery = useDeferredValue(query);
+// Thin URL-driven control: every filter/sort/page change updates the search
+// params and the server re-queries — the client only ever holds one page.
+export default function BuildsBrowser({ rows, total, systems, page, perPage, q, system, sort, dir }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+  const [input, setInput] = useState(q);
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const toggleSort = (key: SortKey) =>
-    setSort((s) => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: 1 }));
-
-  const systems = useMemo(
-    () => Array.from(new Set(builds.map((b) => b.system))).sort((a, b) => a.localeCompare(b)),
-    [builds]
-  );
-
-  const filtered = useMemo(() => {
-    const q = deferredQuery.trim().toLowerCase();
-    return builds.filter(
-      (b) => (!system || b.system === system) && (!q || b.name.toLowerCase().includes(q))
-    );
-  }, [builds, deferredQuery, system]);
-
-  const sorted = useMemo(() => {
-    const { key, dir } = sort;
-    return [...filtered].sort((a, b) => {
-      if (key === "file_count" || key === "total_size") return (a[key] - b[key]) * dir;
-      if (key === "build_date") {
-        // Missing dates always sort last, regardless of direction.
-        if (!a.build_date && !b.build_date) return 0;
-        if (!a.build_date) return 1;
-        if (!b.build_date) return -1;
-        return a.build_date.localeCompare(b.build_date) * dir;
-      }
-      return a[key].localeCompare(b[key]) * dir;
+  const navigate = (
+    next: Partial<{ q: string; system: string; sort: BuildSortKey; dir: "asc" | "desc"; page: number }>,
+    replace = false
+  ) => {
+    const state = { q, system, sort, dir, page, ...next };
+    const params = new URLSearchParams();
+    if (state.q) params.set("q", state.q);
+    if (state.system) params.set("system", state.system);
+    if (state.sort !== "name") params.set("sort", state.sort);
+    if (state.dir !== "asc") params.set("dir", state.dir);
+    if (state.page > 1) params.set("page", String(state.page));
+    const url = params.size ? `${pathname}?${params}` : pathname;
+    startTransition(() => {
+      if (replace) router.replace(url, { scroll: false });
+      else router.push(url, { scroll: false });
     });
-  }, [filtered, sort]);
+  };
 
-  const shown = sorted.slice(0, DISPLAY_CAP);
+  // Debounced live search; a new query always restarts from page 1.
+  const onInput = (value: string) => {
+    setInput(value);
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => navigate({ q: value, page: 1 }, true), 300);
+  };
+  useEffect(() => () => {
+    if (debounce.current) clearTimeout(debounce.current);
+  }, []);
+
+  const toggleSort = (key: BuildSortKey) =>
+    navigate(sort === key ? { dir: dir === "asc" ? "desc" : "asc", page: 1 } : { sort: key, dir: "asc", page: 1 });
+
+  const pages = Math.max(Math.ceil(total / perPage), 1);
 
   return (
     <>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <input
           type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={input}
+          onChange={(e) => onInput(e.target.value)}
           placeholder="Search builds…"
           className="h-9 w-80 rounded-md border border-neutral-300 bg-transparent px-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-500 dark:border-neutral-700"
         />
         <select
           value={system}
-          onChange={(e) => setSystem(e.target.value)}
+          onChange={(e) => navigate({ system: e.target.value, page: 1 })}
           className="h-9 w-48 rounded-md border border-neutral-300 bg-transparent px-3 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700"
         >
           <option value="">All systems</option>
@@ -89,27 +101,26 @@ export default function BuildsBrowser({ builds }: { builds: BuildListItem[] }) {
           ))}
         </select>
         <span className="text-xs text-neutral-400">
-          {filtered.length}
-          {filtered.length !== builds.length ? ` of ${builds.length}` : ""}
+          {total} match{total === 1 ? "" : "es"}
         </span>
       </div>
 
-      {filtered.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="mt-6 text-sm text-neutral-500">No builds match.</p>
       ) : (
-        <table className="mt-4 w-full border-collapse text-sm">
+        <table className={`mt-4 w-full border-collapse text-sm ${isPending ? "opacity-60" : ""}`}>
           <thead>
             <tr className="border-b border-neutral-200/80 text-left text-xs font-medium text-neutral-400 dark:border-neutral-800/80">
-              <Th label="Name" sortKey="name" sort={sort} onSort={toggleSort} />
+              <Th label="Name" sortKey="name" sort={sort} dir={dir} onSort={toggleSort} />
               <th className="px-3 py-1.5">SHA-256</th>
-              <Th label="System" sortKey="system" sort={sort} onSort={toggleSort} />
-              <Th label="Date" sortKey="build_date" sort={sort} onSort={toggleSort} />
-              <Th label="Files" sortKey="file_count" sort={sort} onSort={toggleSort} align="right" />
-              <Th label="Size" sortKey="total_size" sort={sort} onSort={toggleSort} align="right" last />
+              <Th label="System" sortKey="system" sort={sort} dir={dir} onSort={toggleSort} />
+              <Th label="Date" sortKey="build_date" sort={sort} dir={dir} onSort={toggleSort} />
+              <Th label="Files" sortKey="file_count" sort={sort} dir={dir} onSort={toggleSort} align="right" />
+              <Th label="Size" sortKey="total_size" sort={sort} dir={dir} onSort={toggleSort} align="right" last />
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900/60">
-            {shown.map((b) => (
+            {rows.map((b) => (
               <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
                 <td className="h-full p-0 font-medium first:[&>a]:pl-0">
                   <RowLink href={`/builds/${b.sha256}`} focusable className="px-3 hover:underline">{b.name}</RowLink>
@@ -136,10 +147,27 @@ export default function BuildsBrowser({ builds }: { builds: BuildListItem[] }) {
           </tbody>
         </table>
       )}
-      {filtered.length > DISPLAY_CAP && (
-        <p className="mt-2 text-xs text-neutral-400">
-          Showing first {DISPLAY_CAP} of {filtered.length} matches — refine your search.
-        </p>
+
+      {pages > 1 && (
+        <div className="mt-4 flex items-center gap-3 text-sm text-neutral-500">
+          <button
+            className="rounded-md border border-neutral-300 px-2.5 py-1 hover:border-neutral-500 disabled:opacity-40 disabled:hover:border-neutral-300 dark:border-neutral-700"
+            disabled={page <= 1 || isPending}
+            onClick={() => navigate({ page: page - 1 })}
+          >
+            ← Prev
+          </button>
+          <span className="text-xs">
+            page {page} of {pages}
+          </span>
+          <button
+            className="rounded-md border border-neutral-300 px-2.5 py-1 hover:border-neutral-500 disabled:opacity-40 disabled:hover:border-neutral-300 dark:border-neutral-700"
+            disabled={page >= pages || isPending}
+            onClick={() => navigate({ page: page + 1 })}
+          >
+            Next →
+          </button>
+        </div>
       )}
     </>
   );
@@ -149,21 +177,23 @@ function Th({
   label,
   sortKey,
   sort,
+  dir,
   onSort,
   align,
   last,
 }: {
   label: string;
-  sortKey: SortKey;
-  sort: { key: SortKey; dir: 1 | -1 };
-  onSort: (k: SortKey) => void;
+  sortKey: BuildSortKey;
+  sort: BuildSortKey;
+  dir: "asc" | "desc";
+  onSort: (k: BuildSortKey) => void;
   align?: "right";
   last?: boolean;
 }) {
-  const active = sort.key === sortKey;
+  const active = sort === sortKey;
   return (
     <th
-      aria-sort={active ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
       className={`p-0 ${align === "right" ? "text-right" : ""}`}
     >
       <button
@@ -174,7 +204,7 @@ function Th({
         } ${last ? "pr-0" : ""} ${sortKey === "name" ? "pl-0" : ""}`}
       >
         {label}
-        <span className={`relative top-px text-[8px] leading-none ${active ? "" : "invisible"}`}>{sort.dir === 1 ? "▲" : "▼"}</span>
+        <span className={`relative top-px text-[8px] leading-none ${active ? "" : "invisible"}`}>{dir === "asc" ? "▲" : "▼"}</span>
       </button>
     </th>
   );

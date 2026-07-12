@@ -33,11 +33,13 @@ CREATE TABLE builds (
     text_embedding        vector(384),              -- all-MiniLM-L6-v2, computed at ingest
     fingerprint_profile   TEXT NOT NULL,
     record                JSONB NOT NULL,           -- full canonical record
-    ingested_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+    ingested_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    build_date            TEXT                      -- volume creation date, else header release date (sortable copy)
 );
 CREATE INDEX idx_builds_content      ON builds(content_hash);
 CREATE INDEX idx_builds_filtered     ON builds(filtered_content_hash);
 CREATE INDEX idx_builds_system       ON builds(system);
+CREATE INDEX idx_builds_name_lower   ON builds (lower(name));
 CREATE INDEX idx_builds_name_trgm    ON builds USING gin (name gin_trgm_ops);
 CREATE INDEX idx_builds_textdoc_fts  ON builds USING gin (to_tsvector('simple', text_doc));
 CREATE INDEX idx_builds_embedding    ON builds USING hnsw (text_embedding vector_cosine_ops);
@@ -65,6 +67,19 @@ CREATE TABLE build_fileset (
     hashes       BIGINT[] NOT NULL
 );
 CREATE INDEX idx_fileset_gin ON build_fileset USING gin (hashes);
+
+-- Inverted copy of build_fileset (one row per (hash, build)). The shared-files
+-- similarity tier probes this by hash: Postgres never uses the GIN index for
+-- `hashes && $big_array` (its cost model prices arrayoverlap near zero and
+-- seq-scans), which made the tier O(|query| x |candidate|) per row — minutes
+-- for 40k-file builds. Probing (hash, build) pairs + counting is the same
+-- Jaccard (c / (|A|+|B|-c)) at index speed.
+CREATE TABLE fileset_entry (
+    hash         BIGINT NOT NULL,
+    build_sha256 TEXT NOT NULL REFERENCES builds(sha256) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX idx_fileset_entry_hash  ON fileset_entry(hash, build_sha256);
+CREATE INDEX idx_fileset_entry_build ON fileset_entry(build_sha256);
 
 -- ── chunk similarity (MinHash + LSH bands) ──────────────────────────────────
 CREATE TABLE build_chunk_signature (
