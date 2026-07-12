@@ -1,0 +1,17 @@
+[package]
+name = "curator-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Curator command-line: analyze disc images to DAT/JSON and build the local library."
+
+[[bin]]
+name = "curator"
+path = "src/main.rs"
+
+[dependencies]
+curator-core = { path = "../curator-core" }
+clap = { version = "4", features = ["derive", "env"] }
+indicatif = "0.17"
+anyhow = { workspace = true }
