@@ -1,7 +1,7 @@
 // Search + similarity queries (the data layer behind the API routes).
 
 import type { Pool } from "pg";
-import { minhashJaccard, setJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
+import { minhashJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
 import { tlshDiff } from "./tlsh";
 import type { BuildRecord, SimilarityResult } from "./types";
 import type { FusedBuild, TierKey } from "./tiers";
@@ -189,112 +189,130 @@ export async function logCheck(pool: Pool, sha256: string | null): Promise<void>
   await pool.query("INSERT INTO similarity_log (sha256) VALUES ($1)", [sha256]);
 }
 
-/** Fuse all-tier neighbors for a query build's derived features. */
+/** Fuse all-tier neighbors for a query build's derived features. The tiers are
+ *  independent queries, so they run concurrently (bounded by the pool size). */
 export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Promise<SimilarityResult> {
   const exclude = q.sha256 || "";
   const out: SimilarityResult = {
     identical_content: [], shared_files: [], similar_chunks: [], resemblance: [], exe_imports: [], exe_similar: [], audio_neighbors: [],
   };
+  const tiers: Promise<void>[] = [];
 
   if (q.content_hash) {
-    const r = await pool.query(
+    tiers.push(pool.query(
       "SELECT sha256, name, system FROM builds WHERE content_hash=$1 AND sha256<>$2",
       [q.content_hash, exclude]
-    );
-    out.identical_content = r.rows;
+    ).then((r) => { out.identical_content = r.rows; }));
   }
 
+  // Shared files: exact Jaccard over the file-hash sets, computed from the
+  // inverted fileset_entry table — |A∩B| by indexed probe + count, and
+  // |A∪B| = |A| + |B| − |A∩B| from the stored cardinalities. Identical scores
+  // to intersecting the arrays pairwise, without the seq-scan-per-candidate
+  // arrayoverlap that took minutes on 40k-file builds.
   if (q.fileset.length) {
-    const r = await pool.query(
-      `WITH q AS (SELECT $1::bigint[] AS h)
+    tiers.push(pool.query(
+      `WITH q AS (SELECT DISTINCT h FROM unnest($1::bigint[]) AS u(h)),
+            qn AS (SELECT count(*)::float AS n FROM q),
+            inter AS (
+              SELECT fe.build_sha256, count(*)::float AS c
+              FROM fileset_entry fe JOIN q ON q.h = fe.hash
+              WHERE fe.build_sha256 <> $2
+              GROUP BY fe.build_sha256
+            )
        SELECT b.sha256, b.name, b.system,
-         cardinality(ARRAY(SELECT unnest(f.hashes) INTERSECT SELECT unnest(q.h)))::float
-           / NULLIF(cardinality(ARRAY(SELECT unnest(f.hashes) UNION SELECT unnest(q.h))),0) AS jaccard
-       FROM build_fileset f
-       CROSS JOIN q
-       JOIN builds b ON b.sha256=f.build_sha256
-       WHERE f.build_sha256<>$2 AND f.hashes && q.h
+              i.c / (qn.n + cardinality(f.hashes) - i.c) AS jaccard
+       FROM inter i
+       CROSS JOIN qn
+       JOIN build_fileset f ON f.build_sha256 = i.build_sha256
+       JOIN builds b ON b.sha256 = i.build_sha256
        ORDER BY jaccard DESC LIMIT $3`,
       [arrayLit(q.fileset), exclude, limit]
-    );
-    out.shared_files = r.rows.map((x) => ({ ...x, jaccard: Number(x.jaccard) }));
+    ).then((r) => {
+      out.shared_files = r.rows.map((x) => ({ ...x, jaccard: Number(x.jaccard) }));
+    }));
   }
 
   if (q.bands?.length && q.minhash?.length) {
-    const cand = await pool.query(
+    const mine = q.minhash;
+    tiers.push(pool.query(
       `SELECT s.build_sha256 AS sha256, b.name, b.system, s.minhash
        FROM build_chunk_signature s JOIN builds b ON b.sha256=s.build_sha256
        WHERE s.build_sha256<>$2 AND s.lsh_bands && $1::bigint[]`,
       [arrayLit(q.bands), exclude]
-    );
-    const mine = q.minhash;
-    out.similar_chunks = cand.rows
-      .map((r) => ({
-        sha256: r.sha256 as string,
-        name: r.name as string,
-        system: r.system as string,
-        jaccard: minhashJaccard(mine, r.minhash as string[]),
-      }))
-      .sort((a, b) => b.jaccard - a.jaccard)
-      .slice(0, limit);
+    ).then((cand) => {
+      out.similar_chunks = cand.rows
+        .map((r) => ({
+          sha256: r.sha256 as string,
+          name: r.name as string,
+          system: r.system as string,
+          jaccard: minhashJaccard(mine, r.minhash as string[]),
+        }))
+        .sort((a, b) => b.jaccard - a.jaccard)
+        .slice(0, limit);
+    }));
   }
 
   // Resemblance: byte-shingle — candidates by shared LSH bands, ranked by
   // OPH slot agreement. Catches builds whose big files differ only by scattered small
   // edits (where chunk hashes collapse).
   if (q.resemblanceBands?.length && q.resemblanceMinhash?.length) {
-    const cand = await pool.query(
+    const mine = q.resemblanceMinhash;
+    tiers.push(pool.query(
       `SELECT s.build_sha256 AS sha256, b.name, b.system, s.minhash
        FROM build_resemblance s JOIN builds b ON b.sha256=s.build_sha256
        WHERE s.build_sha256<>$2 AND s.lsh_bands && $1::bigint[]`,
       [arrayLit(q.resemblanceBands), exclude]
-    );
-    const mine = q.resemblanceMinhash;
-    out.resemblance = cand.rows
-      .map((r) => ({
-        sha256: r.sha256 as string,
-        name: r.name as string,
-        system: r.system as string,
-        jaccard: minhashJaccard(mine, r.minhash as string[]),
-      }))
-      .sort((a, b) => b.jaccard - a.jaccard)
-      .slice(0, limit);
+    ).then((cand) => {
+      out.resemblance = cand.rows
+        .map((r) => ({
+          sha256: r.sha256 as string,
+          name: r.name as string,
+          system: r.system as string,
+          jaccard: minhashJaccard(mine, r.minhash as string[]),
+        }))
+        .sort((a, b) => b.jaccard - a.jaccard)
+        .slice(0, limit);
+    }));
   }
 
   // Exe imports: same boot-exe imports (PE imphash equality). TLSH-distance ranking is a
   // future refinement (needs a TLSH compare in the web stack).
   if (q.imphash) {
-    const r = await pool.query(
+    tiers.push(pool.query(
       `SELECT e.build_sha256 AS sha256, b.name, b.system
        FROM exe_fp e JOIN builds b ON b.sha256=e.build_sha256
        WHERE e.imphash=$1 AND e.build_sha256<>$2`,
       [q.imphash, exclude]
-    );
-    out.exe_imports = r.rows;
+    ).then((r) => { out.exe_imports = r.rows; }));
   }
 
   // Exe TLSH: rank stored exe digests by distance (linear scan; small corpus).
   // A TLSH forest would index this at scale.
   if (q.tlsh) {
-    const r = await pool.query(
+    tiers.push(pool.query(
       // Cap the linear TLSH scan to bound work on large corpora.
       `SELECT e.build_sha256 AS sha256, b.name, b.system, e.tlsh
        FROM exe_fp e JOIN builds b ON b.sha256=e.build_sha256
        WHERE e.tlsh IS NOT NULL AND e.build_sha256<>$1
        LIMIT 5000`,
       [exclude]
-    );
-    out.exe_similar = r.rows
-      .map((row) => ({ sha256: row.sha256, name: row.name, system: row.system, distance: tlshDiff(q.tlsh!, row.tlsh) ?? Infinity }))
-      .filter((x) => x.distance <= TLSH_MAX_DISTANCE)
-      .sort((a, b) => a.distance - b.distance)
-      .slice(0, limit);
+    ).then((r) => {
+      out.exe_similar = r.rows
+        .map((row) => ({ sha256: row.sha256, name: row.name, system: row.system, distance: tlshDiff(q.tlsh!, row.tlsh) ?? Infinity }))
+        .filter((x) => x.distance <= TLSH_MAX_DISTANCE)
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, limit);
+    }));
   }
 
   if (q.audioTracks.length) {
-    out.audio_neighbors = await findAudioSimilar(pool, q.audioTracks, exclude, limit);
+    tiers.push(findAudioSimilar(pool, q.audioTracks, exclude, limit).then((r) => {
+      out.audio_neighbors = r;
+    }));
   }
 
+  await Promise.all(tiers);
   return out;
 }
 
@@ -308,18 +326,20 @@ export interface EmbeddingHit {
 /**
  * Text neighbors for a build already in the corpus — uses its stored embedding
  * (no re-embedding at query time). Empty if the build has no embedding.
+ *
+ * Two steps on purpose: fetching the vector first lets the neighbor query
+ * order by `<=> $param`, which the HNSW index can serve. Joining the vector in
+ * (`ORDER BY b.emb <=> me.emb`) forces a full seq scan + sort over every
+ * embedding in the corpus (~1.9s at 16k builds vs ~40ms indexed).
  */
 export async function findByEmbeddingOf(pool: Pool, sha256: string, limit = 20): Promise<EmbeddingHit[]> {
   const r = await pool.query(
-    `WITH me AS (SELECT text_embedding FROM builds WHERE sha256=$1)
-     SELECT b.sha256, b.name, b.system, 1 - (b.text_embedding <=> me.text_embedding) AS cosine
-     FROM builds b CROSS JOIN me
-     WHERE b.sha256<>$1 AND b.text_embedding IS NOT NULL AND me.text_embedding IS NOT NULL
-     ORDER BY b.text_embedding <=> me.text_embedding
-     LIMIT $2`,
-    [sha256, limit]
+    "SELECT text_embedding::text AS v FROM builds WHERE sha256=$1 AND text_embedding IS NOT NULL",
+    [sha256]
   );
-  return r.rows.map((x) => ({ ...x, cosine: Number(x.cosine) }));
+  const v = r.rows[0]?.v as string | undefined;
+  if (!v) return [];
+  return findByEmbedding(pool, v, sha256, limit);
 }
 
 /** Text: nearest builds by text-embedding cosine (pgvector). For a query vector
@@ -330,15 +350,31 @@ export async function findByEmbedding(
   exclude: string,
   limit = 20
 ): Promise<EmbeddingHit[]> {
-  const r = await pool.query(
-    `SELECT sha256, name, system, 1 - (text_embedding <=> $1::vector) AS cosine
-     FROM builds
-     WHERE sha256<>$2 AND text_embedding IS NOT NULL
-     ORDER BY text_embedding <=> $1::vector
-     LIMIT $3`,
-    [vectorLiteral, exclude, limit]
-  );
-  return r.rows.map((x) => ({ ...x, cosine: Number(x.cosine) }));
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+    // The HNSW scan yields at most hnsw.ef_search candidates (default 40),
+    // which would silently cap the result below `limit` (and the self row eats
+    // one more). SET LOCAL scopes the raise to this transaction.
+    await c.query("SELECT set_config('hnsw.ef_search', $1, true)", [
+      String(Math.min(Math.max(limit + 20, 40), 1000)),
+    ]);
+    const r = await c.query(
+      `SELECT sha256, name, system, 1 - (text_embedding <=> $1::vector) AS cosine
+       FROM builds
+       WHERE sha256<>$2 AND text_embedding IS NOT NULL
+       ORDER BY text_embedding <=> $1::vector
+       LIMIT $3`,
+      [vectorLiteral, exclude, limit]
+    );
+    await c.query("COMMIT");
+    return r.rows.map((x) => ({ ...x, cosine: Number(x.cosine) }));
+  } catch (e) {
+    await c.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    c.release();
+  }
 }
 
 export interface SearchResult {
@@ -411,16 +447,78 @@ export interface BuildListItem {
   build_date: string | null;
 }
 
-/// List stored builds alphabetically (for the /builds index, which filters client-side).
-export async function listBuilds(pool: Pool, limit = 10000): Promise<BuildListItem[]> {
-  const r = await pool.query(
-    `SELECT sha256, name, system, file_count, total_size, ingested_at,
-            COALESCE(record->'info'->'volume'->>'creation_date',
-                     record->'info'->'header'->>'release_date') AS build_date
-     FROM builds ORDER BY lower(name) LIMIT $1`,
-    [limit]
-  );
-  return r.rows as BuildListItem[];
+export type BuildSortKey = "name" | "system" | "build_date" | "file_count" | "total_size";
+
+export interface BuildsPageOpts {
+  q?: string;
+  system?: string;
+  sort?: BuildSortKey;
+  dir?: "asc" | "desc";
+  offset?: number;
+  limit?: number;
+}
+
+export interface BuildsPageResult {
+  rows: BuildListItem[];
+  /** Builds matching the filter (not just this page). */
+  total: number;
+  /** All systems in the corpus (for the filter dropdown). */
+  systems: string[];
+}
+
+// Whitelist of sortable columns — `sort` is interpolated into ORDER BY, so it
+// must map through this table, never straight from user input.
+const BUILD_SORT: Record<BuildSortKey, string> = {
+  name: "lower(name)",
+  system: "system",
+  build_date: "build_date",
+  file_count: "file_count",
+  total_size: "total_size",
+};
+
+/// One page of the /builds index, filtered and sorted in SQL. Replaces the
+/// old ship-everything listBuilds: 16k+ rows made a 6MB payload and multi-second
+/// renders; the browser now only ever gets one page.
+export async function listBuildsPage(pool: Pool, opts: BuildsPageOpts = {}): Promise<BuildsPageResult> {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (opts.q?.trim()) {
+    // Escape LIKE metacharacters so a user's "100%" searches literally.
+    params.push("%" + opts.q.trim().replace(/[\\%_]/g, "\\$&") + "%");
+    conds.push(`name ILIKE $${params.length}`);
+  }
+  if (opts.system) {
+    params.push(opts.system);
+    conds.push(`system = $${params.length}`);
+  }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+
+  const key = opts.sort && BUILD_SORT[opts.sort] ? opts.sort : "name";
+  const dir = opts.dir === "desc" ? "DESC" : "ASC";
+  // Missing dates always sort last regardless of direction; lower(name) breaks ties.
+  const order =
+    key === "name"
+      ? `lower(name) ${dir}`
+      : `${BUILD_SORT[key]} ${dir}${key === "build_date" ? " NULLS LAST" : ""}, lower(name)`;
+
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  const offset = Math.max(opts.offset ?? 0, 0);
+
+  const [rows, count, systems] = await Promise.all([
+    pool.query(
+      `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date
+       FROM builds ${where} ORDER BY ${order}
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    ),
+    pool.query(`SELECT count(*)::int AS n FROM builds ${where}`, params),
+    pool.query("SELECT DISTINCT system FROM builds ORDER BY system"),
+  ]);
+  return {
+    rows: rows.rows as BuildListItem[],
+    total: count.rows[0].n as number,
+    systems: systems.rows.map((r) => r.system as string),
+  };
 }
 
 /// Fetch one stored build (with its full canonical record) by sha256.
