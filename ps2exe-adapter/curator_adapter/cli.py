@@ -250,10 +250,11 @@ def _safe_processor(processor_class, reader, name, system, manager, mods):
         return proc
 
 
-def _process_streaming(path, basename, parent_dir, locator, vtype, mods, manager):
-    """Fingerprint the already-chosen volume by reopening straight to it. Used for
-    every disc whose game lives in a single self-contained volume (PS1/2/3, Saturn,
-    Mega CD, 3DO, combined Dreamcast images, …)."""
+def _process_streaming(path, basename, parent_dir, locator, vtype, mods, manager, work):
+    """Run `work(processor, reader, system)` on the already-chosen volume by
+    reopening straight to it. Used for every disc whose game lives in a single
+    self-contained volume (PS1/2/3, Saturn, Mega CD, 3DO, combined Dreamcast
+    images, …)."""
     factory, base, generic = mods["factory"], mods["base"], mods["generic"]
     with open(path, "rb") as fp:
         parent = mods["directory"](parent_dir)
@@ -263,10 +264,7 @@ def _process_streaming(path, basename, parent_dir, locator, vtype, mods, manager
         system = base.get_system_type(reader) or "unknown"
         processor_class = factory.get_iso_processor_class(system) or generic
         processor = _safe_processor(processor_class, reader, basename, system, manager, mods)
-        info = _gather_info(processor, reader, system, mods)
-        files = _hash_files(reader, manager)
-        exe_fp = _exe_fp_for(info, reader)
-    return info, files, exe_fp, system
+        return work(processor, reader, system)
 
 
 def _has_boot_exe(processor, reader):
@@ -295,8 +293,8 @@ def _has_boot_exe(processor, reader):
         return 0
 
 
-def _process_gdrom(path, basename, parent_dir, mods, manager):
-    """Fingerprint a Dreamcast GD-ROM whose game spans the high-density area.
+def _process_gdrom(path, basename, parent_dir, mods, manager, work):
+    """Run `work` on a Dreamcast GD-ROM whose game spans the high-density area.
 
     The boot volume's files can straddle several tracks, so we let the Dreamcast
     processor reassemble the image from the .cue/.gdi. That assembly reopens sibling
@@ -346,10 +344,7 @@ def _process_gdrom(path, basename, parent_dir, mods, manager):
         if best is None:
             raise _NoHighDensityVolume(path)
         _score, processor, reader, system = best
-        info = _gather_info(processor, reader, system, mods)
-        files = _hash_files(reader, manager)
-        exe_fp = _exe_fp_for(info, reader)
-    return info, files, exe_fp, system
+        return work(processor, reader, system)
 
 
 def _gather_info(processor, reader, system, mods):
@@ -619,20 +614,13 @@ class _ShingleSignature:
             del buf[: len(buf) - (_SHINGLE_W - 1)]
 
 
-def analyze(path):
-    mods = _import_ps2exe()
-    factory, base, generic = mods["factory"], mods["base"], mods["generic"]
-    manager = ProgressManager()
-
-    basename = os.path.basename(path)
-    parent_dir = pathlib.Path(path).resolve().parent
-
-    # Selection pass: enumerate every candidate volume (directory level only — a
-    # one-pass archive can't seek back to member *content* later) and choose the
-    # richest. This is what rescues Dreamcast GD-ROMs: the boot game lives in the
-    # high-density volume, not the first (low-density) one the old "first readable"
-    # pick returned. A non-zero start sector marks that high-density volume, whose
-    # files may span several tracks needing .cue/.gdi reassembly.
+def _select_volume(path, basename, parent_dir, mods, manager):
+    """Selection pass: enumerate every candidate volume (directory level only — a
+    one-pass archive can't seek back to member *content* later) and choose the
+    richest. This is what rescues Dreamcast GD-ROMs: the boot game lives in the
+    high-density volume, not the first (low-density) one the old "first readable"
+    pick returned. A non-zero start sector marks that high-density volume, whose
+    files may span several tracks needing .cue/.gdi reassembly."""
     with open(path, "rb") as fp:
         parent = mods["directory"](parent_dir)
         candidates = _enumerate_volumes(fp, basename, parent, mods, manager)
@@ -648,21 +636,39 @@ def analyze(path):
         needs_assembly = any(
             getattr(getattr(r, "fp", None), "starting_sector", 0) for _loc, r in candidates
         )
+    return locator, vtype, needs_assembly
 
-    # Processing pass: read the chosen volume's bytes. GD-ROM high-density volumes go
-    # through track reassembly; everything else reopens straight to its volume.
+
+def _process(path, basename, parent_dir, mods, manager, work):
+    """Select the disc's primary volume, then run `work(processor, reader, system)`
+    on it. GD-ROM high-density volumes go through track reassembly; everything else
+    reopens straight to its volume. Both analyze and extract funnel through here so
+    an extracted asset always comes from the same volume its record describes."""
+    locator, vtype, needs_assembly = _select_volume(path, basename, parent_dir, mods, manager)
     if needs_assembly:
         try:
-            info, files, exe_fp, system = _process_gdrom(path, basename, parent_dir, mods, manager)
+            return _process_gdrom(path, basename, parent_dir, mods, manager, work)
         except _NoHighDensityVolume:
             # Non-standard disc: assembly found nothing. Read the chosen volume plainly.
-            info, files, exe_fp, system = _process_streaming(
-                path, basename, parent_dir, locator, vtype, mods, manager
-            )
-    else:
-        info, files, exe_fp, system = _process_streaming(
-            path, basename, parent_dir, locator, vtype, mods, manager
-        )
+            pass
+    return _process_streaming(path, basename, parent_dir, locator, vtype, mods, manager, work)
+
+
+def analyze(path):
+    mods = _import_ps2exe()
+    factory = mods["factory"]
+    manager = ProgressManager()
+
+    basename = os.path.basename(path)
+    parent_dir = pathlib.Path(path).resolve().parent
+
+    def work(processor, reader, system):
+        info = _gather_info(processor, reader, system, mods)
+        files = _hash_files(reader, manager)
+        exe_fp = _exe_fp_for(info, reader)
+        return info, files, exe_fp, system
+
+    info, files, exe_fp, system = _process(path, basename, parent_dir, mods, manager, work)
 
     # Audio pass: CDDA scan over the container, on its own fresh pass since processing
     # consumed the stream. Only CD/GD-ROM systems carry red-book audio worth
@@ -676,6 +682,89 @@ def analyze(path):
             media = _scan_audio_tracks(audio_readers, mods, manager)
 
     return {"info": info, "files": files, "media": media, "exe_fp": exe_fp}
+
+
+def extract(path, out_dir):
+    """Copy the image's browser-viewable files (see viewable.py) into the
+    content-addressed store at `out_dir`, returning their metadata. Runs on the
+    same volume analyze() chooses, so asset paths match the record's contents."""
+    mods = _import_ps2exe()
+    manager = ProgressManager()
+
+    basename = os.path.basename(path)
+    parent_dir = pathlib.Path(path).resolve().parent
+
+    def work(processor, reader, system):
+        return _extract_assets(reader, out_dir, manager)
+
+    return {"assets": _process(path, basename, parent_dir, mods, manager, work)}
+
+
+def _extract_assets(reader, out_dir, manager):
+    from . import viewable
+
+    # Candidate list first, bytes second — the same two-step the hashing pass
+    # uses, so one-pass archive streams see opens in iterator order only.
+    entries = []
+    for f in reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=False):
+        path = _clean_path(reader.get_file_path(f))
+        classified = viewable.classify(path)
+        if classified is None:
+            continue
+        try:
+            size = int(reader.get_file_size(f))
+        except Exception:  # noqa: BLE001
+            size = None
+        if size is not None and (size == 0 or size > viewable.MAX_ASSET_SIZE):
+            continue
+        entries.append((f, path, classified))
+
+    out = []
+    with manager.counter(total=len(entries), desc="Extracting assets", unit="files") as pbar:
+        for f, path, (kind, mime) in entries:
+            data = _read_capped(reader, f, viewable.MAX_ASSET_SIZE)
+            pbar.update()
+            if not data or not viewable.sniff(data[: viewable.SNIFF_BYTES], mime):
+                continue
+            sha = hashlib.sha256(data).hexdigest()
+            _store_blob(out_dir, sha, data)
+            out.append({"path": path, "sha256": sha, "size": len(data), "mime": mime, "kind": kind})
+    return out
+
+
+def _read_capped(reader, f, cap):
+    """The file's bytes, or None when unreadable or larger than `cap` (a size
+    the directory record understated must not smuggle an oversized asset in)."""
+    buf = bytearray()
+    try:
+        fh = reader.open_file(f)
+        is_ctx = hasattr(fh, "__enter__")
+        if is_ctx:
+            fh.__enter__()
+        try:
+            while chunk := fh.read(65536):
+                buf.extend(chunk)
+                if len(buf) > cap:
+                    return None
+        finally:
+            with contextlib.suppress(Exception):
+                fh.__exit__(None, None, None) if is_ctx else fh.close()
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("curator-adapter").debug("asset read failed: %s", e)
+        return None
+    return bytes(buf)
+
+
+def _store_blob(out_dir, sha, data):
+    """Write `data` as `<out_dir>/<sha[:2]>/<sha>`, atomically, once."""
+    final = os.path.join(out_dir, sha[:2], sha)
+    if os.path.exists(final):
+        return
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    tmp = f"{final}.tmp{os.getpid()}"
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, final)
 
 
 def _exe_fingerprint(reader, exe_path):
@@ -860,21 +949,26 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     p_an = sub.add_parser("analyze", help="analyze a disc image/container")
     p_an.add_argument("--path", required=True)
+    p_ex = sub.add_parser("extract", help="extract browser-viewable assets into a store")
+    p_ex.add_argument("--path", required=True)
+    p_ex.add_argument("--out", required=True)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
-    if args.command == "analyze":
-        # Force any ps2exe stdout chatter to stderr; stdout is reserved for the result.
-        real_stdout = sys.stdout
-        sys.stdout = sys.stderr
-        try:
+    # Force any ps2exe stdout chatter to stderr; stdout is reserved for the result.
+    real_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        if args.command == "analyze":
             result = analyze(args.path)
-        finally:
-            sys.stdout = real_stdout
-        json.dump(result, real_stdout)
-        real_stdout.write("\n")
-        real_stdout.flush()
+        else:
+            result = extract(args.path, args.out)
+    finally:
+        sys.stdout = real_stdout
+    json.dump(result, real_stdout)
+    real_stdout.write("\n")
+    real_stdout.flush()
 
 
 if __name__ == "__main__":
