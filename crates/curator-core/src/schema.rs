@@ -37,6 +37,23 @@ pub struct BuildRecord {
     /// Byte-shingle resemblance signature (OPH). Survives many small scattered edits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resemblance: Option<Signature>,
+    /// Browser-viewable files extracted into the asset store (images, audio,
+    /// text ≤ 20MB). `None` = extraction never ran (pre-assets record — analyze
+    /// tops it up on the next cache hit); `Some(vec![])` = ran, nothing viewable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<Vec<AssetRef>>,
+}
+
+/// One extracted asset: where it sat on the disc and how to serve it. The blob
+/// itself lives in the content-addressed store under `sha256`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetRef {
+    /// Full path from the volume root — matches the record's contents tree.
+    pub path: String,
+    pub sha256: String,
+    pub size: u64,
+    pub mime: String,
+    pub kind: String, // "image" | "audio" | "video" | "text"
 }
 
 /// Image-level identity. `sha256` is the primary key everywhere.
@@ -338,6 +355,7 @@ mod tests {
             exe_fp: None,
             chunk_signature: None,
             resemblance: None,
+            assets: None,
         };
         let j = serde_json::to_string(&rec).unwrap();
         assert!(!j.contains("\"header\""), "empty header should be skipped: {j}");

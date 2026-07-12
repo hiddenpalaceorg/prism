@@ -175,18 +175,59 @@ pub struct RawFile {
     pub shingle: Vec<u64>,
 }
 
-/// Run the adapter on `path`, relaying progress to `observer`, and return its raw output.
+/// One extracted browser-viewable asset (see the adapter's `extract` command).
+#[derive(Debug, Deserialize)]
+pub struct RawAsset {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub path: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub sha256: String,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub mime: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawExtract {
+    #[serde(default)]
+    assets: Vec<RawAsset>,
+}
+
+/// Run the adapter's `analyze` on `path`, relaying progress to `observer`.
 pub fn run(
     cmd: &AdapterCommand,
     path: &str,
     observer: Arc<dyn ProgressObserver>,
 ) -> Result<RawAnalysis> {
+    run_json(cmd, &["analyze", "--path", path], observer)
+}
+
+/// Run the adapter's `extract` on `path`, filling the content-addressed asset
+/// store at `out_dir` and returning the extracted assets' metadata.
+pub fn run_extract(
+    cmd: &AdapterCommand,
+    path: &str,
+    out_dir: &str,
+    observer: Arc<dyn ProgressObserver>,
+) -> Result<Vec<RawAsset>> {
+    let parsed: RawExtract = run_json(cmd, &["extract", "--path", path, "--out", out_dir], observer)?;
+    Ok(parsed.assets)
+}
+
+/// Drive one adapter subprocess: stream stderr progress to `observer`, poll for
+/// cancellation, and parse the single JSON document on stdout as `T`.
+fn run_json<T: serde::de::DeserializeOwned>(
+    cmd: &AdapterCommand,
+    args: &[&str],
+    observer: Arc<dyn ProgressObserver>,
+) -> Result<T> {
     let mut builder = Command::new(&cmd.program);
     builder
         .args(&cmd.args)
-        .arg("analyze")
-        .arg("--path")
-        .arg(path)
+        .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // Windows: run the adapter without popping up a console window (it's a console exe;
@@ -268,7 +309,7 @@ pub fn run(
         )));
     }
 
-    let parsed: RawAnalysis = serde_json::from_str(stdout_buf.trim()).map_err(|e| {
+    let parsed: T = serde_json::from_str(stdout_buf.trim()).map_err(|e| {
         Error::Adapter(format!("could not parse adapter output: {e}\nstderr:\n{}", diag.trim()))
     })?;
     Ok(parsed)

@@ -262,6 +262,7 @@ mod tests {
             exe_fp: None,
             chunk_signature: None,
             resemblance: None,
+            assets: None,
         }
     }
 
