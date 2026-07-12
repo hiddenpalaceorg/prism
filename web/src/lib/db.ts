@@ -11,6 +11,10 @@ export function getPool(): Pool {
     }
     pool = new Pool({
       connectionString: url || "postgres:///curator_test",
+      // No page/API query should run longer than this — a runaway query used to
+      // pin a Postgres backend at 100% CPU for minutes per request. The bulk
+      // ingest CLI builds its own pool and is not capped by this.
+      statement_timeout: 15_000,
     });
   }
   return pool;

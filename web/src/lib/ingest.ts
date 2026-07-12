@@ -33,6 +33,24 @@ function stripNulls<T>(value: T): T {
   return value;
 }
 
+// Disc mastering date for the sortable builds.build_date column — volume
+// creation date, else the header release date (YYYYMMDD normalized to
+// YYYY-MM-DD so mixed sources sort together). Mirrors the backfill in
+// db/migrations/001-fast-pages.sql.
+function buildDate(rec: BuildRecord): string | null {
+  const info = (rec.info ?? {}) as Record<string, unknown>;
+  const pick = (section: unknown, key: string): string | null => {
+    const v = section && typeof section === "object" ? (section as Record<string, unknown>)[key] : null;
+    if (typeof v === "string" && v) return v;
+    if (typeof v === "number") return String(v);
+    return null;
+  };
+  const raw = pick(info.volume, "creation_date") ?? pick(info.header, "release_date");
+  if (!raw) return null;
+  const m = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : raw;
+}
+
 export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<void> {
   rec = stripNulls(rec);
   const sha = rec.image.sha256;
@@ -55,12 +73,12 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
 
   await db.query(
     `INSERT INTO builds (sha256,name,system,size,md5,sha1,content_hash,filtered_content_hash,
-        file_count,total_size,max_depth,ext_histogram,text_doc,fingerprint_profile,record)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-     ON CONFLICT (sha256) DO UPDATE SET record=excluded.record`,
+        file_count,total_size,max_depth,ext_histogram,text_doc,fingerprint_profile,record,build_date)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     ON CONFLICT (sha256) DO UPDATE SET record=excluded.record, build_date=excluded.build_date`,
     [sha, rec.image.name, rec.info?.system ?? "", rec.image.size, rec.image.md5, rec.image.sha1,
      comp.content_hash ?? null, comp.filtered_content_hash ?? null, st.file_count, st.total_size, st.max_depth,
-     JSON.stringify(st.ext_histogram ?? {}), rec.text_doc ?? "", rec.fingerprint_profile, rec]
+     JSON.stringify(st.ext_histogram ?? {}), rec.text_doc ?? "", rec.fingerprint_profile, rec, buildDate(rec)]
   );
 
   // Semantic embedding from the build's identity (see semanticDoc), not the
@@ -98,6 +116,12 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
   await db.query(
     `INSERT INTO build_fileset (build_sha256,hashes) VALUES ($1,$2)
      ON CONFLICT (build_sha256) DO UPDATE SET hashes=excluded.hashes`,
+    [sha, arrayLit([...fileset])]
+  );
+  // Inverted copy for the shared-files tier (see fileset_entry in schema.sql).
+  await db.query("DELETE FROM fileset_entry WHERE build_sha256=$1", [sha]);
+  await db.query(
+    "INSERT INTO fileset_entry (hash, build_sha256) SELECT unnest($2::bigint[]), $1",
     [sha, arrayLit([...fileset])]
   );
 
