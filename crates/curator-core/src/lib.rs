@@ -83,9 +83,19 @@ impl Analyzer {
         // 1. Image identity (single streaming read in Rust).
         let image = fingerprint::hash_image(path, &observer)?;
 
-        // 2. Cache short-circuit.
-        if let Some(record) = self.cache.load(&image.sha256)? {
+        // 2. Cache short-circuit. Pre-assets records (assets == None) get topped
+        // up here — extraction alone, no re-hash — so re-running analyze over an
+        // existing collection backfills its asset store.
+        if let Some(mut record) = self.cache.load(&image.sha256)? {
             observer.on_event(Event::Message(format!("cache hit {}", image.sha256)));
+            if record.assets.is_none() {
+                if let Some(assets) = self.extract_assets(path, &observer)? {
+                    record.assets = Some(assets);
+                    let xml = render::to_dat_xml(&record);
+                    let jp = self.cache.store(&record, &xml)?;
+                    self.db.upsert_build(&record, &jp.to_string_lossy())?;
+                }
+            }
             let json_path = self.cache.json_path(&image.sha256);
             return Ok(Analysis { record, from_cache: true, json_path });
         }
@@ -147,6 +157,11 @@ impl Analyzer {
         let sidecar = fingerprint::chunk_sidecar(&raw.files);
         let contents = fingerprint::build_tree(&raw.files);
 
+        // Asset pass: pull browser-viewable files (images/audio/text ≤ 20MB) into
+        // the content-addressed store. Enrichment only — a failure is reported and
+        // leaves `assets` unset (None), so the next analyze retries it.
+        let assets = self.extract_assets(path, &observer)?;
+
         let record = BuildRecord {
             record_schema_version: schema::RECORD_SCHEMA_VERSION,
             fingerprint_profile: schema::FINGERPRINT_PROFILE.to_string(),
@@ -180,6 +195,7 @@ impl Analyzer {
             }),
             chunk_signature,
             resemblance,
+            assets,
         };
 
         // 5. Render, cache, index.
@@ -190,6 +206,42 @@ impl Analyzer {
             .upsert_build(&record, &json_path.to_string_lossy())?;
 
         Ok(Analysis { record, from_cache: false, json_path })
+    }
+
+    /// The content-addressed asset store (blobs at `<dir>/<sha256[:2]>/<sha256>`).
+    pub fn assets_dir(&self) -> PathBuf {
+        self.data_dir.join("assets")
+    }
+
+    /// Run the adapter's asset extraction into the store. Failures degrade to a
+    /// progress message and `None` (retried on the next analyze) — except
+    /// cancellation, which propagates like everywhere else.
+    fn extract_assets(
+        &self,
+        path: &str,
+        observer: &Arc<dyn ProgressObserver>,
+    ) -> Result<Option<Vec<schema::AssetRef>>> {
+        let dir = self.assets_dir();
+        std::fs::create_dir_all(&dir)?;
+        match adapter::run_extract(&self.adapter, path, &dir.to_string_lossy(), observer.clone()) {
+            Ok(raw) => Ok(Some(
+                raw.into_iter()
+                    .filter(|a| is_sha256_hex(&a.sha256))
+                    .map(|a| schema::AssetRef {
+                        path: a.path,
+                        sha256: a.sha256,
+                        size: a.size,
+                        mime: a.mime,
+                        kind: a.kind,
+                    })
+                    .collect(),
+            )),
+            Err(Error::Cancelled) => Err(Error::Cancelled),
+            Err(e) => {
+                observer.on_event(Event::Message(format!("asset extraction failed: {e}")));
+                Ok(None)
+            }
+        }
     }
 
     /// Number of builds in the local library.
@@ -233,16 +285,15 @@ impl Analyzer {
         }
     }
 
-    /// Export the library as JSON Lines (one canonical build record per line) — the
-    /// bulk desktop→web contribute feed. Returns the number of records written.
-    pub fn export_jsonl<W: std::io::Write>(&self, mut out: W) -> Result<u64> {
+    /// Every library record from the on-disk cache, applied to `f` in turn.
+    /// Pruned/unparseable cache entries are skipped. Returns the count.
+    fn for_each_record<F: FnMut(BuildRecord) -> Result<()>>(&self, mut f: F) -> Result<u64> {
         let mut n = 0;
         for path in self.db.list_json_paths()? {
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(_) => continue, // cache entry pruned; skip
             };
-            // Re-emit compactly, one record per line.
             let record: BuildRecord = match serde_json::from_slice(&bytes) {
                 Ok(r) => r,
                 Err(e) => {
@@ -250,11 +301,22 @@ impl Analyzer {
                     continue;
                 }
             };
-            serde_json::to_writer(&mut out, &record)?;
-            out.write_all(b"\n")?;
+            f(record)?;
             n += 1;
         }
         Ok(n)
+    }
+
+    /// Export the library as JSON Lines (one canonical build record per line) — the
+    /// bulk desktop→web contribute feed. Returns the number of records written.
+    /// Asset *blobs* don't ride along here — use a `.zip` bundle for those.
+    pub fn export_jsonl<W: std::io::Write>(&self, mut out: W) -> Result<u64> {
+        self.for_each_record(|record| {
+            // Re-emit compactly, one record per line.
+            serde_json::to_writer(&mut out, &record)?;
+            out.write_all(b"\n")?;
+            Ok(())
+        })
     }
 
     /// Export the library as a portable bundle: a ZIP holding `builds.jsonl` (the
@@ -271,17 +333,51 @@ impl Analyzer {
         let opts = SimpleFileOptions::default();
 
         // Records first, hashing the exact bytes we store so the manifest can carry
-        // an integrity digest the importer can verify.
+        // an integrity digest the importer can verify. Collect the records' asset
+        // hashes on the way — their blobs join the bundle below.
         let n;
+        let mut asset_shas = std::collections::BTreeSet::new();
         let body_sha256 = {
             zip.start_file("builds.jsonl", opts).map_err(zip_err)?;
             let mut hasher = Sha256::new();
             {
                 let mut hw = HashingWriter { inner: &mut zip, hasher: &mut hasher };
-                n = self.export_jsonl(&mut hw)?;
+                n = self.for_each_record(|record| {
+                    for a in record.assets.as_deref().unwrap_or_default() {
+                        if is_sha256_hex(&a.sha256) {
+                            asset_shas.insert(a.sha256.clone());
+                        }
+                    }
+                    serde_json::to_writer(&mut hw, &record)?;
+                    hw.write_all(b"\n")?;
+                    Ok(())
+                })?;
             }
             hex::encode(hasher.finalize())
         };
+
+        // Asset blobs, deduplicated across builds by content hash. A blob missing
+        // from the local store is skipped with a warning — the record's metadata
+        // still ships, and a later bundle can supply the bytes.
+        let store = self.assets_dir();
+        let mut shipped = 0u64;
+        let mut missing = 0u64;
+        for sha in &asset_shas {
+            let blob = store.join(&sha[..2]).join(sha);
+            let bytes = match std::fs::read(&blob) {
+                Ok(b) => b,
+                Err(_) => {
+                    missing += 1;
+                    continue;
+                }
+            };
+            zip.start_file(format!("assets/{sha}"), opts).map_err(zip_err)?;
+            zip.write_all(&bytes)?;
+            shipped += 1;
+        }
+        if missing > 0 {
+            eprintln!("warning: {missing} asset blob(s) not in the local store; bundle ships without them");
+        }
 
         zip.start_file("manifest.json", opts).map_err(zip_err)?;
         let manifest = serde_json::json!({
@@ -289,6 +385,7 @@ impl Analyzer {
             "record_schema_version": schema::RECORD_SCHEMA_VERSION,
             "fingerprint_profile": schema::FINGERPRINT_PROFILE,
             "count": n,
+            "assets_count": shipped,
             "tool_version": env!("CARGO_PKG_VERSION"),
             "created_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             "body_sha256": body_sha256,
@@ -297,6 +394,11 @@ impl Analyzer {
         zip.finish().map_err(zip_err)?;
         Ok(n)
     }
+}
+
+/// Bare 64-char lowercase-hex sha256 — safe to interpolate into a store path.
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Extensions ps2exe skips when walking a tree — mirrors `is_path_allowed` in
