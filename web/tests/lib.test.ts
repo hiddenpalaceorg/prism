@@ -102,3 +102,92 @@ test("a tier absent from either build is dropped from the denominator (not penal
   const ap2 = applicableTiers(all, ["files", "audio"], ["files"]);
   assert.equal(fusedScore({ files: 0.5 }, ap2), 0.5);
 });
+
+// --- asset ingest semantics -------------------------------------------------
+// ingestRecord against a fake Queryable: assets == null means "extraction never
+// ran" and must not touch existing build_asset rows; only an extracted list
+// (even an empty one) is authoritative and replaces them.
+
+import { ingestRecord } from "../src/lib/ingest";
+import type { BuildRecord, AssetRef } from "../src/lib/types";
+
+function minimalRecord(assets?: AssetRef[] | null): BuildRecord {
+  const rec: BuildRecord = {
+    record_schema_version: 1,
+    fingerprint_profile: "v1",
+    // Empty name + text_doc keep semanticDoc empty, so ingest skips the
+    // embedding model and the test stays hermetic.
+    image: { name: "", size: 0, md5: "", sha1: "", sha256: "ab".repeat(32) },
+    info: { system: "test" },
+    composites: {},
+    structural: { system: "test", file_count: 0, total_size: 0, max_depth: 0, ext_histogram: {} },
+    text_doc: "",
+    contents: [],
+  };
+  if (assets !== undefined) rec.assets = assets;
+  return rec;
+}
+
+function fakeDb() {
+  const calls: { sql: string; params?: unknown[] }[] = [];
+  return {
+    calls,
+    query: async (sql: string, params?: unknown[]) => {
+      calls.push({ sql, params });
+      return { rows: [] };
+    },
+  };
+}
+
+test("ingest with assets missing/null never touches build_asset", async () => {
+  for (const rec of [minimalRecord(), minimalRecord(null)]) {
+    const db = fakeDb();
+    await ingestRecord(db, rec);
+    assert.ok(db.calls.length > 0);
+    assert.ok(!db.calls.some((c) => c.sql.includes("build_asset")));
+  }
+});
+
+test("ingest with assets [] clears build_asset (extracted, nothing viewable)", async () => {
+  const db = fakeDb();
+  await ingestRecord(db, minimalRecord([]));
+  assert.ok(db.calls.some((c) => c.sql.startsWith("DELETE FROM build_asset")));
+  assert.ok(!db.calls.some((c) => c.sql.includes("INSERT INTO build_asset")));
+});
+
+test("ingest keeps well-formed asset rows and drops malformed ones", async () => {
+  const good: AssetRef = { path: "/A.PNG", sha256: "cd".repeat(32), size: 10, mime: "image/png", kind: "image" };
+  const badSha = { path: "/B.PNG", sha256: "../etc/passwd", size: 10, mime: "image/png", kind: "image" } as AssetRef;
+  const db = fakeDb();
+  await ingestRecord(db, minimalRecord([good, badSha]));
+  const inserts = db.calls.filter((c) => c.sql.includes("INSERT INTO build_asset"));
+  assert.equal(inserts.length, 1);
+  assert.ok(inserts[0].params!.includes("/A.PNG"));
+  assert.ok(!inserts[0].params!.includes("/B.PNG"));
+});
+
+// --- asset grouping helpers ---------------------------------------------------
+
+import { orderAssets, assetTotals } from "../src/lib/assets";
+
+test("orderAssets groups by display kind and caps per kind", () => {
+  const mk = (kind: string, n: number) => Array.from({ length: n }, (_, i) => ({ kind, path: `${kind}${i}` }));
+  const mixed = [...mk("text", 3), ...mk("image", 12), ...mk("audio", 1)];
+  const ordered = orderAssets(mixed, 10);
+  assert.deepEqual(
+    ordered.map((a) => a.kind),
+    [...Array(10).fill("image"), "audio", ...Array(3).fill("text")]
+  );
+  // Uncapped keeps everything, still grouped.
+  assert.equal(orderAssets(mixed).length, 16);
+  assert.deepEqual(assetTotals(mixed), { text: 3, image: 12, audio: 1 });
+});
+
+test("orderAssets accepts a per-kind cap map (missing kind = uncapped)", () => {
+  const mk = (kind: string, n: number) => Array.from({ length: n }, (_, i) => ({ kind, path: `${kind}${i}` }));
+  const mixed = [...mk("image", 40), ...mk("audio", 25), ...mk("text", 12)];
+  const ordered = orderAssets(mixed, { image: 30, audio: 20 });
+  const counts: Record<string, number> = {};
+  for (const a of ordered) counts[a.kind] = (counts[a.kind] ?? 0) + 1;
+  assert.deepEqual(counts, { image: 30, audio: 20, text: 12 });
+});

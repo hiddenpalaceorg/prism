@@ -521,6 +521,25 @@ export async function listBuildsPage(pool: Pool, opts: BuildsPageOpts = {}): Pro
   };
 }
 
+/** One viewable asset of a build, for the build page's inline viewer. */
+export interface BuildAsset {
+  path: string;
+  sha256: string;
+  size: number;
+  mime: string;
+  kind: string; // image | audio | video | text
+}
+
+/// A build's viewable assets, in path order (one indexed lookup).
+export async function getBuildAssets(pool: Pool, sha256: string): Promise<BuildAsset[]> {
+  const r = await pool.query(
+    `SELECT path, sha256, size::float8 AS size, mime, kind
+     FROM build_asset WHERE build_sha256=$1 ORDER BY path`,
+    [sha256]
+  );
+  return r.rows as BuildAsset[];
+}
+
 /// Fetch one stored build (with its full canonical record) by sha256.
 export async function getBuild(pool: Pool, sha256: string): Promise<BuildRow | null> {
   const r = await pool.query(

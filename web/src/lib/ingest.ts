@@ -14,7 +14,8 @@ export interface Queryable {
 
 // Postgres text/jsonb cannot store a literal NUL (U+0000), so a disc-header
 // field that smuggled one through (see the adapter's _nullify) would otherwise
-// abort the whole INSERT. Strip NUL from every string in the record — in the
+// abort the whole INSERT. Strip NUL from every string in the record — object
+// keys included (ext_histogram keys carry mis-decoded UCS-2 filenames) — in the
 // columns we extract and in the `record` jsonb we store verbatim — before it
 // reaches the DB. Minimal on purpose: NUL is the only byte Postgres rejects, so
 // we leave all other text untouched and don't second-guess the adapter.
@@ -27,10 +28,23 @@ function stripNulls<T>(value: T): T {
   }
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = stripNulls(v);
+    for (const [k, v] of Object.entries(value)) out[stripNulls(k)] = stripNulls(v);
     return out as T;
   }
   return value;
+}
+
+// The GIN index on to_tsvector('simple', text_doc) caps the lexeme pool at
+// 1048575 bytes; a text_doc past that aborts the INSERT. The pool can't exceed
+// the input's byte length, so capping the column (the full text stays in
+// `record`) keeps the index valid at the cost of FTS on the truncated tail.
+const TEXT_DOC_MAX_BYTES = 1_000_000;
+function capTextDoc(s: string): string {
+  if (Buffer.byteLength(s) <= TEXT_DOC_MAX_BYTES) return s;
+  const buf = Buffer.from(s);
+  let end = TEXT_DOC_MAX_BYTES;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--; // don't split a UTF-8 sequence
+  return buf.subarray(0, end).toString();
 }
 
 // Disc mastering date for the sortable builds.build_date column — volume
@@ -78,7 +92,7 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
      ON CONFLICT (sha256) DO UPDATE SET record=excluded.record, build_date=excluded.build_date`,
     [sha, rec.image.name, rec.info?.system ?? "", rec.image.size, rec.image.md5, rec.image.sha1,
      comp.content_hash ?? null, comp.filtered_content_hash ?? null, st.file_count, st.total_size, st.max_depth,
-     JSON.stringify(st.ext_histogram ?? {}), rec.text_doc ?? "", rec.fingerprint_profile, rec, buildDate(rec)]
+     JSON.stringify(st.ext_histogram ?? {}), capTextDoc(rec.text_doc ?? ""), rec.fingerprint_profile, rec, buildDate(rec)]
   );
 
   // Semantic embedding from the build's identity (see semanticDoc), not the
@@ -113,6 +127,41 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
       params
     );
   }
+  // Viewable assets: metadata only — the blobs travel in the bundle zip and are
+  // placed into the store by scripts/ingest.ts. Guard each row: records can
+  // arrive from the submissions API, and a malformed sha256 must never become a
+  // blob-store lookup key (the asset route interpolates it into a file path).
+  // A null/absent list means the record was never asset-extracted — keep rows
+  // from any earlier ingest; only an extracted list (even []) is authoritative.
+  if (rec.assets != null) {
+    await db.query("DELETE FROM build_asset WHERE build_sha256=$1", [sha]);
+    const assets = rec.assets.filter(
+      (a) =>
+        typeof a?.path === "string" &&
+        a.path &&
+        typeof a.sha256 === "string" &&
+        /^[0-9a-f]{64}$/.test(a.sha256) &&
+        typeof a.mime === "string" &&
+        typeof a.kind === "string" &&
+        Number.isFinite(a.size)
+    );
+    for (let off = 0; off < assets.length; off += ROWS_PER_INSERT) {
+      const chunk = assets.slice(off, off + ROWS_PER_INSERT);
+      const rows: string[] = [];
+      const params: unknown[] = [];
+      for (const a of chunk) {
+        const i = params.length;
+        rows.push(`($${i + 1},$${i + 2},$${i + 3},$${i + 4},$${i + 5},$${i + 6})`);
+        params.push(sha, a.path, a.sha256, a.size, a.mime, a.kind);
+      }
+      await db.query(
+        `INSERT INTO build_asset (build_sha256,path,sha256,size,mime,kind) VALUES ${rows.join(",")}
+         ON CONFLICT (build_sha256,path) DO NOTHING`,
+        params
+      );
+    }
+  }
+
   await db.query(
     `INSERT INTO build_fileset (build_sha256,hashes) VALUES ($1,$2)
      ON CONFLICT (build_sha256) DO UPDATE SET hashes=excluded.hashes`,

@@ -8,6 +8,7 @@ const MAX_FILES = 200_000;
 const MAX_SIGNATURE_VALUES = 4096;
 const MAX_MEDIA = 4096;
 const MAX_AUDIO_FP = 200_000;
+const MAX_ASSETS = 4096;
 
 /** True if `s` is a lowercase 64-hex sha256. */
 export function isSha256(s: string): boolean {
@@ -67,6 +68,16 @@ export function validateBuildRecord(rec: unknown): ValidateResult {
       if (Array.isArray(fp) && fp.length > MAX_AUDIO_FP) {
         return { ok: false, error: `media[].audio_fp exceeds ${MAX_AUDIO_FP} entries` };
       }
+    }
+  }
+
+  const assets = r.assets;
+  if (assets != null) {
+    if (!Array.isArray(assets)) {
+      return { ok: false, error: "assets must be an array" };
+    }
+    if (assets.length > MAX_ASSETS) {
+      return { ok: false, error: `assets exceeds ${MAX_ASSETS} entries` };
     }
   }
 
