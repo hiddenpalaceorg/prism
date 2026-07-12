@@ -79,24 +79,22 @@ export default function SimilarBuilds({ builds, queryCaps }: { builds: FusedBuil
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900/60">
             {ranked.map(({ b, score, applic }) => (
               <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
-                <td className="max-w-xs h-full p-0 font-medium first:[&>a]:pl-0">
-                  <RowLink href={`/builds/${b.sha256}`} focusable className="truncate px-3 hover:underline">{b.name}</RowLink>
+                <td className="max-w-[55vw] sm:max-w-xs h-full p-0 font-medium first:[&>a]:pl-0">
+                  <RowLink href={`/builds/${b.sha256}`} focusable className="px-3 hover:underline">
+                    <span className="block truncate">{b.name}</span>
+                    {/* On mobile the per-tier breakdown column is hidden; stack it under the name instead. */}
+                    <TierBreakdown b={b} applic={applic} className="mt-1 font-normal text-neutral-400 sm:hidden" />
+                  </RowLink>
                 </td>
                 <td className="w-px h-full p-0">
                   <RowLink href={`/builds/${b.sha256}`} className="px-3">
-                    <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs whitespace-nowrap dark:bg-neutral-800">{b.system}</span>
+                    <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs whitespace-nowrap dark:bg-neutral-800">{b.system || "unknown"}</span>
                   </RowLink>
                 </td>
-                {/* per-tier contributions (active tiers this build actually matched) */}
-                <td className="h-full p-0 text-[11px] text-neutral-400">
+                {/* per-tier contributions (active tiers this build actually matched) — desktop only */}
+                <td className="hidden sm:table-cell h-full p-0 text-neutral-400">
                   <RowLink href={`/builds/${b.sha256}`} className="px-3">
-                    <span className="flex flex-wrap gap-x-3 gap-y-0.5">
-                      {TIERS.filter((t) => applic.has(t.key) && (b.scores[t.key] ?? 0) > 0).map((t) => (
-                        <span key={t.key}>
-                          {t.label} <span className="font-mono">{Math.round((b.scores[t.key] as number) * 100)}%</span>
-                        </span>
-                      ))}
-                    </span>
+                    <TierBreakdown b={b} applic={applic} />
                   </RowLink>
                 </td>
                 <td className="w-12 h-full p-0 last:[&>a]:pr-0">
@@ -108,5 +106,19 @@ export default function SimilarBuilds({ builds, queryCaps }: { builds: FusedBuil
         </table>
       )}
     </section>
+  );
+}
+
+// The active tiers this build actually matched, as "label %" chips. Shared by the
+// desktop breakdown column and the mobile under-name line.
+function TierBreakdown({ b, applic, className = "" }: { b: FusedBuild; applic: Set<TierKey>; className?: string }) {
+  return (
+    <span className={`flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] ${className}`}>
+      {TIERS.filter((t) => applic.has(t.key) && (b.scores[t.key] ?? 0) > 0).map((t) => (
+        <span key={t.key}>
+          {t.label} <span className="font-mono">{Math.round((b.scores[t.key] as number) * 100)}%</span>
+        </span>
+      ))}
+    </span>
   );
 }
