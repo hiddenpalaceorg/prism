@@ -95,7 +95,7 @@ final class AppModel: ObservableObject {
 
     var selectedNode: DiscNode? { selection.flatMap { nodeIndex[$0] } }
 
-    /// Resolve the adapter: explicit env override → embedded Phase-2 bundle → dev dir.
+    /// Resolve the adapter: explicit env override → embedded adapter → dev dir.
     private func resolveAdapter() -> (dir: String?, bin: String?) {
         let env = ProcessInfo.processInfo.environment
         if let bin = env["CURATOR_ADAPTER_BIN"] { return (nil, bin) }
