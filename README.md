@@ -5,8 +5,6 @@ A Rust core drives the Python **ps2exe** engine to parse images/containers, prod
 a checksummed DAT + JSON per disc, builds a local library, and feeds a web service
 for searchable listings and "similar builds" discovery.
 
-See [`PLAN.md`](PLAN.md) for the full design and rationale.
-
 ## Layout
 
 ```
