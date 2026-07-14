@@ -173,7 +173,7 @@ export default function AssetViewer({
           aria-label="Close"
           className="shrink-0 rounded px-2 py-0.5 text-neutral-300 hover:bg-neutral-800 hover:text-white"
         >
-          ✕
+          &times;
         </button>
       </div>
 
