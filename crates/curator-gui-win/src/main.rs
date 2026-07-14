@@ -30,7 +30,9 @@ mod app {
 
     use curator_core::adapter::AdapterCommand;
     use curator_core::db::LibrarySort;
-    use curator_core::{render, Analyzer, BuildRecord, Config, Event, Node, ProgressObserver, Reader};
+    use curator_core::{
+        render, Analyzer, AssetRef, BuildRecord, Config, Event, Node, ProgressObserver, Reader,
+    };
 
     use windows::core::{w, PCWSTR, PWSTR, Result};
     use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
@@ -62,7 +64,8 @@ mod app {
     };
     use windows::Win32::UI::Shell::{
         DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, SetWindowSubclass,
-        SHBrowseForFolderW, SHGetPathFromIDListW, BIF_RETURNONLYFSDIRS, BROWSEINFOW, HDROP,
+        ShellExecuteW, SHBrowseForFolderW, SHGetPathFromIDListW, BIF_RETURNONLYFSDIRS,
+        BROWSEINFOW, HDROP,
     };
     use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -78,15 +81,17 @@ mod app {
     const IDM_VIEW_JSON: usize = 9;
     const IDM_EXPORT: usize = 10;
     const IDM_BROWSE: usize = 11;
+    const IDM_VIEW_ASSETS: usize = 12;
     const IDM_RECENT_BASE: usize = 2000;
     const MAX_RECENT: u32 = 15;
 
-    /// What the right-hand document pane is showing. Overview/Selection render in the
-    /// grouped ListView; Xml/Json render as text in the EDIT control.
+    /// What the right-hand document pane is showing. Overview/Selection/Assets render
+    /// in the grouped ListView; Xml/Json render as text in the EDIT control.
     #[derive(Clone, Copy, PartialEq)]
     enum DocView {
         Overview,
         Selection,
+        Assets,
         Xml,
         Json,
     }
@@ -146,6 +151,14 @@ mod app {
         import_base: String,
         /// Canonical JSON of the loaded build (for similarity/submit), if any.
         last_json: Option<String>,
+        /// Image sha256 of the loaded build (keys the asset-upload endpoints).
+        last_sha: Option<String>,
+        /// The loaded build's viewable assets; `assets_extracted` distinguishes
+        /// "extraction ran, nothing viewable" from "extraction never ran".
+        assets: Vec<AssetRef>,
+        assets_extracted: bool,
+        /// Assets-view ListView row → index into `assets` (rows flatten kind groups).
+        asset_rows: Vec<usize>,
         /// Document-pane content, by view. `view` selects which one is shown.
         view: DocView,
         doc_overview: Vec<Section>,
@@ -535,6 +548,10 @@ mod app {
             importing: false,
             import_base: String::new(),
             last_json: None,
+            last_sha: None,
+            assets: Vec::new(),
+            assets_extracted: false,
+            asset_rows: Vec::new(),
             view: DocView::Overview,
             doc_overview: Vec::new(),
             doc_xml: String::new(),
@@ -582,6 +599,7 @@ mod app {
         let _ = AppendMenuW(analysis, MF_STRING, IDM_SUBMIT, w!("Su&bmit Build…"));
         let view = CreatePopupMenu().unwrap_or_default();
         let _ = AppendMenuW(view, MF_STRING, IDM_VIEW_OVERVIEW, w!("&Overview"));
+        let _ = AppendMenuW(view, MF_STRING, IDM_VIEW_ASSETS, w!("&Assets"));
         let _ = AppendMenuW(view, MF_STRING, IDM_VIEW_XML, w!("&DAT (XML)"));
         let _ = AppendMenuW(view, MF_STRING, IDM_VIEW_JSON, w!("&JSON"));
         let _ = AppendMenuW(menu, MF_POPUP, file.0 as usize, w!("&File"));
@@ -648,6 +666,7 @@ mod app {
             IDM_SIMILAR => find_similar(hwnd),
             IDM_SUBMIT => submit_build(hwnd),
             IDM_VIEW_OVERVIEW => set_view(hwnd, DocView::Overview),
+            IDM_VIEW_ASSETS => set_view(hwnd, DocView::Assets),
             IDM_VIEW_XML => set_view(hwnd, DocView::Xml),
             IDM_VIEW_JSON => set_view(hwnd, DocView::Json),
             IDM_EXIT => {
@@ -871,6 +890,10 @@ mod app {
         if let Some(st) = state(hwnd) {
             st.node_sections = populate_tree(st.tree, &done.record);
             st.last_json = Some(done.json.clone());
+            st.last_sha = Some(done.record.image.sha256.clone());
+            st.assets = done.record.assets.clone().unwrap_or_default();
+            st.assets_extracted = done.record.assets.is_some();
+            st.asset_rows = Vec::new();
             st.doc_xml = done.xml.replace('\n', "\r\n");
             st.doc_overview = overview_sections(&done.record);
             st.selected_sections = Vec::new();
@@ -904,16 +927,17 @@ mod app {
         }
     }
 
-    /// Show the control for the active view (ListView for Overview/Selection, EDIT for
-    /// Xml/Json) and load its content.
+    /// Show the control for the active view (ListView for Overview/Selection/Assets,
+    /// EDIT for Xml/Json) and load its content.
     unsafe fn apply_view(hwnd: HWND) {
         let Some(st) = state(hwnd) else { return };
-        let grouped = matches!(st.view, DocView::Overview | DocView::Selection);
+        let grouped = matches!(st.view, DocView::Overview | DocView::Selection | DocView::Assets);
         let _ = ShowWindow(st.list, if grouped { SW_SHOW } else { SW_HIDE });
         let _ = ShowWindow(st.edit, if grouped { SW_HIDE } else { SW_SHOW });
         match st.view {
             DocView::Overview => fill_list(st.list, &st.doc_overview),
             DocView::Selection => fill_list(st.list, &st.selected_sections),
+            DocView::Assets => fill_assets(st),
             DocView::Xml | DocView::Json => {
                 let text = if matches!(st.view, DocView::Xml) {
                     st.doc_xml.clone()
@@ -927,10 +951,72 @@ mod app {
     }
 
     unsafe fn set_view(hwnd: HWND, view: DocView) {
+        if matches!(view, DocView::Assets) {
+            ensure_reader(hwnd); // fill_assets checks blob presence via the reader
+        }
         if let Some(st) = state(hwnd) {
             st.view = view;
         }
         apply_view(hwnd);
+        if matches!(view, DocView::Assets) {
+            set_status(hwnd, "Double-click an asset to open it.");
+        }
+    }
+
+    /// Display order + section titles for asset kinds — mirrors the web build pages.
+    const ASSET_KINDS: [(&str, &str); 4] =
+        [("image", "Images"), ("audio", "Audio"), ("video", "Video"), ("text", "Text")];
+
+    /// Fill the grouped ListView with the loaded build's assets (one group per kind)
+    /// and rebuild the row → asset index map used by double-click-to-open.
+    unsafe fn fill_assets(st: &mut AppState) {
+        st.asset_rows.clear();
+        let mut sections = Vec::new();
+        if st.assets.is_empty() {
+            sections.push(Section {
+                title: "Assets".into(),
+                rows: vec![(
+                    "Status".into(),
+                    if st.assets_extracted {
+                        "No browser-viewable assets in this build.".into()
+                    } else {
+                        "Asset extraction hasn't run for this build — re-analyze the image.".into()
+                    },
+                )],
+            });
+        }
+        for (kind, title) in ASSET_KINDS {
+            let idxs: Vec<usize> = st
+                .assets
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| a.kind == kind)
+                .map(|(i, _)| i)
+                .collect();
+            if idxs.is_empty() {
+                continue;
+            }
+            let rows = idxs
+                .iter()
+                .map(|&i| {
+                    let a = &st.assets[i];
+                    let name = a.path.rsplit('/').next().unwrap_or(&a.path).to_string();
+                    let local = st
+                        .reader
+                        .as_ref()
+                        .and_then(|r| r.asset_blob_path(&a.sha256))
+                        .is_some();
+                    let mut detail = format!("{} — {} — {}", a.path, human_size(a.size), a.mime);
+                    if !local {
+                        detail.push_str(" — not in local store");
+                    }
+                    (name, detail)
+                })
+                .collect();
+            sections.push(Section { title: format!("{title} ({})", idxs.len()), rows });
+            st.asset_rows.extend(idxs);
+        }
+        fill_list(st.list, &sections);
     }
 
     /// Clear and repopulate the grouped ListView from `sections`.
@@ -984,6 +1070,7 @@ mod app {
         let mut selection_changed = false;
         let mut copied: Option<String> = None;
         let mut open_sha: Option<String> = None;
+        let mut open_asset: Option<usize> = None;
         let mut lib_resort = false;
         if let Some(st) = state(hwnd) {
             if from == st.tree && code == TVN_SELCHANGEDW {
@@ -997,7 +1084,13 @@ mod app {
             } else if from == st.list && code == NM_DBLCLK as u32 {
                 let nia = &*(lparam.0 as *const NMITEMACTIVATE);
                 if nia.iItem >= 0 {
-                    copied = Some(list_value(st.list, nia.iItem));
+                    // In the assets view a row is a file to open; elsewhere it's
+                    // a key/value pair whose value copies to the clipboard.
+                    if st.view == DocView::Assets {
+                        open_asset = st.asset_rows.get(nia.iItem as usize).copied();
+                    } else {
+                        copied = Some(list_value(st.list, nia.iItem));
+                    }
                 }
             } else if from == st.lib_list && code == NM_DBLCLK as u32 {
                 let nia = &*(lparam.0 as *const NMITEMACTIVATE);
@@ -1030,6 +1123,9 @@ mod app {
         }
         if let Some(sha) = open_sha {
             open_sha256(hwnd, &sha); // leaves library mode and shows the build
+        }
+        if let Some(idx) = open_asset {
+            open_asset_at(hwnd, idx);
         }
         if let Some(value) = copied {
             if !value.is_empty() {
@@ -1749,6 +1845,73 @@ mod app {
         }
     }
 
+    // ---- asset viewer ----
+
+    /// Open the asset at `assets[idx]`. Media kinds go to their default app via a
+    /// temp copy carrying the original filename (store blobs are extensionless, so
+    /// the shell can't pick a handler for them directly). Text kinds always open
+    /// in Notepad: handing a `.bat`/`.cmd`/`.js` from an untrusted disc to the
+    /// shell's default verb would execute it.
+    unsafe fn open_asset_at(hwnd: HWND, idx: usize) {
+        ensure_reader(hwnd);
+        let (asset, blob) = {
+            let Some(st) = state(hwnd) else { return };
+            let Some(asset) = st.assets.get(idx).cloned() else { return };
+            let blob = st.reader.as_ref().and_then(|r| r.asset_blob_path(&asset.sha256));
+            (asset, blob)
+        };
+        let Some(blob) = blob else {
+            set_status(hwnd, "Asset not in the local store — re-analyze the image to extract it.");
+            return;
+        };
+        let path = match materialize_asset(&asset, &blob) {
+            Ok(p) => p,
+            Err(e) => {
+                set_status(hwnd, &format!("Couldn't stage asset: {e}"));
+                return;
+            }
+        };
+        let path_str = path.to_string_lossy().into_owned();
+        let launched = if asset.kind == "text" {
+            let args = wide(&format!("\"{path_str}\""));
+            ShellExecuteW(hwnd, w!("open"), w!("notepad.exe"), PCWSTR(args.as_ptr()), PCWSTR::null(), SW_SHOWNORMAL)
+        } else {
+            let file = wide(&path_str);
+            ShellExecuteW(hwnd, w!("open"), PCWSTR(file.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL)
+        };
+        // ShellExecuteW reports success as a value > 32.
+        if launched.0 as isize <= 32 {
+            set_status(hwnd, &format!("No application could open {}.", asset.path));
+        } else {
+            set_status(hwnd, &format!("Opened {}.", asset.path));
+        }
+    }
+
+    /// Copy a blob into a per-asset temp dir under its original (sanitized)
+    /// filename so the shell can pick a handler by extension. Content-addressed,
+    /// so an existing copy is reused.
+    fn materialize_asset(asset: &AssetRef, blob: &std::path::Path) -> std::result::Result<PathBuf, String> {
+        let base = asset.path.rsplit('/').next().unwrap_or_default();
+        let safe: String = base
+            .chars()
+            .map(|c| {
+                if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || (c as u32) < 0x20 {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let name = if safe.trim_matches(['.', ' ']).is_empty() { asset.sha256.clone() } else { safe };
+        let dir = std::env::temp_dir().join("curator-assets").join(&asset.sha256);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let dest = dir.join(name);
+        if !dest.exists() {
+            std::fs::copy(blob, &dest).map_err(|e| e.to_string())?;
+        }
+        Ok(dest)
+    }
+
     // ---- web service: Find Similar / Submit ----
 
     unsafe fn find_similar(hwnd: HWND) {
@@ -1771,8 +1934,11 @@ mod app {
     }
 
     unsafe fn submit_build(hwnd: HWND) {
-        let Some(st) = state(hwnd) else { return };
-        let Some(json) = st.last_json.clone() else {
+        let json = {
+            let Some(st) = state(hwnd) else { return };
+            st.last_json.clone()
+        };
+        let Some(json) = json else {
             set_status(hwnd, "Analyze a build first.");
             return;
         };
@@ -1780,7 +1946,20 @@ mod app {
         if nickname.trim().is_empty() {
             return;
         }
-        let url = format!("{}/api/submissions", st.web_url.trim_end_matches('/'));
+        // Resolve which of the build's asset blobs exist locally (sha256 → path)
+        // up front on the UI thread; the worker uploads whichever the server lacks.
+        ensure_reader(hwnd);
+        let (base, sha, local_assets) = {
+            let Some(st) = state(hwnd) else { return };
+            let mut local: HashMap<String, PathBuf> = HashMap::new();
+            for a in &st.assets {
+                if let Some(p) = st.reader.as_ref().and_then(|r| r.asset_blob_path(&a.sha256)) {
+                    local.insert(a.sha256.clone(), p);
+                }
+            }
+            (st.web_url.trim_end_matches('/').to_string(), st.last_sha.clone(), local)
+        };
+        let url = format!("{base}/api/submissions");
         // { "nickname": <json string>, "record": <record> } — embed the raw record JSON.
         let body = format!(
             "{{\"nickname\":{},\"record\":{}}}",
@@ -1796,13 +1975,79 @@ mod app {
                         .ok()
                         .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(String::from))
                         .unwrap_or_else(|| "queued".into());
-                    format!("Submitted — {status}.")
+                    let note = match sha {
+                        Some(sha) => upload_missing_assets(hwnd_i, &base, &sha, &local_assets),
+                        None => String::new(),
+                    };
+                    format!("Submitted — {status}.{note}")
                 }
                 Ok((code, b)) => format!("Server error {code}: {}", b.trim()),
                 Err(e) => format!("Cannot reach service: {e}"),
             };
             post_service_result(hwnd_i, text);
         });
+    }
+
+    /// Ask the server which of the submitted build's asset blobs it lacks, then
+    /// PUT each one we hold locally. Runs on the submit worker thread; interim
+    /// one-line progress goes to the status bar. Failures degrade to a note —
+    /// the record submission already succeeded.
+    unsafe fn upload_missing_assets(
+        hwnd_i: isize,
+        base: &str,
+        build_sha: &str,
+        local: &HashMap<String, PathBuf>,
+    ) -> String {
+        if local.is_empty() {
+            return String::new(); // nothing extracted locally — nothing to offer
+        }
+        let assets_url = format!("{base}/api/submissions/{build_sha}/assets");
+        let missing: Vec<String> = match http_request("GET", &assets_url, None, &[]) {
+            Ok((code, b)) if (200..300).contains(&code) => serde_json::from_str::<serde_json::Value>(&b)
+                .ok()
+                .and_then(|v| {
+                    v.get("missing").and_then(|m| m.as_array()).map(|arr| {
+                        arr.iter().filter_map(|s| s.as_str().map(String::from)).collect()
+                    })
+                })
+                .unwrap_or_default(),
+            Ok((code, _)) => return format!(" Asset check failed: server error {code}."),
+            Err(e) => return format!(" Asset check failed: {e}."),
+        };
+        if missing.is_empty() {
+            return " Assets already on server.".into();
+        }
+        let todo: Vec<&String> = missing.iter().filter(|sha| local.contains_key(*sha)).collect();
+        let unavailable = missing.len() - todo.len();
+        let (mut uploaded, mut failed) = (0usize, 0usize);
+        for (i, sha) in todo.iter().enumerate() {
+            post_service_result(hwnd_i, format!("Uploading asset {} of {}…", i + 1, todo.len()));
+            let ok = std::fs::read(&local[*sha]).ok().is_some_and(|bytes| {
+                matches!(
+                    http_request(
+                        "PUT",
+                        &format!("{assets_url}/{sha}"),
+                        Some("Content-Type: application/octet-stream"),
+                        &bytes,
+                    ),
+                    Ok((code, _)) if (200..300).contains(&code)
+                )
+            });
+            if ok {
+                uploaded += 1;
+            } else {
+                failed += 1;
+            }
+        }
+        let mut note = format!(" Uploaded {uploaded} asset blob{}", if uploaded == 1 { "" } else { "s" });
+        if failed > 0 {
+            note.push_str(&format!(", {failed} failed"));
+        }
+        if unavailable > 0 {
+            note.push_str(&format!(", {unavailable} not in local store"));
+        }
+        note.push('.');
+        note
     }
 
     /// Export the whole local library to a single `.zip` the user can copy to the
@@ -1913,6 +2158,17 @@ mod app {
 
     /// Native WinHTTP `POST <url>` with a JSON body. Returns (status_code, body).
     unsafe fn http_post_json(url: &str, body: &str) -> std::result::Result<(u32, String), String> {
+        http_request("POST", url, Some("Content-Type: application/json"), body.as_bytes())
+    }
+
+    /// Native WinHTTP request with an arbitrary verb, optional extra header line,
+    /// and raw byte body (empty = no body). Returns (status_code, body).
+    unsafe fn http_request(
+        verb: &str,
+        url: &str,
+        header: Option<&str>,
+        body: &[u8],
+    ) -> std::result::Result<(u32, String), String> {
         // Parse scheme://host[:port]/path (minimal; http/https only).
         let (secure, rest) = if let Some(r) = url.strip_prefix("https://") {
             (true, r)
@@ -1934,9 +2190,9 @@ mod app {
         };
 
         let host_w = wide(host);
-        let verb_w = wide("POST");
+        let verb_w = wide(verb);
         let path_w = wide(path);
-        let headers_w = wide("Content-Type: application/json");
+        let headers_w = header.map(wide);
 
         let session = WinHttpOpen(
             w!("curator-gui-win"),
@@ -1971,13 +2227,16 @@ mod app {
                 return Err("WinHttpOpenRequest failed".to_string());
             }
 
-            let bytes = body.as_bytes();
             let sent = WinHttpSendRequest(
                 req,
-                Some(&headers_w[..headers_w.len() - 1]), // sans NUL
-                Some(bytes.as_ptr() as *const core::ffi::c_void),
-                bytes.len() as u32,
-                bytes.len() as u32,
+                headers_w.as_deref().map(|h| &h[..h.len() - 1]), // sans NUL
+                if body.is_empty() {
+                    None
+                } else {
+                    Some(body.as_ptr() as *const core::ffi::c_void)
+                },
+                body.len() as u32,
+                body.len() as u32,
                 0,
             )
             .is_ok()

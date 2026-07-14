@@ -71,6 +71,7 @@ impl Analyzer {
         Ok(Reader {
             db: Db::open(&self.data_dir)?,
             cache: Cache::open(Some(&self.data_dir))?,
+            data_dir: self.data_dir.clone(),
         })
     }
 
@@ -211,6 +212,12 @@ impl Analyzer {
     /// The content-addressed asset store (blobs at `<dir>/<sha256[:2]>/<sha256>`).
     pub fn assets_dir(&self) -> PathBuf {
         self.data_dir.join("assets")
+    }
+
+    /// Absolute path of one asset blob, or `None` when the sha is malformed or
+    /// the blob isn't in the local store.
+    pub fn asset_blob_path(&self, sha256: &str) -> Option<PathBuf> {
+        asset_blob_in(&self.assets_dir(), sha256)
     }
 
     /// Run the adapter's asset extraction into the store. Failures degrade to a
@@ -442,6 +449,7 @@ fn looks_importable(path: &Path) -> bool {
 pub struct Reader {
     db: Db,
     cache: Cache,
+    data_dir: PathBuf,
 }
 
 impl Reader {
@@ -479,6 +487,26 @@ impl Reader {
             None => Ok(None),
         }
     }
+
+    /// The content-addressed asset store — see [`Analyzer::assets_dir`].
+    pub fn assets_dir(&self) -> PathBuf {
+        self.data_dir.join("assets")
+    }
+
+    /// Absolute path of one asset blob — see [`Analyzer::asset_blob_path`].
+    pub fn asset_blob_path(&self, sha256: &str) -> Option<PathBuf> {
+        asset_blob_in(&self.assets_dir(), sha256)
+    }
+}
+
+/// `<store>/<sha256[:2]>/<sha256>` when the sha is well-formed and the blob
+/// exists locally. Hex validation makes the interpolation path-safe.
+fn asset_blob_in(store: &Path, sha256: &str) -> Option<PathBuf> {
+    if !is_sha256_hex(sha256) {
+        return None;
+    }
+    let path = store.join(&sha256[..2]).join(sha256);
+    path.is_file().then_some(path)
 }
 
 /// Recursively collect importable files under `root`, depth-first, sorted for a

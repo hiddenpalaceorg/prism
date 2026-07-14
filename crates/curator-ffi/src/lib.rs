@@ -53,6 +53,19 @@ pub struct FileNode {
     pub children: Vec<FileNode>,
 }
 
+/// One browser-viewable asset extracted from the build (image/audio/video/text).
+#[derive(uniffi::Record)]
+pub struct AssetInfo {
+    /// Full path from the volume root — matches the contents tree.
+    pub path: String,
+    pub sha256: String,
+    pub size: u64,
+    pub mime: String,
+    pub kind: String, // "image" | "audio" | "video" | "text"
+    /// Absolute path of the blob in the local store, when present.
+    pub blob_path: Option<String>,
+}
+
 /// Everything the GUI needs to render one analyzed image.
 #[derive(uniffi::Record)]
 pub struct AnalysisSummary {
@@ -69,6 +82,8 @@ pub struct AnalysisSummary {
     pub xml: String,
     /// Pretty-printed canonical JSON record.
     pub json: String,
+    /// Viewable assets. `None` = extraction never ran on this record.
+    pub assets: Option<Vec<AssetInfo>>,
 }
 
 /// Column the library browser sorts on.
@@ -106,10 +121,27 @@ pub struct LibraryEntry {
 }
 
 /// Assemble the UI summary from a canonical record (shared by analyze + loadBuild).
-fn build_summary(analysis: &Analysis) -> Result<AnalysisSummary, CuratorError> {
+/// `blob_path` resolves an asset sha256 to its local blob, when present.
+fn build_summary(
+    analysis: &Analysis,
+    blob_path: impl Fn(&str) -> Option<std::path::PathBuf>,
+) -> Result<AnalysisSummary, CuratorError> {
     let record = &analysis.record;
     let xml = render::to_dat_xml(record);
     let json = render::to_json(record).map_err(CuratorError::from)?;
+    let assets = record.assets.as_ref().map(|assets| {
+        assets
+            .iter()
+            .map(|a| AssetInfo {
+                path: a.path.clone(),
+                sha256: a.sha256.clone(),
+                size: a.size,
+                mime: a.mime.clone(),
+                kind: a.kind.clone(),
+                blob_path: blob_path(&a.sha256).map(|p| p.to_string_lossy().into_owned()),
+            })
+            .collect()
+    });
     Ok(AnalysisSummary {
         sha256: record.image.sha256.clone(),
         name: record.image.name.clone(),
@@ -122,6 +154,7 @@ fn build_summary(analysis: &Analysis) -> Result<AnalysisSummary, CuratorError> {
         tree: record.contents.iter().map(node_to_ffi).collect(),
         xml,
         json,
+        assets,
     })
 }
 
@@ -269,8 +302,9 @@ impl Engine {
         cancel: Option<Arc<CancelHandle>>,
     ) -> Result<AnalysisSummary, CuratorError> {
         let observer = Arc::new(ListenerObserver { listener, cancel });
-        let analysis = self.inner.lock().unwrap_or_else(|e| e.into_inner()).analyze(&path, observer)?;
-        build_summary(&analysis)
+        let analyzer = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let analysis = analyzer.analyze(&path, observer)?;
+        build_summary(&analysis, |sha| analyzer.asset_blob_path(sha))
     }
 
     /// Number of builds in the local library.
@@ -325,8 +359,9 @@ impl Engine {
     /// Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
     /// Uses the reader, so it works while an import holds the writer.
     pub fn load_build(&self, sha256: String) -> Result<Option<AnalysisSummary>, CuratorError> {
-        match self.reader.lock().unwrap_or_else(|e| e.into_inner()).load_cached(&sha256)? {
-            Some(analysis) => Ok(Some(build_summary(&analysis)?)),
+        let reader = self.reader.lock().unwrap_or_else(|e| e.into_inner());
+        match reader.load_cached(&sha256)? {
+            Some(analysis) => Ok(Some(build_summary(&analysis, |sha| reader.asset_blob_path(sha))?)),
             None => Ok(None),
         }
     }

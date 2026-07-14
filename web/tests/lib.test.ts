@@ -191,3 +191,47 @@ test("orderAssets accepts a per-kind cap map (missing kind = uncapped)", () => {
   for (const a of ordered) counts[a.kind] = (counts[a.kind] ?? 0) + 1;
   assert.deepEqual(counts, { image: 30, audio: 20, text: 12 });
 });
+
+// --- submission asset uploads ---------------------------------------------------
+
+import { referencedAssets, MAX_ASSET_BLOB_BYTES } from "../src/lib/submission-assets";
+import type { Pool } from "pg";
+
+function fakePool(subRow?: { record: BuildRecord; status: string }, buildRow?: { record: BuildRecord }) {
+  return {
+    query: async (sql: string) => {
+      if (sql.includes("submission_queue")) return { rowCount: subRow ? 1 : 0, rows: subRow ? [subRow] : [] };
+      if (sql.includes("FROM builds")) return { rowCount: buildRow ? 1 : 0, rows: buildRow ? [buildRow] : [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  } as unknown as Pool;
+}
+
+test("referencedAssets dedupes shared blobs and drops malformed refs", async () => {
+  const sha = "ef".repeat(32);
+  const assets: AssetRef[] = [
+    { path: "/A.PNG", sha256: sha, size: 10, mime: "image/png", kind: "image" },
+    { path: "/COPY.PNG", sha256: sha, size: 10, mime: "image/png", kind: "image" }, // dup blob
+    { path: "/B.PNG", sha256: "not-hex", size: 10, mime: "image/png", kind: "image" },
+    { path: "/C.PNG", sha256: "aa".repeat(32), size: 0, mime: "image/png", kind: "image" },
+    { path: "/D.PNG", sha256: "bb".repeat(32), size: MAX_ASSET_BLOB_BYTES + 1, mime: "image/png", kind: "image" },
+  ];
+  const refs = await referencedAssets(fakePool({ record: minimalRecord(assets), status: "queued" }), "ab".repeat(32));
+  assert.ok(refs);
+  assert.deepEqual([...refs.sizes.entries()], [[sha, 10]]);
+  assert.equal(refs.totalBytes, 10);
+});
+
+test("referencedAssets falls back from rejected submission to the library build", async () => {
+  const subAsset: AssetRef = { path: "/S", sha256: "cc".repeat(32), size: 1, mime: "text/plain", kind: "text" };
+  const libAsset: AssetRef = { path: "/L", sha256: "dd".repeat(32), size: 2, mime: "text/plain", kind: "text" };
+  const pool = fakePool(
+    { record: minimalRecord([subAsset]), status: "rejected" },
+    { record: minimalRecord([libAsset]) }
+  );
+  const refs = await referencedAssets(pool, "ab".repeat(32));
+  assert.ok(refs);
+  assert.deepEqual([...refs.sizes.keys()], ["dd".repeat(32)]);
+  // Unknown everywhere -> null.
+  assert.equal(await referencedAssets(fakePool(), "ab".repeat(32)), null);
+});

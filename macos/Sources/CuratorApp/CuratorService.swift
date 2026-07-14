@@ -128,14 +128,42 @@ struct CuratorService {
         return try JSONDecoder().decode(SubmitResult.self, from: data)
     }
 
+    private struct AssetsStatus: Decodable { let missing: [String] }
+
+    /// GET `/api/submissions/<sha>/assets` — asset blobs the server still lacks.
+    func missingAssets(buildSha: String) async throws -> [String] {
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/submissions/\(buildSha)/assets"))
+        req.httpMethod = "GET"
+        let data = try await perform(req)
+        return try JSONDecoder().decode(AssetsStatus.self, from: data).missing
+    }
+
+    /// PUT one asset blob (raw bytes, streamed from the local store) under its build.
+    func uploadAsset(buildSha: String, assetSha: String, fileURL: URL) async throws {
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/submissions/\(buildSha)/assets/\(assetSha)"))
+        req.httpMethod = "PUT"
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        _ = try await perform(req, uploadFile: fileURL)
+    }
+
     private func post(path: String, body: Data) async throws -> Data {
         var req = URLRequest(url: baseURL.appendingPathComponent(path))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
+        return try await perform(req)
+    }
+
+    /// Run one request with the shared friendly-error mapping. `uploadFile`
+    /// streams a file as the body (kept off the request to avoid buffering).
+    private func perform(_ req: URLRequest, uploadFile: URL? = nil) async throws -> Data {
         let (data, response): (Data, URLResponse)
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            if let uploadFile {
+                (data, response) = try await URLSession.shared.upload(for: req, fromFile: uploadFile)
+            } else {
+                (data, response) = try await URLSession.shared.data(for: req)
+            }
         } catch let urlError as URLError {
             let host = baseURL.absoluteString
             switch urlError.code {

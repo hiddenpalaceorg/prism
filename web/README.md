@@ -33,3 +33,7 @@ for the build page's inline asset viewer.
   (read-only, not ingested) and returns fused similar-build neighbors.
 - `POST /api/submissions` — body `{ nickname, record }`; enqueues for moderation
   (dedup by sha256). `GET /api/submissions/<sha256>` returns status.
+- `GET /api/submissions/<sha256>/assets` — which of the build's referenced asset
+  blobs the store lacks; `PUT /api/submissions/<sha256>/assets/<assetSha>` uploads
+  one (raw body ≤ 20MB, must hash to `<assetSha>` and be referenced by the
+  submitted record). The desktop apps call these after submitting a record.

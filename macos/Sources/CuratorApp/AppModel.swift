@@ -28,7 +28,16 @@ enum DocMode: String, CaseIterable, Identifiable {
 /// Which detail-pane tab is showing. Defaults to `.overview` on load; selecting a file
 /// in the sidebar switches to `.selection`. XML/JSON live under `.document` (opt-in).
 enum DetailTab: Hashable {
-    case overview, selection, document, similar
+    case overview, selection, assets, document, similar
+}
+
+/// An in-app preview of one text asset (never shell-opened — a `.sh`/`.bat`/`.js`
+/// from an untrusted disc must not reach an app that might execute it).
+struct AssetTextPreview: Identifiable {
+    let id: String // asset sha256
+    let name: String
+    let text: String
+    let truncated: Bool
 }
 
 /// Forwards UniFFI progress callbacks (delivered on a background thread) to a main-actor sink.
@@ -83,6 +92,9 @@ final class AppModel: ObservableObject {
     @Published var isQuerying = false
     @Published var serviceMessage: String?
     @Published var showingSubmitSheet = false
+
+    // Asset viewer.
+    @Published var assetPreview: AssetTextPreview?
 
     private let service = CuratorService()
     private var engine: Engine?
@@ -261,7 +273,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Submit the loaded build to the moderation queue under `nickname`.
+    /// Submit the loaded build to the moderation queue under `nickname`, then
+    /// upload whichever of its asset blobs the server reports missing.
     func submit(nickname: String) {
         guard let summary, !isQuerying else { return }
         let json = summary.json
@@ -272,12 +285,109 @@ final class AppModel: ObservableObject {
         Task {
             do {
                 let r = try await service.submit(recordJSON: json, nickname: nick)
-                serviceMessage = "Submitted \(r.sha256.prefix(12))… — \(r.status)."
+                let assetNote = await uploadMissingAssets(for: summary)
+                serviceMessage = "Submitted \(r.sha256.prefix(12))… — \(r.status).\(assetNote)"
             } catch {
                 serviceMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
             }
             isQuerying = false
         }
+    }
+
+    /// Upload the build's asset blobs that the server lacks and we hold locally.
+    /// Returns a status suffix for the submit message ("" when moot). Upload
+    /// failures degrade to a note — the record submission already succeeded.
+    private func uploadMissingAssets(for summary: AnalysisSummary) async -> String {
+        guard let assets = summary.assets, !assets.isEmpty else { return "" }
+        var local: [String: String] = [:] // asset sha256 → blob path
+        for a in assets where a.blobPath != nil { local[a.sha256] = a.blobPath }
+        do {
+            let missing = try await service.missingAssets(buildSha: summary.sha256)
+            if missing.isEmpty { return " Assets already on server." }
+            let todo = missing.filter { local[$0] != nil }
+            var done = 0
+            for sha in todo {
+                serviceMessage = "Uploading assets \(done + 1)/\(todo.count)…"
+                guard let blob = local[sha] else { continue }
+                try await service.uploadAsset(
+                    buildSha: summary.sha256,
+                    assetSha: sha,
+                    fileURL: URL(fileURLWithPath: blob)
+                )
+                done += 1
+            }
+            let unavailable = missing.count - todo.count
+            var note = " Uploaded \(done) asset blob\(done == 1 ? "" : "s")"
+            if unavailable > 0 { note += " (\(unavailable) not in the local store)" }
+            return note + "."
+        } catch {
+            let detail = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            return " Asset upload failed: \(detail)"
+        }
+    }
+
+    // MARK: - Asset viewer
+
+    /// Open one extracted asset. Media kinds go to the default app via a temp
+    /// copy carrying the original filename (blobs are extensionless, so the
+    /// store path alone can't pick a handler). Text kinds preview in-app only:
+    /// shell-opening a `.sh`/`.bat`/`.js` from an untrusted disc could hand it
+    /// to something that executes it.
+    func openAsset(_ asset: AssetInfo) {
+        guard let blob = asset.blobPath else {
+            status = "Asset not in the local store — re-analyze the image to extract it."
+            return
+        }
+        if asset.kind == "text" {
+            previewTextAsset(asset, blob: blob)
+            return
+        }
+        do {
+            let url = try materializeAsset(asset, blob: blob)
+            if !NSWorkspace.shared.open(url) {
+                status = "No application could open \(url.lastPathComponent)."
+            }
+        } catch {
+            status = "Couldn't open asset: \(error.localizedDescription)"
+        }
+    }
+
+    /// Show a text asset in the in-app preview sheet (display capped at 256 KB).
+    private func previewTextAsset(_ asset: AssetInfo, blob: String) {
+        let capBytes = 256 * 1024
+        guard let fh = FileHandle(forReadingAtPath: blob) else {
+            status = "Couldn't read asset from the local store."
+            return
+        }
+        defer { try? fh.close() }
+        let data = (try? fh.read(upToCount: capBytes)) ?? Data()
+        let text = String(decoding: data, as: UTF8.self)
+            .replacingOccurrences(of: "\0", with: "")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+        assetPreview = AssetTextPreview(
+            id: asset.sha256,
+            name: (asset.path as NSString).lastPathComponent,
+            text: text,
+            truncated: asset.size > UInt64(capBytes)
+        )
+    }
+
+    /// Copy a blob into a per-asset temp dir under its original filename so
+    /// Launch Services can pick the right app. Content-addressed, so an
+    /// existing copy is reused.
+    private func materializeAsset(_ asset: AssetInfo, blob: String) throws -> URL {
+        let base = (asset.path as NSString).lastPathComponent
+            .replacingOccurrences(of: ":", with: "_")
+        let name = base.isEmpty ? asset.sha256 : base
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("curator-assets", isDirectory: true)
+            .appendingPathComponent(asset.sha256, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dest = dir.appendingPathComponent(name)
+        if !FileManager.default.fileExists(atPath: dest.path) {
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: blob), to: dest)
+        }
+        return dest
     }
 
     /// Open a build's detail page in the web library in the default browser.
