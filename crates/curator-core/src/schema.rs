@@ -1,7 +1,6 @@
 //! Canonical build record — the contract shared by the CLI, GUIs, and web ingester.
 //!
-//! See PLAN.md → "Build record — final output shape" and "Schema & fingerprint
-//! versioning". `record_schema_version` is the serialization shape; `fingerprint_profile`
+//! `record_schema_version` is the serialization shape; `fingerprint_profile`
 //! pins the algorithm manifest.
 
 use serde::{Deserialize, Serialize};

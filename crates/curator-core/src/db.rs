@@ -1,5 +1,5 @@
 //! Local SQLite library: the build index plus the similarity-check and submission
-//! tables from PLAN.md. Identity is always `image.sha256`.
+//! tables. Identity is always `image.sha256`.
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
