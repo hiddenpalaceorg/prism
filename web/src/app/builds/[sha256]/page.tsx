@@ -4,10 +4,16 @@ import { notFound } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
-import { getBuild, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities } from "@/lib/queries";
+import { getBuild, getBuildAssets, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities } from "@/lib/queries";
+import { assetTotals, orderAssets, readAssetExcerpt } from "@/lib/assets";
 import type { BuildRecord } from "@/lib/types";
 import SimilarBuilds from "./SimilarBuilds";
 import FileTree from "./FileTree";
+import AssetGallery from "./AssetGallery";
+
+// The assets section previews at most this many items per kind; the rest live
+// on /builds/<sha256>/assets.
+const ASSET_PREVIEW_PER_KIND = { image: 30, audio: 20, video: 10, text: 10 };
 
 export const runtime = "nodejs";
 // The corpus only changes at ingest; render once and serve cached for an hour
@@ -91,9 +97,10 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
   const q = deriveQueryFeatures(build.record);
   // Pull a wide candidate set per tier so the fused top-50 is well-populated.
   // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const [similar, textNeighbors] = await Promise.all([
+  const [similar, textNeighbors, assets] = await Promise.all([
     findSimilar(pool, q, 100),
     findByEmbeddingOf(pool, sha256, 100),
+    getBuildAssets(pool, sha256),
   ]);
   const fused = fuseSimilar(similar, textNeighbors);
 
@@ -102,6 +109,17 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
   const caps = await getCapabilities(pool, [sha256, ...fused.map((f) => f.sha256)]);
   const queryCaps = caps.get(sha256) ?? [];
   for (const f of fused) f.caps = caps.get(f.sha256) ?? [];
+
+  // Preview subset for the assets section, plus server-read excerpts for its
+  // text cards (tiny head reads from the local blob store).
+  const previewAssets = orderAssets(assets, ASSET_PREVIEW_PER_KIND);
+  const excerpts = Object.fromEntries(
+    await Promise.all(
+      previewAssets
+        .filter((a) => a.kind === "text")
+        .map(async (a) => [a.path, (await readAssetExcerpt(a.sha256)) ?? ""] as const)
+    )
+  );
 
   // Ship only the initially-visible subtree; FileTree lazily fetches the rest.
   const tree = buildTree(build.record.contents);
@@ -122,6 +140,7 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
         <Chip>{build.file_count} files</Chip>
         <Chip>{humanSize(build.total_size)}</Chip>
         <Chip>profile {build.fingerprint_profile}</Chip>
+        {assets.length > 0 && <Chip>{assets.length} viewable</Chip>}
       </div>
 
       <dl className="mt-4 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
@@ -157,11 +176,20 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
 
       <SimilarBuilds builds={fused} queryCaps={queryCaps} />
 
+      {assets.length > 0 && (
+        <section className="mt-8">
+          <h2 className="text-lg font-medium">
+            Assets <span className="text-sm font-normal text-neutral-400">({assets.length} viewable)</span>
+          </h2>
+          <AssetGallery sha256={sha256} assets={previewAssets} totals={assetTotals(assets)} excerpts={excerpts} />
+        </section>
+      )}
+
       <section className="mt-8">
         <h2 className="text-lg font-medium">
           Files <span className="text-sm font-normal text-neutral-400">({counts.files} files, {counts.dirs} dirs)</span>
         </h2>
-        <FileTree sha256={sha256} roots={pruneToExpanded(tree, expanded)} initiallyExpanded={[...expanded]} />
+        <FileTree sha256={sha256} roots={pruneToExpanded(tree, expanded)} initiallyExpanded={[...expanded]} assets={assets} />
       </section>
     </main>
   );

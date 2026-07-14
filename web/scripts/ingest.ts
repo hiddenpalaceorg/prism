@@ -9,10 +9,13 @@
 // src/lib/ingest.ts so the moderation accept endpoint reuses it.
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import readline from "node:readline";
 import type { Readable } from "node:stream";
 import pg from "pg";
+import { assetBlobPath, assetStoreDir } from "../src/lib/assets";
 import { ingestRecordTx, refreshAudioIdf } from "../src/lib/ingest";
 import type { BuildRecord } from "../src/lib/types";
 
@@ -61,6 +64,47 @@ function readManifest(zipPath: string): Manifest {
   return m;
 }
 
+/** Unpack the bundle's asset blobs (`assets/<sha256>` members) into the
+ *  content-addressed store. Blobs already present are skipped; writes are
+ *  staged + renamed so a crash can't leave a truncated blob under its final
+ *  name. Returns how many blobs were added. */
+function unpackAssets(zipPath: string): number {
+  let listing: string;
+  try {
+    listing = execFileSync("unzip", ["-Z1", zipPath, "assets/*"], {
+      encoding: "utf8",
+      maxBuffer: 64 << 20,
+    });
+  } catch {
+    return 0; // no assets/ members — a pre-assets bundle
+  }
+  const shas = listing
+    .split("\n")
+    .map((l) => l.trim().replace(/^assets\//, ""))
+    .filter((s) => /^[0-9a-f]{64}$/.test(s));
+  const missing = shas.filter((s) => !fs.existsSync(assetBlobPath(s)));
+  if (missing.length === 0) return 0;
+
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "curator-assets-"));
+  try {
+    execFileSync("unzip", ["-qo", zipPath, "assets/*", "-d", staging], { stdio: "ignore" });
+    let n = 0;
+    for (const sha of missing) {
+      const src = path.join(staging, "assets", sha);
+      if (!fs.existsSync(src)) continue;
+      const dest = assetBlobPath(sha);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      const tmp = `${dest}.tmp${process.pid}`;
+      fs.copyFileSync(src, tmp);
+      fs.renameSync(tmp, dest);
+      n++;
+    }
+    return n;
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 /** A line stream over the records, plus a cleanup/await handle for the source. */
 function openRecords(path: string): { lines: Readable; done: Promise<void> } {
   if (path.endsWith(".zip")) {
@@ -88,6 +132,11 @@ async function main() {
   let lineNo = 0;
   const failures: { line: number; sha?: string; name?: string; error: string }[] = [];
   try {
+    // Blobs before rows: once a build_asset row exists, its blob is servable.
+    if (bundle.endsWith(".zip")) {
+      const added = unpackAssets(bundle);
+      if (added > 0) console.log(`unpacked ${added} asset blob(s) into ${assetStoreDir()}`);
+    }
     const { lines, done } = openRecords(bundle);
     const rl = readline.createInterface({ input: lines, crlfDelay: Infinity });
     for await (const line of rl) {
