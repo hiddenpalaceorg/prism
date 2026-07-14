@@ -1,3 +1,30 @@
 __pycache__
 .DS_Store
 dist
+
+# Rust
+target/
+**/*.rs.bk
+
+# SwiftPM (macOS GUI)
+.build/
+/macos/.bindings
+
+# Python / uv
+.venv
+*.pyc
+
+# Node
+node_modules
+.next
+
+# Local data / artifacts
+*.db
+/old/old-curator.db
+
+# Sample disc images (large, local test fixtures only)
+/builds
+
+# Adapter freeze output (PyInstaller)
+/ps2exe-adapter/dist
+/ps2exe-adapter/build
