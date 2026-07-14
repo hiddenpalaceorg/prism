@@ -1,0 +1,22 @@
+[package]
+name = "curator-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Curator core: disc fingerprinting, cache, library, and DAT/JSON rendering."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+md-5.workspace = true
+blake3.workspace = true
+fastcdc.workspace = true
+rusqlite.workspace = true
+directories.workspace = true
+zip.workspace = true
+chrono.workspace = true
