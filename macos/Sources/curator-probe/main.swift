@@ -27,7 +27,7 @@ defer { try? fm.removeItem(at: tmp) }
 let dataDir = ProcessInfo.processInfo.environment["CURATOR_DATA_DIR"]
     ?? tmp.appendingPathComponent("data").path
 let engine = try Engine(adapterDir: "../ps2exe-adapter", adapterBin: nil, dataDir: dataDir)
-print("1. librarySize() ->", try engine.librarySize(), "(fresh data dir) ✓")
+print("1. librarySize() ->", try engine.librarySize(), "(fresh data dir)")
 
 // 2. Cancellation: pre-trip the handle; hashing must unwind as .cancelled.
 let big = tmp.appendingPathComponent("big.bin")
@@ -38,7 +38,7 @@ do {
     _ = try engine.analyze(path: big.path, listener: PrintListener(), cancel: cancel)
     print("2. cancellation -> FAILED (analyze returned)")
 } catch CuratorError.Cancelled {
-    print("2. cancellation -> .Cancelled ✓")
+    print("2. cancellation -> .Cancelled")
 } catch {
     print("2. cancellation -> unexpected:", error)
 }
@@ -59,11 +59,11 @@ do {
 
 // 4. New library reads round-trip (empty data dir → [] and nil).
 let recent = try engine.recentBuilds(limit: 10)
-print("4. recentBuilds(10) -> \(recent.count) entries ✓")
+print("4. recentBuilds(10) -> \(recent.count) entries")
 let missing = try engine.loadBuild(sha256: "deadbeef")
-print("   loadBuild(unknown) -> \(missing == nil ? "nil ✓" : "unexpected hit")")
+print("   loadBuild(unknown) -> \(missing == nil ? "nil" : "unexpected hit")")
 if let first = recent.first, let loaded = try engine.loadBuild(sha256: first.sha256) {
-    print("   loadBuild(\(first.sha256.prefix(8))) -> \(loaded.name), \(loaded.tree.count) root node(s), fromCache=\(loaded.fromCache) ✓")
+    print("   loadBuild(\(first.sha256.prefix(8))) -> \(loaded.name), \(loaded.tree.count) root node(s), fromCache=\(loaded.fromCache)")
 }
 
 print("probe done.")

@@ -19,8 +19,8 @@
 #else
 #define UNIFFI_SHARED_H
 #define UNIFFI_SHARED_HEADER_V4
-// ⚠️ Attention: If you change this #else block (ending in `#endif // def UNIFFI_SHARED_H`) you *must* ⚠️
-// ⚠️ increment the version suffix in all instances of UNIFFI_SHARED_HEADER_V4 in this file.           ⚠️
+// Attention: If you change this #else block (ending in `#endif // def UNIFFI_SHARED_H`) you *must*
+// increment the version suffix in all instances of UNIFFI_SHARED_HEADER_V4 in this file.
 
 typedef struct RustBuffer
 {
@@ -41,8 +41,8 @@ typedef struct RustCallStatus {
     RustBuffer errorBuf;
 } RustCallStatus;
 
-// ⚠️ Attention: If you change this #else block (ending in `#endif // def UNIFFI_SHARED_H`) you *must* ⚠️
-// ⚠️ increment the version suffix in all instances of UNIFFI_SHARED_HEADER_V4 in this file.           ⚠️
+// Attention: If you change this #else block (ending in `#endif // def UNIFFI_SHARED_H`) you *must*
+// increment the version suffix in all instances of UNIFFI_SHARED_HEADER_V4 in this file.
 #endif // def UNIFFI_SHARED_H
 #ifndef UNIFFI_FFIDEF_RUST_FUTURE_CONTINUATION_CALLBACK
 #define UNIFFI_FFIDEF_RUST_FUTURE_CONTINUATION_CALLBACK
@@ -245,35 +245,35 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureRes
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD0
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD0
-typedef void (*UniffiCallbackInterfaceProgressListenerMethod0)(uint64_t, uint64_t, uint64_t, RustBuffer, void* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceProgressListenerMethod0)(uint64_t, uint64_t, uint64_t, RustBuffer, void* _Nonnull,
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD1
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD1
-typedef void (*UniffiCallbackInterfaceProgressListenerMethod1)(uint64_t, uint64_t, RustBuffer, RustBuffer, RustBuffer, void* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceProgressListenerMethod1)(uint64_t, uint64_t, RustBuffer, RustBuffer, RustBuffer, void* _Nonnull,
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD2
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD2
-typedef void (*UniffiCallbackInterfaceProgressListenerMethod2)(uint64_t, uint64_t, double, void* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceProgressListenerMethod2)(uint64_t, uint64_t, double, void* _Nonnull,
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD3
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD3
-typedef void (*UniffiCallbackInterfaceProgressListenerMethod3)(uint64_t, uint64_t, void* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceProgressListenerMethod3)(uint64_t, uint64_t, void* _Nonnull,
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD4
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_PROGRESS_LISTENER_METHOD4
-typedef void (*UniffiCallbackInterfaceProgressListenerMethod4)(uint64_t, RustBuffer, void* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceProgressListenerMethod4)(uint64_t, RustBuffer, void* _Nonnull,
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
@@ -304,7 +304,7 @@ void uniffi_curator_ffi_fn_free_cancelhandle(uint64_t handle, RustCallStatus *_N
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_CONSTRUCTOR_CANCELHANDLE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_CONSTRUCTOR_CANCELHANDLE_NEW
 uint64_t uniffi_curator_ffi_fn_constructor_cancelhandle_new(RustCallStatus *_Nonnull out_status
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_CANCELHANDLE_CANCEL
@@ -645,115 +645,115 @@ void ffi_curator_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_CANCELHANDLE_CANCEL
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_CANCELHANDLE_CANCEL
 uint16_t uniffi_curator_ffi_checksum_method_cancelhandle_cancel(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_CANCELHANDLE_IS_CANCELLED
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_CANCELHANDLE_IS_CANCELLED
 uint16_t uniffi_curator_ffi_checksum_method_cancelhandle_is_cancelled(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_ANALYZE
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_ANALYZE
 uint16_t uniffi_curator_ffi_checksum_method_engine_analyze(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_BUNDLE
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_BUNDLE
 uint16_t uniffi_curator_ffi_checksum_method_engine_export_bundle(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_JSONL
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_EXPORT_JSONL
 uint16_t uniffi_curator_ffi_checksum_method_engine_export_jsonl(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SIZE
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SIZE
 uint16_t uniffi_curator_ffi_checksum_method_engine_library_size(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SYSTEMS
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIBRARY_SYSTEMS
 uint16_t uniffi_curator_ffi_checksum_method_engine_library_systems(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIST_FILES
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LIST_FILES
 uint16_t uniffi_curator_ffi_checksum_method_engine_list_files(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LOAD_BUILD
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LOAD_BUILD
 uint16_t uniffi_curator_ffi_checksum_method_engine_load_build(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_RECENT_BUILDS
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_RECENT_BUILDS
 uint16_t uniffi_curator_ffi_checksum_method_engine_recent_builds(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_SEARCH_LIBRARY
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_SEARCH_LIBRARY
 uint16_t uniffi_curator_ffi_checksum_method_engine_search_library(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_CONSTRUCTOR_CANCELHANDLE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_CONSTRUCTOR_CANCELHANDLE_NEW
 uint16_t uniffi_curator_ffi_checksum_constructor_cancelhandle_new(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_CONSTRUCTOR_ENGINE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_CONSTRUCTOR_ENGINE_NEW
 uint16_t uniffi_curator_ffi_checksum_constructor_engine_new(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_BATCH
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_BATCH
 uint16_t uniffi_curator_ffi_checksum_method_progresslistener_on_batch(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_COUNTER_OPEN
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_COUNTER_OPEN
 uint16_t uniffi_curator_ffi_checksum_method_progresslistener_on_counter_open(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_PROGRESS
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_PROGRESS
 uint16_t uniffi_curator_ffi_checksum_method_progresslistener_on_progress(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_COUNTER_CLOSE
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_COUNTER_CLOSE
 uint16_t uniffi_curator_ffi_checksum_method_progresslistener_on_counter_close(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_PROGRESSLISTENER_ON_MESSAGE
 uint16_t uniffi_curator_ffi_checksum_method_progresslistener_on_message(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_CURATOR_FFI_UNIFFI_CONTRACT_VERSION
 #define UNIFFI_FFIDEF_FFI_CURATOR_FFI_UNIFFI_CONTRACT_VERSION
 uint32_t ffi_curator_ffi_uniffi_contract_version(void
-    
+
 );
 #endif
 

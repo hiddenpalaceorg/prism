@@ -3,9 +3,9 @@
 #
 #   bash macos/build-app.sh [debug|release]   (default: release)
 #
-# The app finds the adapter via CURATOR_ADAPTER_BIN (a Phase-2 bundle) or
+# The app finds the adapter via CURATOR_ADAPTER_BIN (a frozen adapter binary) or
 # CURATOR_ADAPTER_DIR (a uv project); set one before launching for dev. A shipped
-# build would embed the Phase-2 bundle inside Curator.app/Contents/Resources.
+# build would embed the frozen adapter inside Curator.app/Contents/Resources.
 set -euo pipefail
 
 CFG=${1:-release}
@@ -29,6 +29,9 @@ DYLIB="$LIBDIR/libcurator_ffi.dylib"
 cp "$HERE/.bindings/curator_ffi.swift"        "$HERE/Sources/CuratorKit/curator_ffi.swift"
 cp "$HERE/.bindings/curator_ffiFFI.h"         "$HERE/Sources/curator_ffiFFI/include/curator_ffiFFI.h"
 cp "$HERE/.bindings/curator_ffiFFI.modulemap" "$HERE/Sources/curator_ffiFFI/include/module.modulemap"
+# uniffi's generated banner uses warning-sign glyphs; keep the tree emoji-free
+perl -i -pe 's/\xE2\x9A\xA0\xEF\xB8\x8F ?//g; s/ +$//' \
+    "$HERE/Sources/curator_ffiFFI/include/curator_ffiFFI.h"
 rm -rf "$HERE/.bindings"
 
 echo ">> swiftpm build ($CFG)"

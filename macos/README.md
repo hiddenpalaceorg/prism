@@ -47,28 +47,25 @@ Validate the bridge headlessly (no display needed):
 ```sh
 cargo build -p curator-ffi
 cd macos && swift run curator-probe
-# → librarySize ✓, progress callbacks fire, cancellation → .Cancelled, errors → .Failed
+# → librarySize, progress callbacks fire, cancellation → .Cancelled, errors → .Failed
 ```
 
-## Done
+## Features
 
 - Analyze (files/folders, **open dialog or drag-and-drop**) → tree + details + XML/JSON,
   live progress, working Cancel.
 - **Recent builds** — the sidebar lists the local library; clicking one reopens it from
   cache (no re-analysis).
-- **Embedded adapter** — `build-app.sh` copies a Phase-2 bundle into
+- **Embedded adapter** — `build-app.sh` copies the frozen adapter into
   `Resources/adapter`; the app runs with no dev toolchain and no env var.
 - **Find Similar** → `POST /api/similarity`; tiered neighbors (content / files / chunks /
   audio / exe / text) in the Similar tab. Click a neighbor to open its web build-detail
   page (`/builds/<sha256>`), or right-click to copy the hash.
 - **Submit** → `POST /api/submissions` with a nickname (moderation queue).
 
-## Remaining for a shippable app
-
-- Code-signing + notarization (needs a Developer ID).
-
 ## Notes
 
+- The app is not code-signed or notarized (needs a Developer ID).
 - Similarity is a network service (read-only); the app should degrade gracefully offline.
 - `Sources/CuratorKit/curator_ffi.swift` is generated; `build-app.sh` regenerates it
   from the freshly built dylib so the bindings never drift from the Rust API.
