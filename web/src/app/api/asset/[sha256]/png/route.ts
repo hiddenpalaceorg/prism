@@ -2,18 +2,20 @@ import { readFile } from "node:fs/promises";
 import type { NextRequest } from "next/server";
 import { assetBlobPath } from "@/lib/assets";
 import { getPool } from "@/lib/db";
-import { bmpToPng, pngConvertible, WEB_SAFE_IMAGE } from "@/lib/imgpng";
+import { pngConvertible, toPng, WEB_SAFE_IMAGE } from "@/lib/imgpng";
 import { isSha256 } from "@/lib/validate";
 
 export const runtime = "nodejs";
 
 // GET /api/asset/<sha256>/png — the asset converted to PNG, for og:image use
-// on formats unfurlers won't render (today: BMP). Web-safe formats redirect to
-// the raw asset route; content-addressed, so responses cache hard.
+// on formats unfurlers won't render and inline display of formats browsers
+// won't (today: BMP and TGA). Web-safe formats redirect to the raw asset
+// route; content-addressed, so responses cache hard.
 
 const CACHE = "public, max-age=31536000, immutable";
 
-// BMPs are uncompressed; bound what the in-process decoder will chew on.
+// Bound what the in-process decoder will chew on (decoded size is capped
+// separately by the converters' MAX_PIXELS).
 const MAX_CONVERT_BYTES = 32_000_000;
 
 export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
@@ -43,7 +45,7 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
 
   let png: Buffer;
   try {
-    png = bmpToPng(bytes);
+    png = toPng(meta.mime, bytes);
   } catch {
     return Response.json({ error: "undecodable image" }, { status: 415 });
   }

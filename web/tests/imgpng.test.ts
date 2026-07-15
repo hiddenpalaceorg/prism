@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PNG } from "pngjs";
-import { bmpToPng, pngConvertible, WEB_SAFE_IMAGE } from "../src/lib/imgpng";
+import { bmpToPng, pngConvertible, tgaToPng, toPng, WEB_SAFE_IMAGE } from "../src/lib/imgpng";
 
 // Hand-crafted 2x1 24bpp BMP: left pixel pure red, right pixel pure blue
 // (rows are BGR on disk, padded to 4 bytes) — pins the ABGR→RGBA swizzle.
@@ -78,10 +78,82 @@ test("web-safe and convertible mime classification", () => {
   for (const m of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
     assert.ok(WEB_SAFE_IMAGE.test(m), m);
   }
-  for (const m of ["image/bmp", "image/x-icon", "image/svg+xml", "image/tiff"]) {
+  for (const m of ["image/bmp", "image/x-tga", "image/x-icon", "image/svg+xml", "image/tiff"]) {
     assert.ok(!WEB_SAFE_IMAGE.test(m), m);
   }
   assert.ok(pngConvertible("image/bmp"));
+  assert.ok(pngConvertible("image/x-tga"));
   assert.ok(!pngConvertible("image/x-icon"));
   assert.ok(!pngConvertible("image/svg+xml"));
+});
+
+// 18-byte TGA header for a bare (palette-less) image.
+function tgaHeader(imageType: number, w: number, h: number, depth: number, desc: number): Buffer {
+  const hd = Buffer.alloc(18);
+  hd[2] = imageType;
+  hd.writeUInt16LE(w, 12);
+  hd.writeUInt16LE(h, 14);
+  hd[16] = depth;
+  hd[17] = desc;
+  return hd;
+}
+
+test("tgaToPng flips bottom-origin rows and makes 24bpp opaque", () => {
+  // 2x2 bottom-origin: file rows run bottom-up, so the file's second row
+  // (red, blue — BGR on disk) must come out as the top of the PNG.
+  const tga = Buffer.concat([
+    tgaHeader(2, 2, 2, 24, 0),
+    Buffer.from([0, 255, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0]),
+  ]);
+  const png = PNG.sync.read(tgaToPng(tga));
+  assert.equal(png.width, 2);
+  assert.equal(png.height, 2);
+  assert.deepEqual([...png.data.subarray(0, 4)], [255, 0, 0, 255]); // red
+  assert.deepEqual([...png.data.subarray(4, 8)], [0, 0, 255, 255]); // blue
+  assert.deepEqual([...png.data.subarray(8, 12)], [0, 255, 0, 255]); // green
+});
+
+test("tgaToPng decodes RLE packets and keeps real alpha", () => {
+  // 3x1 top-origin RLE: a run of two half-transparent reds + one literal blue.
+  const tga = Buffer.concat([
+    tgaHeader(10, 3, 1, 32, 0x20),
+    Buffer.from([0x81, 0, 0, 255, 128, 0x00, 255, 0, 0, 255]),
+  ]);
+  const png = PNG.sync.read(tgaToPng(tga));
+  assert.deepEqual([...png.data.subarray(0, 4)], [255, 0, 0, 128]);
+  assert.deepEqual([...png.data.subarray(4, 8)], [255, 0, 0, 128]);
+  assert.deepEqual([...png.data.subarray(8, 12)], [0, 0, 255, 255]);
+});
+
+test("tgaToPng resolves color-mapped pixels through the palette", () => {
+  // 2x1 indexed: palette entry 0 = magenta, 1 = cyan (24-bit BGR entries).
+  const hd = tgaHeader(1, 2, 1, 8, 0x20);
+  hd[1] = 1; // color map present
+  hd.writeUInt16LE(2, 5); // 2 entries
+  hd[7] = 24;
+  const tga = Buffer.concat([hd, Buffer.from([255, 0, 255, 255, 255, 0]), Buffer.from([0, 1])]);
+  const png = PNG.sync.read(tgaToPng(tga));
+  assert.deepEqual([...png.data.subarray(0, 4)], [255, 0, 255, 255]); // magenta
+  assert.deepEqual([...png.data.subarray(4, 8)], [0, 255, 255, 255]); // cyan
+});
+
+test("tgaToPng expands 5-bit channels to full range", () => {
+  // 1x1 16bpp ARGB1555 pure white — 5-bit channels must scale to 255.
+  const px = Buffer.alloc(2);
+  px.writeUInt16LE(0x7fff, 0);
+  const png = PNG.sync.read(tgaToPng(Buffer.concat([tgaHeader(2, 1, 1, 16, 0x20), px])));
+  assert.deepEqual([...png.data.subarray(0, 4)], [255, 255, 255, 255]);
+});
+
+test("tgaToPng throws on garbage, absurd dimensions, and truncation", () => {
+  assert.throws(() => tgaToPng(Buffer.from("definitely not a tga")));
+  const huge = Buffer.concat([tgaHeader(2, 65535, 65535, 24, 0), Buffer.alloc(4)]);
+  assert.throws(() => tgaToPng(huge), /dimensions/);
+  assert.throws(() => tgaToPng(tgaHeader(2, 4, 4, 24, 0)), /truncated/);
+});
+
+test("toPng dispatches by mime", () => {
+  const tga = Buffer.concat([tgaHeader(2, 1, 1, 24, 0x20), Buffer.from([0, 0, 255])]);
+  assert.deepEqual([...PNG.sync.read(toPng("image/x-tga", tga)).data], [255, 0, 0, 255]);
+  assert.deepEqual([...PNG.sync.read(toPng("image/bmp", tinyBmp())).data.subarray(0, 4)], [255, 0, 0, 255]);
 });

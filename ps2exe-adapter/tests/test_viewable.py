@@ -39,6 +39,26 @@ def test_sniff_confirms_magic():
     assert viewable.sniff(b'<?xml version="1.0"?><svg xmlns="x">', "image/svg+xml")
 
 
+def test_sniff_tga_header_plausibility():
+    assert viewable.classify("/GFX/LOADING.TGA") == ("image", "image/x-tga")
+    # 18-byte header: bare 2x1 24bpp truecolor, then a 16-color color-mapped image.
+    truecolor = bytes([0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 24, 0])
+    assert viewable.sniff(truecolor, "image/x-tga")
+    cmapped = bytes([0, 1, 1, 0, 0, 16, 0, 24, 0, 0, 0, 0, 2, 0, 1, 0, 8, 0])
+    assert viewable.sniff(cmapped, "image/x-tga")
+    # No magic to lean on, so the header fields must reject imposters:
+    # zero dimensions, junk image type, junk depth, text, short reads.
+    assert not viewable.sniff(bytes(18), "image/x-tga")
+    assert not viewable.sniff(b"An 18+ byte readme that is not an image.", "image/x-tga")
+    assert not viewable.sniff(truecolor[:12], "image/x-tga")
+    bad_type = bytearray(truecolor)
+    bad_type[2] = 7
+    assert not viewable.sniff(bytes(bad_type), "image/x-tga")
+    bad_depth = bytearray(truecolor)
+    bad_depth[16] = 13
+    assert not viewable.sniff(bytes(bad_depth), "image/x-tga")
+
+
 def test_sniff_text_accepts_legacy_encodings_rejects_binary():
     # Shift-JIS bytes are >= 0x80 — must pass the text heuristic.
     assert viewable.sniff("日本語のテキスト".encode("shift_jis"), "text/plain")

@@ -9,7 +9,7 @@
 // file tree), which also deep-links the asset in the URL.
 
 import Link from "next/link";
-import { assetUrl, humanSize, type ViewableAsset } from "./AssetViewer";
+import { assetUrl, humanSize, imageSrc, type ViewableAsset } from "./AssetViewer";
 import { useOpenAsset } from "./AssetViewerHost";
 import AudioEmbed from "./AudioEmbed";
 import SourceCode from "./SourceCode";
@@ -70,7 +70,7 @@ export default function AssetGallery({
                   >
                     {/* Not next/image: blobs are local, immutable, hard-cached (see AssetViewer). */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={assetUrl(a)} alt={a.path} loading="lazy" className="h-full w-full object-contain" />
+                    <img src={imageSrc(a)} alt={a.path} loading="lazy" className="h-full w-full object-contain" />
                   </button>
                 ))}
                 {more > 0 && (
