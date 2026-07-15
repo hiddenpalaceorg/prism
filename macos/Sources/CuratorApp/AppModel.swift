@@ -288,7 +288,8 @@ final class AppModel: ObservableObject {
             do {
                 let r = try await service.submit(recordJSON: json, nickname: nick)
                 let assetNote = await uploadMissingAssets(for: summary)
-                serviceMessage = "Submitted \(r.sha256.prefix(12))… — \(r.status).\(assetNote)"
+                let acceptNote = await acceptSubmission(sha256: r.sha256)
+                serviceMessage = "Submitted \(r.sha256.prefix(12))… — \(r.status).\(assetNote)\(acceptNote)"
             } catch {
                 serviceMessage = (error as? LocalizedError)?.errorDescription ?? "\(error)"
             }
@@ -325,6 +326,21 @@ final class AppModel: ObservableObject {
         } catch {
             let detail = (error as? LocalizedError)?.errorDescription ?? "\(error)"
             return " Asset upload failed: \(detail)"
+        }
+    }
+
+    /// With a moderation token configured, finish the job: accept the submission
+    /// so it replaces the live build (assets are uploaded first). Returns a status
+    /// suffix ("" without a token); a failure degrades to a note — the submission
+    /// stays queued for manual moderation.
+    private func acceptSubmission(sha256: String) async -> String {
+        guard service.moderationToken != nil else { return "" }
+        do {
+            try await service.accept(buildSha: sha256)
+            return " Accepted — live build updated."
+        } catch {
+            let detail = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            return " Accept failed: \(detail)"
         }
     }
 

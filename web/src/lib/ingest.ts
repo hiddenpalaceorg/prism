@@ -65,7 +65,11 @@ function buildDate(rec: BuildRecord): string | null {
   return m ? `${m[1]}-${m[2]}-${m[3]}` : raw;
 }
 
-export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<void> {
+export async function ingestRecord(
+  db: Queryable,
+  rec: BuildRecord,
+  opts: { force?: boolean } = {}
+): Promise<void> {
   rec = stripNulls(rec);
   const sha = rec.image.sha256;
   const st = rec.structural;
@@ -79,17 +83,30 @@ export async function ingestRecord(db: Queryable, rec: BuildRecord): Promise<voi
   // exactly as it was inserted) means a re-run of the same export touches each
   // unchanged build with a single indexed lookup instead. ingestRecordTx is
   // all-or-nothing, so an existing build row always has consistent derived data.
-  const seen = (await db.query(
-    "SELECT 1 FROM builds WHERE sha256=$1 AND record = $2::jsonb",
-    [sha, JSON.stringify(rec)]
-  )) as { rows: unknown[] };
-  if (seen.rows.length > 0) return;
+  // `force` (moderation accept) bypasses the skip: accepting must be authoritative,
+  // rewriting the row and every derived table even when the record looks unchanged,
+  // so it also repairs derived rows written by older ingest versions.
+  if (!opts.force) {
+    const seen = (await db.query(
+      "SELECT 1 FROM builds WHERE sha256=$1 AND record = $2::jsonb",
+      [sha, JSON.stringify(rec)]
+    )) as { rows: unknown[] };
+    if (seen.rows.length > 0) return;
+  }
 
   await db.query(
     `INSERT INTO builds (sha256,name,system,size,md5,sha1,content_hash,filtered_content_hash,
         file_count,total_size,max_depth,ext_histogram,text_doc,fingerprint_profile,record,build_date)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-     ON CONFLICT (sha256) DO UPDATE SET record=excluded.record, build_date=excluded.build_date`,
+     ON CONFLICT (sha256) DO UPDATE SET
+        name=excluded.name, system=excluded.system, size=excluded.size,
+        md5=excluded.md5, sha1=excluded.sha1,
+        content_hash=excluded.content_hash,
+        filtered_content_hash=excluded.filtered_content_hash,
+        file_count=excluded.file_count, total_size=excluded.total_size,
+        max_depth=excluded.max_depth, ext_histogram=excluded.ext_histogram,
+        text_doc=excluded.text_doc, fingerprint_profile=excluded.fingerprint_profile,
+        record=excluded.record, build_date=excluded.build_date`,
     [sha, rec.image.name, rec.info?.system ?? "", rec.image.size, rec.image.md5, rec.image.sha1,
      comp.content_hash ?? null, comp.filtered_content_hash ?? null, st.file_count, st.total_size, st.max_depth,
      JSON.stringify(st.ext_histogram ?? {}), capTextDoc(rec.text_doc ?? ""), rec.fingerprint_profile, rec, buildDate(rec)]

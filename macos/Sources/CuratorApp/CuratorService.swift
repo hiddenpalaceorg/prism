@@ -87,10 +87,15 @@ struct CuratorService {
         return c.url ?? URL(fileURLWithPath: "/")
     }()
     let baseURL: URL
+    /// Optional moderation secret (`CURATOR_MODERATION_TOKEN`). When set, a submit
+    /// is auto-accepted so it replaces the live build instead of waiting in the queue.
+    let moderationToken: String?
 
     init() {
         let raw = ProcessInfo.processInfo.environment["CURATOR_WEB_URL"] ?? "https://hiddenpalace.org"
         baseURL = URL(string: raw) ?? CuratorService.defaultBaseURL
+        let token = ProcessInfo.processInfo.environment["CURATOR_MODERATION_TOKEN"] ?? ""
+        moderationToken = token.isEmpty ? nil : token
     }
 
     enum ServiceError: LocalizedError {
@@ -125,6 +130,17 @@ struct CuratorService {
         let body = try JSONSerialization.data(withJSONObject: payload)
         let data = try await post(path: "/api/submissions", body: body)
         return try JSONDecoder().decode(SubmitResult.self, from: data)
+    }
+
+    /// Accept a queued submission with the moderation token, replacing the live build.
+    func accept(buildSha: String) async throws {
+        guard let token = moderationToken else { return }
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/submissions/\(buildSha)"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(token, forHTTPHeaderField: "x-moderation-token")
+        req.httpBody = Data(#"{"action":"accept"}"#.utf8)
+        _ = try await perform(req)
     }
 
     private struct AssetsStatus: Decodable { let missing: [String] }
