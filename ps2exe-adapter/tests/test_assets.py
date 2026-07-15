@@ -45,6 +45,17 @@ def test_viewable_files_ship_whole(tmp_path):
     assert blob(tmp_path, a["sha256"]) == png
 
 
+def test_tga_ships_as_image_and_imposter_degrades(tmp_path):
+    # Bare 2x1 24bpp truecolor TGA — no magic bytes, header checks only.
+    tga = bytes([0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 24, 0]) + bytes(6)
+    fake = b"Just a text file wearing the extension, longer than a header."
+    assets = extract({"/GFX/LOADING.TGA": tga, "/GFX/FAKE.TGA": fake}, tmp_path)
+    a = assets["/GFX/LOADING.TGA"]
+    assert (a["kind"], a["mime"], a["size"]) == ("image", "image/x-tga", len(tga))
+    assert blob(tmp_path, a["sha256"]) == tga
+    assert assets["/GFX/FAKE.TGA"]["kind"] == viewable.SNIPPET_KIND
+
+
 def test_unidentified_files_ship_head_snippet(tmp_path):
     data = bytes(range(256)) * 20  # 5120 bytes of binary
     assets = extract({"/DATA/GAME.TIM": data}, tmp_path)

@@ -1855,7 +1855,8 @@ mod app {
 
     /// Open the asset at `assets[idx]`. Media kinds go to their default app via a
     /// temp copy carrying the original filename (store blobs are extensionless, so
-    /// the shell can't pick a handler for them directly). Text and source kinds
+    /// the shell can't pick a handler for them directly); TGA images are staged
+    /// as BMP because stock Windows has no TGA handler. Text and source kinds
     /// always open in Notepad: handing a `.bat`/`.cmd`/`.js` from an untrusted
     /// disc to the shell's default verb would execute it. Binary kinds
     /// (unidentified files' head snippets) open in Notepad as a hex dump.
@@ -1873,6 +1874,8 @@ mod app {
         };
         let staged = if asset.kind == "binary" {
             materialize_hexdump(&asset, &blob)
+        } else if asset.mime == "image/x-tga" {
+            materialize_tga(&asset, &blob)
         } else {
             materialize_asset(&asset, &blob)
         };
@@ -1899,10 +1902,8 @@ mod app {
         }
     }
 
-    /// Copy a blob into a per-asset temp dir under its original (sanitized)
-    /// filename so the shell can pick a handler by extension. Content-addressed,
-    /// so an existing copy is reused.
-    fn materialize_asset(asset: &AssetRef, blob: &std::path::Path) -> std::result::Result<PathBuf, String> {
+    /// The asset's original filename, sanitized for use in a Windows path.
+    fn safe_asset_name(asset: &AssetRef) -> String {
         let base = asset.path.rsplit('/').next().unwrap_or_default();
         let safe: String = base
             .chars()
@@ -1914,23 +1915,50 @@ mod app {
                 }
             })
             .collect();
-        let name = if safe.trim_matches(['.', ' ']).is_empty() { asset.sha256.clone() } else { safe };
+        if safe.trim_matches(['.', ' ']).is_empty() { asset.sha256.clone() } else { safe }
+    }
+
+    /// The asset's per-sha temp dir, created on demand.
+    fn asset_temp_dir(asset: &AssetRef) -> std::result::Result<PathBuf, String> {
         let dir = std::env::temp_dir().join("curator-assets").join(&asset.sha256);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let dest = dir.join(name);
+        Ok(dir)
+    }
+
+    /// Copy a blob into a per-asset temp dir under its original (sanitized)
+    /// filename so the shell can pick a handler by extension. Content-addressed,
+    /// so an existing copy is reused.
+    fn materialize_asset(asset: &AssetRef, blob: &std::path::Path) -> std::result::Result<PathBuf, String> {
+        let dest = asset_temp_dir(asset)?.join(safe_asset_name(asset));
         if !dest.exists() {
             std::fs::copy(blob, &dest).map_err(|e| e.to_string())?;
         }
         Ok(dest)
     }
 
+    /// Stage a TGA image as a 32bpp BMP the shell can open — stock Windows has
+    /// no TGA handler. An undecodable file is staged raw instead, so users with
+    /// a TGA-capable viewer installed can still try it.
+    fn materialize_tga(asset: &AssetRef, blob: &std::path::Path) -> std::result::Result<PathBuf, String> {
+        let dest = asset_temp_dir(asset)?.join(format!("{}.bmp", safe_asset_name(asset)));
+        if dest.exists() {
+            return Ok(dest);
+        }
+        let data = std::fs::read(blob).map_err(|e| e.to_string())?;
+        match curator_core::tga::tga_to_bmp(&data) {
+            Ok(bmp) => {
+                std::fs::write(&dest, bmp).map_err(|e| e.to_string())?;
+                Ok(dest)
+            }
+            Err(_) => materialize_asset(asset, blob),
+        }
+    }
+
     /// Render an unidentified file's head-snippet blob as an xxd-style dump in a
     /// temp .txt for Notepad (the raw bytes would be garbage there). Layout
     /// lives here, display-side — the store keeps the raw bytes.
     fn materialize_hexdump(asset: &AssetRef, blob: &std::path::Path) -> std::result::Result<PathBuf, String> {
-        let dir = std::env::temp_dir().join("curator-assets").join(&asset.sha256);
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let dest = dir.join("hexdump.txt");
+        let dest = asset_temp_dir(asset)?.join("hexdump.txt");
         if !dest.exists() {
             let data = std::fs::read(blob).map_err(|e| e.to_string())?;
             std::fs::write(&dest, hexdump(&data)).map_err(|e| e.to_string())?;

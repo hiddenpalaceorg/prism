@@ -25,6 +25,7 @@ _IMAGE = {
     "jpeg": "image/jpeg",
     "gif": "image/gif",
     "bmp": "image/bmp",
+    "tga": "image/x-tga",
     "webp": "image/webp",
     "ico": "image/x-icon",
     "svg": "image/svg+xml",
@@ -102,11 +103,29 @@ def _looks_text(head):
     return weird <= len(head) // 20
 
 
+def _tga_header(head):
+    """TGA has no leading magic — check the 18-byte header for plausibility."""
+    if len(head) < 18:
+        return False
+    cmap_type, image_type = head[1], head[2]
+    if cmap_type not in (0, 1):
+        return False
+    if image_type not in (1, 2, 3, 9, 10, 11):
+        return False
+    # Color-mapped image types require a color map with a sane entry size.
+    if image_type in (1, 9) and (cmap_type != 1 or head[7] not in (15, 16, 24, 32)):
+        return False
+    width = head[12] | head[13] << 8
+    height = head[14] | head[15] << 8
+    return width > 0 and height > 0 and head[16] in (8, 15, 16, 24, 32)
+
+
 _MAGIC = {
     "image/png": lambda h: h.startswith(b"\x89PNG\r\n\x1a\n"),
     "image/jpeg": lambda h: h.startswith(b"\xff\xd8\xff"),
     "image/gif": lambda h: h.startswith((b"GIF87a", b"GIF89a")),
     "image/bmp": lambda h: h.startswith(b"BM"),
+    "image/x-tga": _tga_header,
     "image/webp": lambda h: h[:4] == b"RIFF" and h[8:12] == b"WEBP",
     "image/x-icon": lambda h: h.startswith((b"\x00\x00\x01\x00", b"\x00\x00\x02\x00")),
     "image/svg+xml": lambda h: _looks_text(h) and b"<svg" in h.lower(),

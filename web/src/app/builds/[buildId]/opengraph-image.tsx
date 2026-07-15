@@ -3,14 +3,14 @@
 // segment and everything below it, so asset deep links inherit it too.
 //
 // Dark info card: wordmark, title, fact chips, short id — plus a screenshot
-// pane when the build has a PNG/JPEG asset whose bytes are in the blob store
-// (largest first: big files are screenshots, tiny ones are icons/textures).
+// pane when the build has a PNG/JPEG/BMP/TGA asset whose bytes are in the blob
+// store (largest first: big files are screenshots, tiny ones are icons/textures).
 
 import { readFile } from "node:fs/promises";
 import { ImageResponse } from "next/og";
 import { assetBlobPath } from "@/lib/assets";
 import { getPool } from "@/lib/db";
-import { bmpToPng } from "@/lib/imgpng";
+import { pngConvertible, toPng } from "@/lib/imgpng";
 import { buildFacts, displayTitle } from "@/lib/meta";
 import { getBuildMeta, resolveBuild, type BuildMetaRow } from "@/lib/queries";
 import { parseBuildParam, SHORT_SHA_LEN } from "@/lib/slug";
@@ -26,7 +26,8 @@ const MAX_SHOT_BYTES = 8_000_000;
 async function findScreenshot(sha256: string): Promise<string | null> {
   const r = await getPool().query(
     `SELECT sha256, mime FROM build_asset
-     WHERE build_sha256=$1 AND kind='image' AND mime IN ('image/png','image/jpeg','image/bmp')
+     WHERE build_sha256=$1 AND kind='image'
+       AND mime IN ('image/png','image/jpeg','image/bmp','image/x-tga')
        AND size <= $2
      ORDER BY size DESC LIMIT 4`,
     [sha256, MAX_SHOT_BYTES]
@@ -36,9 +37,9 @@ async function findScreenshot(sha256: string): Promise<string | null> {
   for (const row of r.rows as Array<{ sha256: string; mime: string }>) {
     try {
       const bytes = await readFile(assetBlobPath(row.sha256));
-      // satori can't decode BMP — hand it PNG bytes instead.
-      if (row.mime === "image/bmp") {
-        return `data:image/png;base64,${bmpToPng(bytes).toString("base64")}`;
+      // satori can't decode BMP or TGA — hand it PNG bytes instead.
+      if (pngConvertible(row.mime)) {
+        return `data:image/png;base64,${toPng(row.mime, bytes).toString("base64")}`;
       }
       return `data:${row.mime};base64,${bytes.toString("base64")}`;
     } catch {

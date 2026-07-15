@@ -22,6 +22,14 @@ export function assetUrl(a: ViewableAsset): string {
   return `/api/asset/${a.sha256}`;
 }
 
+/** Where <img> should point: browsers render every image mime we extract
+ *  except TGA, which goes through the server's PNG conversion. Kept in sync
+ *  with pngConvertible (imgpng.ts) — not imported: that module pulls the
+ *  decoders into the client bundle. */
+export function imageSrc(a: ViewableAsset): string {
+  return a.mime === "image/x-tga" ? `${assetUrl(a)}/png` : assetUrl(a);
+}
+
 export function humanSize(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let v = bytes;
@@ -130,7 +138,7 @@ function Body({ asset }: { asset: ViewableAsset }) {
         // cache headers — optimization would only re-encode them.
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={url}
+          src={imageSrc(asset)}
           alt={asset.path}
           className="max-h-[75vh] max-w-[90vw] rounded object-contain"
           onError={() => setFailed(true)}
