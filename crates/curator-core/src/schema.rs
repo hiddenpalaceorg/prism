@@ -14,9 +14,10 @@ pub const FINGERPRINT_PROFILE: &str = "v1";
 /// Asset-extraction generation. 1 = browser-viewable kinds only (implicit in
 /// records that predate the field, which deserialize to 0); 2 = also head
 /// snippets (`kind: "binary"`) for every file that isn't viewable; 3 = TGA
-/// classified as an image (previously a head snippet). A record below the
-/// current value gets its assets re-extracted on the next analyze.
-pub const ASSET_PROFILE: u32 = 3;
+/// classified as an image (previously a head snippet); 4 = TIFF likewise. A
+/// record below the current value gets its assets re-extracted on the next
+/// analyze.
+pub const ASSET_PROFILE: u32 = 4;
 
 /// A fully analyzed disc image / container — image-independent and self-describing.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,9 +1,9 @@
-// BMP/TGA → PNG conversion. Link unfurlers (Discord, Slack, Twitter) and
+// BMP/TGA/TIFF → PNG conversion. Link unfurlers (Discord, Slack, Twitter) and
 // satori (the OG card renderer) only handle web image formats, but dumps carry
-// raw BMP and TGA screenshots — convert those on the fly; formats we can't
-// convert (ico, svg) fall back to the build's generated card. Browsers render
-// BMP natively but not TGA, so the viewer and gallery also route TGA through
-// /api/asset/<sha>/png.
+// raw BMP, TGA, and TIFF screenshots — convert those on the fly; formats we
+// can't convert (ico, svg) fall back to the build's generated card. Browsers
+// render BMP natively but not TGA or TIFF, so the viewer and gallery also
+// route those through /api/asset/<sha>/png.
 
 import bmp from "bmp-js";
 import { PNG } from "pngjs";
@@ -13,12 +13,14 @@ export const WEB_SAFE_IMAGE = /^image\/(png|jpe?g|gif|webp)$/;
 
 /** Mimes /api/asset/<sha>/png can convert. */
 export function pngConvertible(mime: string): boolean {
-  return mime === "image/bmp" || mime === "image/x-tga";
+  return mime === "image/bmp" || mime === "image/x-tga" || mime === "image/tiff";
 }
 
 /** Convert a pngConvertible asset to PNG. Throws on malformed input. */
 export function toPng(mime: string, bytes: Buffer): Buffer {
-  return mime === "image/x-tga" ? tgaToPng(bytes) : bmpToPng(bytes);
+  if (mime === "image/x-tga") return tgaToPng(bytes);
+  if (mime === "image/tiff") return tiffToPng(bytes);
+  return bmpToPng(bytes);
 }
 
 // Refuse to decode absurd dimensions (decode allocates width*height*4 up
@@ -233,5 +235,288 @@ export function tgaToPng(bytes: Buffer): Buffer {
       px.copy(png.data, (y * width + x) * 4, (row * width + col) * 4, (row * width + col) * 4 + 4);
     }
   }
+  return PNG.sync.write(png);
+}
+
+// TIFF decode, hand-rolled like TGA — scoped to the baseline subset dumps
+// carry: either byte order, first IFD only, strip-based chunky layout,
+// uncompressed/PackBits/LZW (with the horizontal predictor), bilevel/
+// grayscale/palette and 8-bit RGB(A). Tiled, planar, and fax/JPEG/deflate
+// files are rejected; callers fall back to the generated card.
+
+/** PackBits (TIFF §9): n >= 0 copies n+1 literals, n <= -1 repeats the next
+ *  byte 1-n times, -128 is a no-op. */
+function unpackBits(src: Buffer, expected: number): Buffer {
+  const out = Buffer.alloc(expected);
+  let i = 0;
+  let o = 0;
+  while (o < expected) {
+    if (i >= src.length) throw new Error("truncated TIFF");
+    const n = src.readInt8(i++);
+    if (n >= 0) {
+      if (i + n + 1 > src.length || o + n + 1 > expected) throw new Error("corrupt TIFF PackBits");
+      src.copy(out, o, i, i + n + 1);
+      i += n + 1;
+      o += n + 1;
+    } else if (n !== -128) {
+      if (i >= src.length || o + 1 - n > expected) throw new Error("corrupt TIFF PackBits");
+      out.fill(src[i++], o, o + 1 - n);
+      o += 1 - n;
+    }
+  }
+  return out;
+}
+
+/** TIFF-variant LZW (§13): MSB-first bit packing, 9- to 12-bit codes with the
+ *  "early change" — code width bumps one code before the table forces it.
+ *  Output past `expected` (writers that pad the last strip) is discarded. */
+function lzwDecode(src: Buffer, expected: number): Buffer {
+  const CLEAR = 256;
+  const EOI = 257;
+  const out = Buffer.alloc(expected);
+  const prefix = new Int32Array(4096);
+  const suffix = new Uint8Array(4096);
+  const stack = new Uint8Array(4096);
+  let next = 258;
+  let width = 9;
+  let bit = 0;
+  let o = 0;
+  let prev = -1;
+
+  const readCode = (): number => {
+    if (bit + width > src.length * 8) return EOI; // ran off the end
+    const p = bit >> 3;
+    const chunk = (src[p] << 16) | ((src[p + 1] ?? 0) << 8) | (src[p + 2] ?? 0);
+    const code = (chunk >>> (24 - (bit & 7) - width)) & ((1 << width) - 1);
+    bit += width;
+    return code;
+  };
+
+  /** First byte of the string a table code expands to. */
+  const headOf = (code: number): number => {
+    let c = code;
+    let guard = 0;
+    while (c >= 258) {
+      c = prefix[c];
+      if (++guard === 4096) throw new Error("corrupt TIFF LZW");
+    }
+    return c;
+  };
+
+  /** Copy `code`'s string to the output (clamped to `expected`); returns its
+   *  first byte. */
+  const emit = (code: number): number => {
+    let sp = 0;
+    let c = code;
+    while (c >= 258) {
+      stack[sp++] = suffix[c];
+      c = prefix[c];
+      if (sp === 4096) throw new Error("corrupt TIFF LZW");
+    }
+    if (o < expected) out[o++] = c;
+    while (sp > 0 && o < expected) out[o++] = stack[--sp];
+    return c;
+  };
+
+  while (o < expected) {
+    const code = readCode();
+    if (code === EOI) break;
+    if (code === CLEAR) {
+      next = 258;
+      width = 9;
+      prev = -1;
+      continue;
+    }
+    if (code > next || (prev === -1 && code >= 258)) throw new Error("corrupt TIFF LZW");
+    if (prev === -1) {
+      out[o++] = code;
+      prev = code;
+      continue;
+    }
+    if (code === next) {
+      // KwKwK: the entry being defined refers to itself.
+      prefix[next] = prev;
+      suffix[next] = headOf(prev);
+      next++;
+      emit(code);
+    } else {
+      const first = emit(code);
+      if (next < 4096) {
+        prefix[next] = prev;
+        suffix[next] = first;
+        next++;
+      }
+    }
+    prev = code;
+    if (next >= (1 << width) - 1 && width < 12) width++;
+  }
+  if (o < expected) throw new Error("truncated TIFF");
+  return out;
+}
+
+/** Undo predictor 2 (horizontal differencing) in place, row by row. */
+function undiff(data: Buffer, rows: number, rowBytes: number, spp: number): void {
+  for (let y = 0; y < rows; y++) {
+    const base = y * rowBytes;
+    for (let i = spp; i < rowBytes; i++) {
+      data[base + i] = (data[base + i] + data[base + i - spp]) & 0xff;
+    }
+  }
+}
+
+// IFD entry types the decoder consumes; everything else (ASCII, RATIONAL, …)
+// only appears in tags it ignores.
+const TIFF_TYPE_BYTES: Record<number, number> = { 1: 1, 3: 2, 4: 4 }; // BYTE, SHORT, LONG
+
+/** Decode a TIFF and re-encode as PNG. Throws on malformed or out-of-scope
+ *  input. */
+export function tiffToPng(bytes: Buffer): Buffer {
+  const order = bytes.length >= 8 ? bytes.toString("latin1", 0, 2) : "";
+  if (order !== "II" && order !== "MM") throw new Error("not a TIFF");
+  const le = order === "II";
+  const u16 = (o: number): number => (le ? bytes.readUInt16LE(o) : bytes.readUInt16BE(o));
+  const u32 = (o: number): number => (le ? bytes.readUInt32LE(o) : bytes.readUInt32BE(o));
+  if (u16(2) !== 42) throw new Error("not a TIFF");
+
+  // First IFD only — multi-page files show their first page.
+  const ifd = u32(4);
+  if (ifd + 2 > bytes.length) throw new Error("truncated TIFF");
+  const tags = new Map<number, number[]>();
+  const nEntries = u16(ifd);
+  for (let i = 0; i < nEntries; i++) {
+    const e = ifd + 2 + i * 12;
+    if (e + 12 > bytes.length) throw new Error("truncated TIFF");
+    const size = TIFF_TYPE_BYTES[u16(e + 2)];
+    const count = u32(e + 4);
+    if (!size || count === 0 || count > 1 << 20) continue;
+    const at = size * count <= 4 ? e + 8 : u32(e + 8);
+    if (at + size * count > bytes.length) continue; // surfaces later as a missing tag
+    const values = new Array<number>(count);
+    for (let j = 0; j < count; j++) {
+      values[j] = size === 1 ? bytes[at + j] : size === 2 ? u16(at + j * 2) : u32(at + j * 4);
+    }
+    tags.set(u16(e), values);
+  }
+  const tag1 = (t: number, dflt: number): number => tags.get(t)?.[0] ?? dflt;
+
+  const width = tag1(256, 0);
+  const height = tag1(257, 0);
+  if (width <= 0 || height <= 0 || width * height > MAX_PIXELS) {
+    throw new Error(`TIFF dimensions out of range: ${width}x${height}`);
+  }
+  if (tags.has(322) || tags.has(324)) throw new Error("unsupported tiled TIFF");
+  if (tag1(284, 1) !== 1) throw new Error("unsupported planar TIFF");
+  if (tag1(266, 1) !== 1) throw new Error("unsupported TIFF fill order");
+  const compression = tag1(259, 1);
+  if (compression !== 1 && compression !== 5 && compression !== 32773) {
+    throw new Error(`unsupported TIFF compression ${compression}`);
+  }
+  const photometric = tag1(262, -1);
+  const spp = tag1(277, 1);
+  const bits = tags.get(258) ?? [1];
+  const predictor = tag1(317, 1);
+  if (predictor !== 1 && (predictor !== 2 || bits.some((b) => b !== 8))) {
+    throw new Error("unsupported TIFF predictor");
+  }
+
+  const gray = photometric === 0 || photometric === 1;
+  const rgb = photometric === 2;
+  const paletted = photometric === 3;
+  if (rgb) {
+    if ((spp !== 3 && spp !== 4) || bits.some((b) => b !== 8)) {
+      throw new Error("unsupported TIFF RGB layout");
+    }
+  } else if (gray || paletted) {
+    if (spp !== 1 || ![1, 4, 8].includes(bits[0])) {
+      throw new Error("unsupported TIFF sample layout");
+    }
+  } else {
+    throw new Error(`unsupported TIFF photometric ${photometric}`);
+  }
+
+  let pal = new Uint8Array(0); // interleaved RGB per index
+  if (paletted) {
+    const cmap = tags.get(320);
+    const n = 1 << bits[0];
+    if (!cmap || cmap.length < 3 * n) throw new Error("missing TIFF color map");
+    // Entries are 16-bit per spec (all R, then G, then B); buggy writers store
+    // 8-bit values, which would render near-black — pass those through.
+    const shift = cmap.some((v) => v > 255) ? 8 : 0;
+    pal = new Uint8Array(3 * n);
+    for (let i = 0; i < n; i++) {
+      pal[i * 3] = cmap[i] >> shift;
+      pal[i * 3 + 1] = cmap[n + i] >> shift;
+      pal[i * 3 + 2] = cmap[2 * n + i] >> shift;
+    }
+  }
+
+  const bitsPerPixel = rgb ? spp * 8 : bits[0];
+  const rowBytes = (width * bitsPerPixel + 7) >> 3;
+  const rowsPerStrip = Math.min(tag1(278, height) || height, height);
+  const offsets = tags.get(273);
+  if (!offsets) throw new Error("missing TIFF strip offsets");
+  const nStrips = Math.ceil(height / rowsPerStrip);
+  if (offsets.length < nStrips) throw new Error("truncated TIFF");
+  // Lazy writers omit byte counts on uncompressed files; the geometry
+  // determines them anyway.
+  const counts = tags.get(279) ?? (compression === 1 ? offsets.map(() => 0) : null);
+  if (!counts || counts.length < nStrips) throw new Error("missing TIFF strip byte counts");
+
+  const png = new PNG({ width, height });
+  const px = png.data;
+
+  /** The x-th single-sample value in the row starting at `base`. */
+  const sample1 = (data: Buffer, base: number, x: number): number => {
+    const b = bits[0];
+    if (b === 8) return data[base + x];
+    if (b === 4) return (data[base + (x >> 1)] >> ((x & 1) === 0 ? 4 : 0)) & 15;
+    return (data[base + (x >> 3)] >> (7 - (x & 7))) & 1;
+  };
+
+  const writeRow = (data: Buffer, base: number, yOut: number): void => {
+    let o = yOut * width * 4;
+    for (let x = 0; x < width; x++, o += 4) {
+      if (rgb) {
+        const p = base + x * spp;
+        px[o] = data[p];
+        px[o + 1] = data[p + 1];
+        px[o + 2] = data[p + 2];
+        px[o + 3] = spp === 4 ? data[p + 3] : 255;
+      } else if (paletted) {
+        const p = sample1(data, base, x) * 3;
+        px[o] = pal[p];
+        px[o + 1] = pal[p + 1];
+        px[o + 2] = pal[p + 2];
+        px[o + 3] = 255;
+      } else {
+        const s = sample1(data, base, x);
+        const v = bits[0] === 8 ? s : bits[0] === 4 ? s * 17 : s * 255;
+        const g = photometric === 0 ? 255 - v : v; // 0 = WhiteIsZero
+        px[o] = g;
+        px[o + 1] = g;
+        px[o + 2] = g;
+        px[o + 3] = 255;
+      }
+    }
+  };
+
+  for (let s = 0; s < nStrips; s++) {
+    const rows = Math.min(rowsPerStrip, height - s * rowsPerStrip);
+    const expected = rows * rowBytes;
+    const off = offsets[s];
+    let data: Buffer;
+    if (compression === 1) {
+      if (off + expected > bytes.length) throw new Error("truncated TIFF");
+      const raw = bytes.subarray(off, off + expected);
+      data = predictor === 2 ? Buffer.from(raw) : raw; // undiff mutates
+    } else {
+      if (off + counts[s] > bytes.length) throw new Error("truncated TIFF");
+      const raw = bytes.subarray(off, off + counts[s]);
+      data = compression === 5 ? lzwDecode(raw, expected) : unpackBits(raw, expected);
+    }
+    if (predictor === 2) undiff(data, rows, rowBytes, spp);
+    for (let y = 0; y < rows; y++) writeRow(data, y * rowBytes, s * rowsPerStrip + y);
+  }
+
   return PNG.sync.write(png);
 }

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PNG } from "pngjs";
-import { bmpToPng, pngConvertible, tgaToPng, toPng, WEB_SAFE_IMAGE } from "../src/lib/imgpng";
+import { bmpToPng, pngConvertible, tgaToPng, tiffToPng, toPng, WEB_SAFE_IMAGE } from "../src/lib/imgpng";
 
 // Hand-crafted 2x1 24bpp BMP: left pixel pure red, right pixel pure blue
 // (rows are BGR on disk, padded to 4 bytes) — pins the ABGR→RGBA swizzle.
@@ -83,6 +83,7 @@ test("web-safe and convertible mime classification", () => {
   }
   assert.ok(pngConvertible("image/bmp"));
   assert.ok(pngConvertible("image/x-tga"));
+  assert.ok(pngConvertible("image/tiff"));
   assert.ok(!pngConvertible("image/x-icon"));
   assert.ok(!pngConvertible("image/svg+xml"));
 });
@@ -152,8 +153,241 @@ test("tgaToPng throws on garbage, absurd dimensions, and truncation", () => {
   assert.throws(() => tgaToPng(tgaHeader(2, 4, 4, 24, 0)), /truncated/);
 });
 
+// Minimal TIFF writer for fixtures: 8-byte header, image data at offset 8,
+// then the IFD and any out-of-line values. Entries: [tag, type, values]
+// (types: 1 BYTE, 3 SHORT, 4 LONG).
+function tinyTiff(entries: Array<[number, number, number[]]>, data: Buffer, le = true): Buffer {
+  const w16 = (b: Buffer, v: number, o: number) => (le ? b.writeUInt16LE(v, o) : b.writeUInt16BE(v, o));
+  const w32 = (b: Buffer, v: number, o: number) => (le ? b.writeUInt32LE(v, o) : b.writeUInt32BE(v, o));
+  const sizes: Record<number, number> = { 1: 1, 3: 2, 4: 4 };
+  const sorted = [...entries].sort((a, b) => a[0] - b[0]);
+  const ifdAt = 8 + data.length;
+  const extraAt = ifdAt + 2 + sorted.length * 12 + 4;
+  const header = Buffer.alloc(8);
+  header.write(le ? "II" : "MM", 0, "latin1");
+  w16(header, 42, 2);
+  w32(header, ifdAt, 4);
+  const ifd = Buffer.alloc(2 + sorted.length * 12 + 4); // trailing next-IFD = 0
+  w16(ifd, sorted.length, 0);
+  const extras: Buffer[] = [];
+  let extraLen = 0;
+  sorted.forEach(([tag, type, values], i) => {
+    const o = 2 + i * 12;
+    w16(ifd, tag, o);
+    w16(ifd, type, o + 2);
+    w32(ifd, values.length, o + 4);
+    const size = sizes[type];
+    const put = (b: Buffer, off: number) =>
+      values.forEach((v, j) => {
+        if (size === 1) b[off + j] = v;
+        else if (size === 2) w16(b, v, off + j * 2);
+        else w32(b, v, off + j * 4);
+      });
+    if (size * values.length <= 4) {
+      put(ifd, o + 8);
+    } else {
+      const blob = Buffer.alloc(size * values.length);
+      put(blob, 0);
+      w32(ifd, extraAt + extraLen, o + 8);
+      extras.push(blob);
+      extraLen += blob.length;
+    }
+  });
+  return Buffer.concat([header, data, ifd, ...extras]);
+}
+
+// 2x1 uncompressed RGB: red, blue.
+function rgbTiff(le: boolean): Buffer {
+  return tinyTiff(
+    [
+      [256, 3, [2]], // ImageWidth
+      [257, 3, [1]], // ImageLength
+      [258, 3, [8, 8, 8]], // BitsPerSample (out-of-line: 6 bytes)
+      [259, 3, [1]], // Compression: none
+      [262, 3, [2]], // Photometric: RGB
+      [273, 4, [8]], // StripOffsets
+      [277, 3, [3]], // SamplesPerPixel
+      [279, 4, [6]], // StripByteCounts
+    ],
+    Buffer.from([255, 0, 0, 0, 0, 255]),
+    le
+  );
+}
+
+test("tiffToPng decodes uncompressed RGB in both byte orders", () => {
+  for (const le of [true, false]) {
+    const png = PNG.sync.read(tiffToPng(rgbTiff(le)));
+    assert.equal(png.width, 2);
+    assert.equal(png.height, 1);
+    assert.deepEqual([...png.data.subarray(0, 4)], [255, 0, 0, 255], `le=${le}`);
+    assert.deepEqual([...png.data.subarray(4, 8)], [0, 0, 255, 255], `le=${le}`);
+  }
+});
+
+test("tiffToPng keeps alpha from an RGBA extra sample", () => {
+  const tif = tinyTiff(
+    [
+      [256, 3, [1]],
+      [257, 3, [1]],
+      [258, 3, [8, 8, 8, 8]],
+      [259, 3, [1]],
+      [262, 3, [2]],
+      [273, 4, [8]],
+      [277, 3, [4]],
+      [279, 4, [4]],
+      [338, 3, [2]], // ExtraSamples: unassociated alpha
+    ],
+    Buffer.from([255, 0, 0, 128])
+  );
+  assert.deepEqual([...PNG.sync.read(tiffToPng(tif)).data], [255, 0, 0, 128]);
+});
+
+test("tiffToPng expands PackBits runs across grayscale strips", () => {
+  // 4x2 8-bit grayscale, one strip per row: row 0 a PackBits run of 200s,
+  // row 1 four literals — pins strip iteration and both packet forms.
+  const data = Buffer.from([0xfd, 200, 3, 10, 20, 30, 40]);
+  const tif = tinyTiff(
+    [
+      [256, 3, [4]],
+      [257, 3, [2]],
+      [258, 3, [8]],
+      [259, 3, [32773]],
+      [262, 3, [1]], // BlackIsZero
+      [273, 4, [8, 10]],
+      [278, 3, [1]], // RowsPerStrip
+      [279, 4, [2, 5]],
+    ],
+    data
+  );
+  const png = PNG.sync.read(tiffToPng(tif));
+  assert.deepEqual([...png.data.subarray(0, 4)], [200, 200, 200, 255]);
+  assert.deepEqual([...png.data.subarray(16, 20)], [10, 10, 10, 255]);
+  assert.deepEqual([...png.data.subarray(28, 32)], [40, 40, 40, 255]);
+});
+
+test("tiffToPng expands bilevel and 4-bit grayscale, honoring WhiteIsZero", () => {
+  // 8x1 1-bit WhiteIsZero: 0xA0 = bits 1,0,1,0,0,0,0,0 — set bits are black.
+  const bilevel = tinyTiff(
+    [
+      [256, 3, [8]],
+      [257, 3, [1]],
+      [259, 3, [1]],
+      [262, 3, [0]], // WhiteIsZero (BitsPerSample defaults to 1)
+      [273, 4, [8]],
+      [279, 4, [1]],
+    ],
+    Buffer.from([0xa0])
+  );
+  const bl = PNG.sync.read(tiffToPng(bilevel));
+  assert.deepEqual([...bl.data.subarray(0, 4)], [0, 0, 0, 255]);
+  assert.deepEqual([...bl.data.subarray(4, 8)], [255, 255, 255, 255]);
+  assert.deepEqual([...bl.data.subarray(8, 12)], [0, 0, 0, 255]);
+
+  // 3x1 4-bit grayscale: nibbles 0, 15, 8 → 0, 255, 136.
+  const gray4 = tinyTiff(
+    [
+      [256, 3, [3]],
+      [257, 3, [1]],
+      [258, 3, [4]],
+      [259, 3, [1]],
+      [262, 3, [1]],
+      [273, 4, [8]],
+      [279, 4, [2]],
+    ],
+    Buffer.from([0x0f, 0x80])
+  );
+  const g4 = PNG.sync.read(tiffToPng(gray4));
+  assert.deepEqual([...g4.data.subarray(0, 4)], [0, 0, 0, 255]);
+  assert.deepEqual([...g4.data.subarray(4, 8)], [255, 255, 255, 255]);
+  assert.deepEqual([...g4.data.subarray(8, 12)], [136, 136, 136, 255]);
+});
+
+test("tiffToPng resolves palettes, including 8-bit-quirk colormaps", () => {
+  // 2x1 4-bit palette: entry 0 magenta, entry 1 cyan (ColorMap is all R,
+  // then all G, then all B). Once with spec 16-bit values, once with the
+  // buggy-writer 8-bit values some tools emit.
+  const cmap = (max: number): number[] => {
+    const r = new Array(48).fill(0);
+    r[0] = max; r[32] = max; // entry 0: R + B
+    r[17] = max; r[33] = max; // entry 1: G + B
+    return r;
+  };
+  for (const max of [65535, 255]) {
+    const tif = tinyTiff(
+      [
+        [256, 3, [2]],
+        [257, 3, [1]],
+        [258, 3, [4]],
+        [259, 3, [1]],
+        [262, 3, [3]], // Palette
+        [273, 4, [8]],
+        [279, 4, [1]],
+        [320, 3, cmap(max)],
+      ],
+      Buffer.from([0x01]) // nibbles 0, 1
+    );
+    const png = PNG.sync.read(tiffToPng(tif));
+    assert.deepEqual([...png.data.subarray(0, 4)], [255, 0, 255, 255], `max=${max}`);
+    assert.deepEqual([...png.data.subarray(4, 8)], [0, 255, 255, 255], `max=${max}`);
+  }
+});
+
+/** Pack 9-bit LZW codes MSB-first (enough for streams that never grow the
+ *  code width). */
+function lzwPack(codes: number[]): Buffer {
+  const out = Buffer.alloc(Math.ceil((codes.length * 9) / 8));
+  codes.forEach((c, i) => {
+    for (let b = 0; b < 9; b++) {
+      if (c & (0x100 >> b)) out[(i * 9 + b) >> 3] |= 0x80 >> ((i * 9 + b) & 7);
+    }
+  });
+  return out;
+}
+
+test("tiffToPng decodes LZW with the horizontal predictor", () => {
+  // 4x1 RGB, all red. Differenced row: [255,0,0, 0,0,0 ×3]; its LZW stream
+  // (hand-traced) exercises the KwKwK self-reference path three times.
+  const stream = lzwPack([256, 255, 0, 259, 260, 261, 0, 257]);
+  const tif = tinyTiff(
+    [
+      [256, 3, [4]],
+      [257, 3, [1]],
+      [258, 3, [8, 8, 8]],
+      [259, 3, [5]], // LZW
+      [262, 3, [2]],
+      [273, 4, [8]],
+      [277, 3, [3]],
+      [279, 4, [stream.length]],
+      [317, 3, [2]], // horizontal predictor
+    ],
+    stream
+  );
+  const png = PNG.sync.read(tiffToPng(tif));
+  for (let x = 0; x < 4; x++) {
+    assert.deepEqual([...png.data.subarray(x * 4, x * 4 + 4)], [255, 0, 0, 255], `x=${x}`);
+  }
+});
+
+test("tiffToPng throws on garbage, out-of-scope layouts, and truncation", () => {
+  assert.throws(() => tiffToPng(Buffer.from("definitely not a tiff")));
+  const huge = rgbTiff(true);
+  huge.writeUInt16LE(65535, 8 + 6 + 2 + 8); // width entry value (tag 256 sorts first)
+  huge.writeUInt16LE(65535, 8 + 6 + 2 + 12 + 8); // height entry value
+  assert.throws(() => tiffToPng(huge), /dimensions/);
+  const base: Array<[number, number, number[]]> = [
+    [256, 3, [2]], [257, 3, [1]], [258, 3, [8, 8, 8]], [259, 3, [1]],
+    [262, 3, [2]], [273, 4, [8]], [277, 3, [3]], [279, 4, [6]],
+  ];
+  const px = Buffer.from([255, 0, 0, 0, 0, 255]);
+  assert.throws(() => tiffToPng(tinyTiff([...base, [322, 3, [16]], [323, 3, [16]]], px)), /tiled/);
+  assert.throws(() => tiffToPng(tinyTiff([...base, [284, 3, [2]]], px)), /planar/);
+  assert.throws(() => tiffToPng(tinyTiff([...base, [259, 3, [6]]], px)), /compression/);
+  assert.throws(() => tiffToPng(tinyTiff([...base, [273, 4, [1 << 20]]], px)), /truncated/);
+});
+
 test("toPng dispatches by mime", () => {
   const tga = Buffer.concat([tgaHeader(2, 1, 1, 24, 0x20), Buffer.from([0, 0, 255])]);
   assert.deepEqual([...PNG.sync.read(toPng("image/x-tga", tga)).data], [255, 0, 0, 255]);
   assert.deepEqual([...PNG.sync.read(toPng("image/bmp", tinyBmp())).data.subarray(0, 4)], [255, 0, 0, 255]);
+  assert.deepEqual([...PNG.sync.read(toPng("image/tiff", rgbTiff(true))).data.subarray(0, 4)], [255, 0, 0, 255]);
 });

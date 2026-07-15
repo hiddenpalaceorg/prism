@@ -3,8 +3,8 @@
 // segment and everything below it, so asset deep links inherit it too.
 //
 // Dark info card: wordmark, title, fact chips, short id — plus a screenshot
-// pane when the build has a PNG/JPEG/BMP/TGA asset whose bytes are in the blob
-// store (largest first: big files are screenshots, tiny ones are icons/textures).
+// pane when the build has a PNG/JPEG/BMP/TGA/TIFF asset whose bytes are in the
+// blob store (largest first: big files are screenshots, tiny ones are icons/textures).
 
 import { readFile } from "node:fs/promises";
 import { ImageResponse } from "next/og";
@@ -27,7 +27,7 @@ async function findScreenshot(sha256: string): Promise<string | null> {
   const r = await getPool().query(
     `SELECT sha256, mime FROM build_asset
      WHERE build_sha256=$1 AND kind='image'
-       AND mime IN ('image/png','image/jpeg','image/bmp','image/x-tga')
+       AND mime IN ('image/png','image/jpeg','image/bmp','image/x-tga','image/tiff')
        AND size <= $2
      ORDER BY size DESC LIMIT 4`,
     [sha256, MAX_SHOT_BYTES]

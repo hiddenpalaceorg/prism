@@ -56,6 +56,16 @@ def test_tga_ships_as_image_and_imposter_degrades(tmp_path):
     assert assets["/GFX/FAKE.TGA"]["kind"] == viewable.SNIPPET_KIND
 
 
+def test_tiff_ships_as_image(tmp_path):
+    # Sniffing needs only the magic; the uppercase name pins case-insensitive
+    # extension matching.
+    tif = b"II*\x00" + bytes(60)
+    assets = extract({"/GFX/TITLE.TIF": tif}, tmp_path)
+    a = assets["/GFX/TITLE.TIF"]
+    assert (a["kind"], a["mime"], a["size"]) == ("image", "image/tiff", len(tif))
+    assert blob(tmp_path, a["sha256"]) == tif
+
+
 def test_unidentified_files_ship_head_snippet(tmp_path):
     data = bytes(range(256)) * 20  # 5120 bytes of binary
     assets = extract({"/DATA/GAME.TIM": data}, tmp_path)

@@ -59,6 +59,16 @@ def test_sniff_tga_header_plausibility():
     assert not viewable.sniff(bytes(bad_depth), "image/x-tga")
 
 
+def test_sniff_tiff_magic_and_case_insensitive_extension():
+    # Extensions match case-insensitively — dumps carry ASDF.TIF-style names.
+    assert viewable.classify("/GFX/TITLE.TIF") == ("image", "image/tiff")
+    assert viewable.classify("/GFX/title.tiff") == ("image", "image/tiff")
+    assert viewable.sniff(b"II*\x00" + bytes(16), "image/tiff")
+    assert viewable.sniff(b"MM\x00*" + bytes(16), "image/tiff")
+    assert not viewable.sniff(b"II\x00*" + bytes(16), "image/tiff")
+    assert not viewable.sniff(b"Not a TIFF at all, honest.", "image/tiff")
+
+
 def test_sniff_text_accepts_legacy_encodings_rejects_binary():
     # Shift-JIS bytes are >= 0x80 — must pass the text heuristic.
     assert viewable.sniff("日本語のテキスト".encode("shift_jis"), "text/plain")

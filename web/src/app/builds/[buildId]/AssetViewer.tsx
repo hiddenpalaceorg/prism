@@ -23,11 +23,11 @@ export function assetUrl(a: ViewableAsset): string {
 }
 
 /** Where <img> should point: browsers render every image mime we extract
- *  except TGA, which goes through the server's PNG conversion. Kept in sync
- *  with pngConvertible (imgpng.ts) — not imported: that module pulls the
+ *  except TGA and TIFF, which go through the server's PNG conversion. Kept in
+ *  sync with pngConvertible (imgpng.ts) — not imported: that module pulls the
  *  decoders into the client bundle. */
 export function imageSrc(a: ViewableAsset): string {
-  return a.mime === "image/x-tga" ? `${assetUrl(a)}/png` : assetUrl(a);
+  return a.mime === "image/x-tga" || a.mime === "image/tiff" ? `${assetUrl(a)}/png` : assetUrl(a);
 }
 
 export function humanSize(bytes: number): string {
