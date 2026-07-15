@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import { getPool } from "@/lib/db";
 import { getBuildAssets, resolveBuild, type BuildAsset } from "@/lib/queries";
 import { assetTotals, orderAssets, readAssetExcerpt } from "@/lib/assets";
+import { pngConvertible, WEB_SAFE_IMAGE } from "@/lib/imgpng";
 import { humanSize } from "@/lib/meta";
 import { canonicalBuildId, parseBuildParam, safeDecodeSegment } from "@/lib/slug";
 import AssetGallery from "../../AssetGallery";
@@ -72,8 +73,16 @@ export async function generateMetadata({
       title: name,
       description,
       siteName: "Hidden Palace",
-      // Image assets unfurl as themselves; everything else gets the build card.
-      images: [asset.kind === "image" ? `/api/asset/${asset.sha256}` : card],
+      // Image assets unfurl as themselves — directly when the format is
+      // web-safe, via PNG conversion when it isn't (BMP); everything else
+      // (audio/video/text, ico/svg) gets the build card.
+      images: [
+        asset.kind === "image" && WEB_SAFE_IMAGE.test(asset.mime)
+          ? `/api/asset/${asset.sha256}`
+          : asset.kind === "image" && pngConvertible(asset.mime)
+            ? `/api/asset/${asset.sha256}/png`
+            : card,
+      ],
     },
     twitter: { card: "summary_large_image" },
   };

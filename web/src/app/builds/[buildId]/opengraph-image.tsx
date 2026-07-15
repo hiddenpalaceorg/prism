@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import { ImageResponse } from "next/og";
 import { assetBlobPath } from "@/lib/assets";
 import { getPool } from "@/lib/db";
+import { bmpToPng } from "@/lib/imgpng";
 import { buildFacts, displayTitle } from "@/lib/meta";
 import { getBuildMeta, resolveBuild, type BuildMetaRow } from "@/lib/queries";
 import { parseBuildParam, SHORT_SHA_LEN } from "@/lib/slug";
@@ -25,16 +26,20 @@ const MAX_SHOT_BYTES = 8_000_000;
 async function findScreenshot(sha256: string): Promise<string | null> {
   const r = await getPool().query(
     `SELECT sha256, mime FROM build_asset
-     WHERE build_sha256=$1 AND kind='image' AND mime IN ('image/png','image/jpeg')
+     WHERE build_sha256=$1 AND kind='image' AND mime IN ('image/png','image/jpeg','image/bmp')
        AND size <= $2
      ORDER BY size DESC LIMIT 4`,
     [sha256, MAX_SHOT_BYTES]
   );
   // A row's blob can be missing (metadata ingested before the bundle carrying
-  // the bytes) — fall through to the next-largest candidate.
+  // the bytes) or undecodable — fall through to the next-largest candidate.
   for (const row of r.rows as Array<{ sha256: string; mime: string }>) {
     try {
       const bytes = await readFile(assetBlobPath(row.sha256));
+      // satori can't decode BMP — hand it PNG bytes instead.
+      if (row.mime === "image/bmp") {
+        return `data:image/png;base64,${bmpToPng(bytes).toString("base64")}`;
+      }
       return `data:${row.mime};base64,${bytes.toString("base64")}`;
     } catch {
       continue;
