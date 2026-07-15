@@ -2022,18 +2022,7 @@ mod app {
         let (mut uploaded, mut failed) = (0usize, 0usize);
         for (i, sha) in todo.iter().enumerate() {
             post_service_result(hwnd_i, format!("Uploading asset {} of {}…", i + 1, todo.len()));
-            let ok = std::fs::read(&local[*sha]).ok().is_some_and(|bytes| {
-                matches!(
-                    http_request(
-                        "PUT",
-                        &format!("{assets_url}/{sha}"),
-                        Some("Content-Type: application/octet-stream"),
-                        &bytes,
-                    ),
-                    Ok((code, _)) if (200..300).contains(&code)
-                )
-            });
-            if ok {
+            if upload_asset_chunked(&assets_url, sha, &local[*sha]) {
                 uploaded += 1;
             } else {
                 failed += 1;
@@ -2048,6 +2037,55 @@ mod app {
         }
         note.push('.');
         note
+    }
+
+    /// Upload chunk size — small enough to clear typical proxy body-size limits.
+    const UPLOAD_CHUNK: usize = 4 * 1024 * 1024;
+
+    /// PUT one asset blob in resumable chunks: each request appends at `offset`,
+    /// a 409 answers with the server's staged offset to resume from, and the
+    /// final chunk returns `stored` (or `exists`).
+    unsafe fn upload_asset_chunked(assets_url: &str, sha: &str, path: &std::path::Path) -> bool {
+        let Ok(bytes) = std::fs::read(path) else { return false };
+        let mut offset: usize = 0;
+        let mut last_staged: Option<usize> = None;
+        while offset < bytes.len() {
+            let end = (offset + UPLOAD_CHUNK).min(bytes.len());
+            let url = format!("{assets_url}/{sha}?offset={offset}");
+            let chunk = &bytes[offset..end];
+            match http_request("PUT", &url, Some("Content-Type: application/octet-stream"), chunk) {
+                Ok((code, body)) if (200..300).contains(&code) => {
+                    let v = serde_json::from_str::<serde_json::Value>(&body).unwrap_or_default();
+                    match v.get("status").and_then(|s| s.as_str()) {
+                        Some("stored") | Some("exists") => return true,
+                        _ => {
+                            offset = v
+                                .get("offset")
+                                .and_then(|o| o.as_u64())
+                                .map(|o| o as usize)
+                                .unwrap_or(end);
+                            last_staged = None;
+                        }
+                    }
+                }
+                Ok((409, body)) => {
+                    // Resume where the server actually is; the same answer twice
+                    // means we're not making progress — give up.
+                    let staged = serde_json::from_str::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|v| v.get("offset").and_then(|o| o.as_u64()))
+                        .map(|o| o as usize)
+                        .unwrap_or(0);
+                    if last_staged == Some(staged) {
+                        return false;
+                    }
+                    last_staged = Some(staged);
+                    offset = staged;
+                }
+                _ => return false,
+            }
+        }
+        false // ran out of local bytes without the server confirming the store
     }
 
     /// Export the whole local library to a single `.zip` the user can copy to the
