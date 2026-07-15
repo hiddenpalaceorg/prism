@@ -74,8 +74,8 @@ export async function generateMetadata({
       description,
       siteName: "Hidden Palace",
       // Image assets unfurl as themselves — directly when the format is
-      // web-safe, via PNG conversion when it isn't (BMP); everything else
-      // (audio/video/text, ico/svg) gets the build card.
+      // web-safe, via PNG conversion when it isn't (BMP/TGA/TIFF); everything
+      // else (audio/video/text, ico/svg) gets the build card.
       images: [
         asset.kind === "image" && WEB_SAFE_IMAGE.test(asset.mime)
           ? `/api/asset/${asset.sha256}`

@@ -9,8 +9,8 @@ export const runtime = "nodejs";
 
 // GET /api/asset/<sha256>/png — the asset converted to PNG, for og:image use
 // on formats unfurlers won't render and inline display of formats browsers
-// won't (today: BMP and TGA). Web-safe formats redirect to the raw asset
-// route; content-addressed, so responses cache hard.
+// won't (today: BMP, TGA, and TIFF). Web-safe formats redirect to the raw
+// asset route; content-addressed, so responses cache hard.
 
 const CACHE = "public, max-age=31536000, immutable";
 
