@@ -736,6 +736,7 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     /**
      * Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
+     * Uses the reader, so it works while an import holds the writer.
      */
     func loadBuild(sha256: String) throws  -> AnalysisSummary?
     
@@ -901,6 +902,7 @@ open func listFiles(root: String)throws  -> [String]  {
     
     /**
      * Reload a stored build from cache by sha256 (no adapter run). `None` if absent.
+     * Uses the reader, so it works while an import holds the writer.
      */
 open func loadBuild(sha256: String)throws  -> AnalysisSummary?  {
     return try  FfiConverterOptionTypeAnalysisSummary.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
@@ -1010,6 +1012,10 @@ public struct AnalysisSummary: Equatable, Hashable {
      * Pretty-printed canonical JSON record.
      */
     public var json: String
+    /**
+     * Viewable assets. `None` = extraction never ran on this record.
+     */
+    public var assets: [AssetInfo]?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -1019,7 +1025,10 @@ public struct AnalysisSummary: Equatable, Hashable {
          */xml: String, 
         /**
          * Pretty-printed canonical JSON record.
-         */json: String) {
+         */json: String, 
+        /**
+         * Viewable assets. `None` = extraction never ran on this record.
+         */assets: [AssetInfo]?) {
         self.sha256 = sha256
         self.name = name
         self.system = system
@@ -1031,6 +1040,7 @@ public struct AnalysisSummary: Equatable, Hashable {
         self.tree = tree
         self.xml = xml
         self.json = json
+        self.assets = assets
     }
 
     
@@ -1059,7 +1069,8 @@ public struct FfiConverterTypeAnalysisSummary: FfiConverterRustBuffer {
                 jsonPath: FfiConverterString.read(from: &buf), 
                 tree: FfiConverterSequenceTypeFileNode.read(from: &buf), 
                 xml: FfiConverterString.read(from: &buf), 
-                json: FfiConverterString.read(from: &buf)
+                json: FfiConverterString.read(from: &buf), 
+                assets: FfiConverterOptionSequenceTypeAssetInfo.read(from: &buf)
         )
     }
 
@@ -1075,6 +1086,7 @@ public struct FfiConverterTypeAnalysisSummary: FfiConverterRustBuffer {
         FfiConverterSequenceTypeFileNode.write(value.tree, into: &buf)
         FfiConverterString.write(value.xml, into: &buf)
         FfiConverterString.write(value.json, into: &buf)
+        FfiConverterOptionSequenceTypeAssetInfo.write(value.assets, into: &buf)
     }
 }
 
@@ -1091,6 +1103,91 @@ public func FfiConverterTypeAnalysisSummary_lift(_ buf: RustBuffer) throws -> An
 #endif
 public func FfiConverterTypeAnalysisSummary_lower(_ value: AnalysisSummary) -> RustBuffer {
     return FfiConverterTypeAnalysisSummary.lower(value)
+}
+
+
+/**
+ * One browser-viewable asset extracted from the build (image/audio/video/text).
+ */
+public struct AssetInfo: Equatable, Hashable {
+    /**
+     * Full path from the volume root — matches the contents tree.
+     */
+    public var path: String
+    public var sha256: String
+    public var size: UInt64
+    public var mime: String
+    public var kind: String
+    /**
+     * Absolute path of the blob in the local store, when present.
+     */
+    public var blobPath: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Full path from the volume root — matches the contents tree.
+         */path: String, sha256: String, size: UInt64, mime: String, kind: String, 
+        /**
+         * Absolute path of the blob in the local store, when present.
+         */blobPath: String?) {
+        self.path = path
+        self.sha256 = sha256
+        self.size = size
+        self.mime = mime
+        self.kind = kind
+        self.blobPath = blobPath
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AssetInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAssetInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AssetInfo {
+        return
+            try AssetInfo(
+                path: FfiConverterString.read(from: &buf), 
+                sha256: FfiConverterString.read(from: &buf), 
+                size: FfiConverterUInt64.read(from: &buf), 
+                mime: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterString.read(from: &buf), 
+                blobPath: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AssetInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterString.write(value.sha256, into: &buf)
+        FfiConverterUInt64.write(value.size, into: &buf)
+        FfiConverterString.write(value.mime, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.blobPath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssetInfo_lift(_ buf: RustBuffer) throws -> AssetInfo {
+    return try FfiConverterTypeAssetInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAssetInfo_lower(_ value: AssetInfo) -> RustBuffer {
+    return FfiConverterTypeAssetInfo.lower(value)
 }
 
 
@@ -1816,6 +1913,30 @@ fileprivate struct FfiConverterOptionTypeAnalysisSummary: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceTypeAssetInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [AssetInfo]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeAssetInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeAssetInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1833,6 +1954,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAssetInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [AssetInfo]
+
+    public static func write(_ value: [AssetInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAssetInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AssetInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AssetInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAssetInfo.read(from: &buf))
         }
         return seq
     }
@@ -1927,7 +2073,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_curator_ffi_checksum_method_engine_list_files() != 6362) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_load_build() != 6979) {
+    if (uniffi_curator_ffi_checksum_method_engine_load_build() != 49667) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_recent_builds() != 34130) {

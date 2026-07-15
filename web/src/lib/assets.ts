@@ -16,6 +16,12 @@ export function assetBlobPath(sha256: string): string {
   return path.join(assetStoreDir(), sha256.slice(0, 2), sha256);
 }
 
+/** Staging file for a blob's chunked upload (`.staging` can't collide with the
+ *  two-hex-char blob dirs). Caller must have validated `sha256`. */
+export function assetStagingPath(sha256: string): string {
+  return path.join(assetStoreDir(), ".staging", `${sha256}.part`);
+}
+
 /** Display order for asset kinds on the build pages. */
 export const ASSET_KIND_ORDER = ["image", "audio", "video", "text"] as const;
 

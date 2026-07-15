@@ -128,11 +128,79 @@ struct CuratorService {
         return try JSONDecoder().decode(SubmitResult.self, from: data)
     }
 
+    private struct AssetsStatus: Decodable { let missing: [String] }
+
+    /// GET `/api/submissions/<sha>/assets` — asset blobs the server still lacks.
+    func missingAssets(buildSha: String) async throws -> [String] {
+        var req = URLRequest(url: baseURL.appendingPathComponent("/api/submissions/\(buildSha)/assets"))
+        req.httpMethod = "GET"
+        let data = try await perform(req)
+        return try JSONDecoder().decode(AssetsStatus.self, from: data).missing
+    }
+
+    /// Upload chunk size — small enough to clear typical proxy body-size limits.
+    private static let uploadChunkBytes = 4 * 1024 * 1024
+
+    /// One chunk response: `partial` carries the next offset; `stored`/`exists`
+    /// end the upload. A 409 body carries only `offset` (the staged size).
+    private struct ChunkResult: Decodable {
+        let status: String?
+        let offset: UInt64?
+    }
+
+    /// PUT one asset blob under its build in resumable chunks: each request
+    /// appends at `offset`, a 409 answers with the server's staged offset to
+    /// resume from, and the final chunk returns `stored` (or `exists`).
+    func uploadAsset(buildSha: String, assetSha: String, fileURL: URL) async throws {
+        let fh = try FileHandle(forReadingFrom: fileURL)
+        defer { try? fh.close() }
+        var offset: UInt64 = 0
+        var lastStaged: UInt64?
+        while true {
+            try fh.seek(toOffset: offset)
+            let chunk = try fh.read(upToCount: Self.uploadChunkBytes) ?? Data()
+            if chunk.isEmpty {
+                // The record claims more bytes than the local blob holds.
+                throw ServiceError.transport(baseURL.absoluteString, "asset blob shorter than its record claims")
+            }
+            var req = URLRequest(url: assetChunkURL(buildSha: buildSha, assetSha: assetSha, offset: offset))
+            req.httpMethod = "PUT"
+            req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            req.httpBody = chunk
+            do {
+                let data = try await perform(req)
+                let r = try JSONDecoder().decode(ChunkResult.self, from: data)
+                if r.status == "stored" || r.status == "exists" { return }
+                offset = r.offset ?? offset + UInt64(chunk.count)
+                lastStaged = nil
+            } catch let ServiceError.http(code, body) where code == 409 {
+                // Resume where the server actually is; the same answer twice
+                // means we're not making progress — give up.
+                let staged = (try? JSONDecoder().decode(ChunkResult.self, from: Data(body.utf8)))?.offset ?? 0
+                if lastStaged == staged { throw ServiceError.http(code, body) }
+                lastStaged = staged
+                offset = staged
+            }
+        }
+    }
+
+    private func assetChunkURL(buildSha: String, assetSha: String, offset: UInt64) -> URL {
+        let url = baseURL.appendingPathComponent("/api/submissions/\(buildSha)/assets/\(assetSha)")
+        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        comps?.queryItems = [URLQueryItem(name: "offset", value: String(offset))]
+        return comps?.url ?? url
+    }
+
     private func post(path: String, body: Data) async throws -> Data {
         var req = URLRequest(url: baseURL.appendingPathComponent(path))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
+        return try await perform(req)
+    }
+
+    /// Run one request with the shared friendly-error mapping.
+    private func perform(_ req: URLRequest) async throws -> Data {
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await URLSession.shared.data(for: req)

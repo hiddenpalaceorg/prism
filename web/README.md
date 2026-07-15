@@ -33,3 +33,10 @@ for the build page's inline asset viewer.
   (read-only, not ingested) and returns fused similar-build neighbors.
 - `POST /api/submissions` — body `{ nickname, record }`; enqueues for moderation
   (dedup by sha256). `GET /api/submissions/<sha256>` returns status.
+- `GET /api/submissions/<sha256>/assets` — which of the build's referenced asset
+  blobs the store lacks; `PUT /api/submissions/<sha256>/assets/<assetSha>[?offset=N]`
+  uploads one (raw body, ≤ 20MB total, must hash to `<assetSha>` and be referenced
+  by the submitted record), in one shot or resumable chunks: chunks append at
+  `offset` (0 restarts; a mismatch answers 409 with the staged offset, a short
+  append 202 with the next one) and the last chunk hash-verifies and stores the
+  blob. The desktop apps call these after submitting a record.

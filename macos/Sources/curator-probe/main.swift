@@ -60,10 +60,24 @@ do {
 // 4. New library reads round-trip (empty data dir → [] and nil).
 let recent = try engine.recentBuilds(limit: 10)
 print("4. recentBuilds(10) -> \(recent.count) entries")
-let missing = try engine.loadBuild(sha256: "deadbeef")
+// Well-formed but unknown (a malformed key like "deadbeef" throws instead).
+let missing = try engine.loadBuild(sha256: String(repeating: "de", count: 32))
 print("   loadBuild(unknown) -> \(missing == nil ? "nil" : "unexpected hit")")
 if let first = recent.first, let loaded = try engine.loadBuild(sha256: first.sha256) {
     print("   loadBuild(\(first.sha256.prefix(8))) -> \(loaded.name), \(loaded.tree.count) root node(s), fromCache=\(loaded.fromCache)")
+}
+
+// 5. Asset metadata round-trip: find a recent build whose record carries assets
+//    and confirm blob paths resolve into the local store.
+for entry in recent {
+    guard let loaded = try engine.loadBuild(sha256: entry.sha256), let assets = loaded.assets else { continue }
+    let local = assets.filter { $0.blobPath != nil }
+    print("5. assets(\(entry.sha256.prefix(8))) -> \(assets.count) recorded, \(local.count) blob(s) local")
+    if let a = local.first {
+        let exists = fm.fileExists(atPath: a.blobPath ?? "")
+        print("   first local blob: \(a.kind) \(a.path) (\(a.size) bytes) -> exists=\(exists)")
+    }
+    break
 }
 
 print("probe done.")

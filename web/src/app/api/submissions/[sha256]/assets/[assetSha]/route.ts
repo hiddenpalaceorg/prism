@@ -1,0 +1,125 @@
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import type { NextRequest } from "next/server";
+import { getPool } from "@/lib/db";
+import { assetBlobPath, assetStagingPath } from "@/lib/assets";
+import { referencedAssets, MAX_BUILD_ASSET_BYTES } from "@/lib/submission-assets";
+import { rateLimit, clientKey } from "@/lib/ratelimit";
+import { isSha256 } from "@/lib/validate";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+// PUT /api/submissions/<sha256>/assets/<assetSha>[?offset=N] — upload one asset
+// blob, in one shot or chunked (raw body). Accepted only when <assetSha> is
+// referenced by the submission's (or an ingested build's) record; nothing else
+// about the request is trusted — the content address is the authority.
+//
+// Chunk protocol: each request appends at `offset` (default 0; 0 restarts) to
+// a staging file. A wrong offset answers 409 with the staged size so the
+// client can resume; a short append answers 202 with the new offset. When the
+// staged size reaches the record's claimed size the file must hash to
+// <assetSha> — then it lands in the store (201) — or staging is dropped (422).
+// The final hash makes interleaved/duplicate chunk writes harmless: they can
+// only cost a retry, never store wrong bytes. Idempotent by construction.
+//
+// Staging abandoned by a crashed client is bounded (referenced assets only)
+// and reclaimed the next time that blob's upload restarts at offset 0.
+export async function PUT(
+  request: NextRequest,
+  ctx: { params: Promise<{ sha256: string; assetSha: string }> }
+) {
+  // Generous: a bulk desktop upload is many sequential chunk PUTs (a 4096-asset
+  // build is legitimate), and the clients treat 429 as a hard failure.
+  if (!rateLimit(`assets-put:${clientKey(request)}`, 1200, 60_000)) {
+    return Response.json({ error: "rate limit exceeded" }, { status: 429 });
+  }
+  const { sha256, assetSha } = await ctx.params;
+  if (!isSha256(sha256) || !isSha256(assetSha)) {
+    return Response.json({ error: "invalid sha256" }, { status: 400 });
+  }
+
+  const refs = await referencedAssets(getPool(), sha256);
+  if (!refs) return Response.json({ error: "not found" }, { status: 404 });
+  const claimed = refs.sizes.get(assetSha);
+  if (claimed === undefined) {
+    return Response.json({ error: "asset not referenced by this build" }, { status: 404 });
+  }
+  if (refs.totalBytes > MAX_BUILD_ASSET_BYTES) {
+    return Response.json({ error: "build's total asset bytes exceed the cap" }, { status: 413 });
+  }
+
+  const dest = assetBlobPath(assetSha);
+  if (fs.existsSync(dest)) return Response.json({ sha256: assetSha, status: "exists" });
+
+  const rawOffset = new URL(request.url).searchParams.get("offset") ?? "0";
+  const offset = Number(rawOffset);
+  if (!Number.isInteger(offset) || offset < 0 || offset > claimed) {
+    return Response.json({ error: "invalid offset" }, { status: 400 });
+  }
+  if (!request.body) return Response.json({ error: "missing body" }, { status: 400 });
+
+  // A non-zero offset must continue exactly where the staging file ends.
+  const part = assetStagingPath(assetSha);
+  if (offset !== 0) {
+    let staged = 0;
+    try {
+      staged = (await fsp.stat(part)).size;
+    } catch {}
+    if (offset !== staged) {
+      return Response.json({ error: "offset mismatch", offset: staged }, { status: 409 });
+    }
+  }
+
+  // Append the chunk as it streams in, dying early past the claimed size.
+  await fsp.mkdir(path.dirname(part), { recursive: true });
+  const fh = await fsp.open(part, offset === 0 ? "w" : "a");
+  let received = 0;
+  let overrun = false;
+  const reader = request.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (offset + received > claimed) {
+        overrun = true;
+        reader.cancel().catch(() => {});
+        break;
+      }
+      await fh.write(value);
+    }
+  } finally {
+    await fh.close();
+  }
+  if (overrun) {
+    await fsp.rm(part, { force: true }).catch(() => {});
+    return Response.json({ error: "body exceeds the record's claimed size" }, { status: 413 });
+  }
+
+  const size = offset + received;
+  if (size < claimed) {
+    return Response.json({ sha256: assetSha, status: "partial", offset: size }, { status: 202 });
+  }
+
+  // Complete: the staged bytes must hash to the content address.
+  const hash = createHash("sha256");
+  for await (const chunk of fs.createReadStream(part)) hash.update(chunk as Buffer);
+  if (hash.digest("hex") !== assetSha) {
+    await fsp.rm(part, { force: true }).catch(() => {});
+    return Response.json({ error: "staged bytes do not hash to the asset sha256" }, { status: 422 });
+  }
+
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  try {
+    await fsp.rename(part, dest);
+  } catch (e) {
+    // A concurrent upload of the same blob may have finalized first — same bytes.
+    if (!fs.existsSync(dest)) throw e;
+    await fsp.rm(part, { force: true }).catch(() => {});
+    return Response.json({ sha256: assetSha, status: "exists" });
+  }
+  return Response.json({ sha256: assetSha, status: "stored" }, { status: 201 });
+}

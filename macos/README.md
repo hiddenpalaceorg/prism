@@ -61,7 +61,12 @@ cd macos && swift run curator-probe
 - **Find Similar** → `POST /api/similarity`; tiered neighbors (content / files / chunks /
   audio / exe / text) in the Similar tab. Click a neighbor to open its web build-detail
   page (`/builds/<sha256>`), or right-click to copy the hash.
-- **Submit** → `POST /api/submissions` with a nickname (moderation queue).
+- **Submit** → `POST /api/submissions` with a nickname (moderation queue), then uploads
+  whichever of the build's asset blobs the server reports missing
+  (`GET`/`PUT /api/submissions/<sha>/assets[/<assetSha>]`).
+- **Assets tab** — the build's extracted viewable files: image thumbnails, audio/video
+  rows (open in the default app via a named temp copy), and an in-app text preview
+  (text assets are never handed to the shell — a `.sh`/`.js` could execute).
 
 ## Notes
 

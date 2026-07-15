@@ -47,6 +47,7 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom) { StatusBar() }
         .sheet(isPresented: $model.showingSubmitSheet) { SubmitSheet() }
         .sheet(isPresented: $model.showingError) { ErrorSheet() }
+        .sheet(item: $model.assetPreview) { AssetTextSheet(preview: $0) }
         .onChange(of: model.selection) { sel in
             // Clicking a file in the sidebar surfaces its metadata table.
             if sel != nil { model.detailTab = .selection }
@@ -268,6 +269,9 @@ struct DetailView: View {
                     NodeDetail(node: model.selectedNode)
                         .tabItem { Label("Selection", systemImage: "doc.text.magnifyingglass") }
                         .tag(DetailTab.selection)
+                    AssetsView(summary: summary)
+                        .tabItem { Label("Assets", systemImage: "photo.on.rectangle") }
+                        .tag(DetailTab.assets)
                     DocumentView(summary: summary)
                         .tabItem { Label("DAT / JSON", systemImage: "doc.plaintext") }
                         .tag(DetailTab.document)
@@ -457,6 +461,181 @@ struct DocumentView: View {
                     .padding(8)
             }
         }
+    }
+}
+
+// MARK: - Assets (browser-viewable files extracted from the build)
+
+/// Display order for asset kinds — mirrors the web build pages.
+private let assetKindOrder = ["image", "audio", "video", "text"]
+
+private func assetKindIcon(_ kind: String) -> String {
+    switch kind {
+    case "image": return "photo"
+    case "audio": return "music.note"
+    case "video": return "film"
+    default: return "doc.text"
+    }
+}
+
+struct AssetsView: View {
+    @EnvironmentObject var model: AppModel
+    let summary: AnalysisSummary
+
+    private var grouped: [(String, [AssetInfo])] {
+        let assets = summary.assets ?? []
+        return assetKindOrder
+            .map { kind in (kind, assets.filter { $0.kind == kind }) }
+            .filter { !$0.1.isEmpty }
+    }
+
+    var body: some View {
+        if grouped.isEmpty {
+            ContentUnavailableViewCompat(
+                title: "No viewable assets",
+                systemImage: "photo.on.rectangle",
+                message: summary.assets == nil
+                    ? "Asset extraction hasn't run for this build yet — re-analyze the image to extract viewable files."
+                    : "This build carries no browser-viewable images, audio, video, or text."
+            )
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(grouped, id: \.0) { kind, assets in
+                        Text("\(kind.capitalized) (\(assets.count))")
+                            .font(.caption.bold()).foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                        if kind == "image" {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120, maximum: 180), spacing: 8)], spacing: 8) {
+                                ForEach(assets, id: \.sha256) { AssetThumb(asset: $0) }
+                            }
+                            .padding(.horizontal, 12)
+                        } else {
+                            VStack(spacing: 0) {
+                                ForEach(assets, id: \.sha256) { a in
+                                    AssetRow(asset: a)
+                                    Divider()
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+        }
+    }
+}
+
+/// One image asset as a clickable thumbnail (decoded off the main thread).
+struct AssetThumb: View {
+    @EnvironmentObject var model: AppModel
+    let asset: AssetInfo
+    @State private var image: NSImage?
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Group {
+                if let image {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                } else {
+                    Image(systemName: asset.blobPath == nil ? "photo.badge.exclamationmark" : "photo")
+                        .font(.system(size: 28)).foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 90, maxHeight: 120)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            Text((asset.path as NSString).lastPathComponent)
+                .font(.caption2).lineLimit(1).truncationMode(.middle)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { model.openAsset(asset) }
+        .contextMenu { AssetMenu(asset: asset) }
+        .help(asset.path)
+        .task {
+            guard image == nil, let blob = asset.blobPath else { return }
+            // Read off the main thread (Data is Sendable; NSImage is not);
+            // NSImage defers the actual decode until first draw.
+            let data = await Task.detached(priority: .utility) {
+                try? Data(contentsOf: URL(fileURLWithPath: blob))
+            }.value
+            if let data { image = NSImage(data: data) }
+        }
+    }
+}
+
+/// One audio/video/text asset as a clickable list row.
+struct AssetRow: View {
+    @EnvironmentObject var model: AppModel
+    let asset: AssetInfo
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: assetKindIcon(asset.kind)).foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text((asset.path as NSString).lastPathComponent).lineLimit(1)
+                Text(asset.path).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            if asset.blobPath == nil { Tag(text: "not local", tint: .orange) }
+            Text(humanSize(asset.size)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            Text(asset.mime).font(.caption).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .onTapGesture { model.openAsset(asset) }
+        .contextMenu { AssetMenu(asset: asset) }
+    }
+}
+
+/// Shared context-menu actions for an asset.
+struct AssetMenu: View {
+    @EnvironmentObject var model: AppModel
+    let asset: AssetInfo
+
+    var body: some View {
+        Button(asset.kind == "text" ? "Preview" : "Open") { model.openAsset(asset) }
+        Button("Copy SHA-256") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(asset.sha256, forType: .string)
+        }
+    }
+}
+
+/// In-app viewer for text assets (they are never handed to the shell).
+struct AssetTextSheet: View {
+    let preview: AssetTextPreview
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(preview.name, systemImage: "doc.text").font(.headline)
+            ScrollView([.vertical, .horizontal]) {
+                Text(preview.text.isEmpty ? "(empty file)" : preview.text)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            }
+            .frame(minWidth: 480, minHeight: 240, maxHeight: 480)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            HStack {
+                if preview.truncated {
+                    Text("Preview truncated to the first 256 KB.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(preview.text, forType: .string)
+                }
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 640)
     }
 }
 
