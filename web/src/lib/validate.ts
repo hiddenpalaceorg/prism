@@ -2,13 +2,17 @@
 
 import type { BuildRecord, Node } from "./types";
 
-export const MAX_BODY_BYTES = 8_000_000;
+// Must fit a MAX_FILES/MAX_ASSETS-sized record: each file or asset entry is a
+// few hundred bytes of JSON, so cap-sized records run tens of MB.
+export const MAX_BODY_BYTES = 64_000_000;
 
 const MAX_FILES = 200_000;
 const MAX_SIGNATURE_VALUES = 4096;
 const MAX_MEDIA = 4096;
 const MAX_AUDIO_FP = 200_000;
-const MAX_ASSETS = 4096;
+// Asset extraction spans every viewable (image/audio/text) file in a build, and
+// real dumps carry tens of thousands — this only guards against absurdity.
+const MAX_ASSETS = 100_000;
 
 /** True if `s` is a lowercase 64-hex sha256. */
 export function isSha256(s: string): boolean {
