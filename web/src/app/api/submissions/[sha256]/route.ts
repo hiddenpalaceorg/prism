@@ -4,6 +4,7 @@ import { getPool } from "@/lib/db";
 import { submissionStatus, setSubmissionStatus } from "@/lib/queries";
 import { ingestRecord, refreshAudioIdf } from "@/lib/ingest";
 import { isModerator, moderationToken } from "@/lib/auth";
+import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
 import type { BuildRecord } from "@/lib/types";
 
@@ -49,6 +50,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
 
   // Accept: ingest and flip status to accepted in ONE transaction so a failed
   // ingest never leaves the submission marked accepted.
+  let name = "";
   const c = await pool.connect();
   try {
     await c.query("BEGIN");
@@ -64,6 +66,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
       await c.query("ROLLBACK");
       return Response.json({ error: "not found" }, { status: 404 });
     }
+    name = r.rows[0].record.image?.name ?? "";
     await ingestRecord(c, r.rows[0].record);
     await c.query(
       "UPDATE submission_queue SET status='accepted', reviewed_at=now() WHERE sha256=$1",
@@ -81,6 +84,11 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
     c.release();
   }
   // Build pages are cached (revalidate = 3600); make the new build visible now.
+  // The canonical slug path is what everything links to; the bare-sha path
+  // serves a cached redirect, so refresh both (plus the assets subpage).
+  const canonical = buildHref(sha256, name);
+  revalidatePath(canonical);
+  revalidatePath(`${canonical}/assets`);
   revalidatePath(`/builds/${sha256}`);
   return Response.json({ sha256, status: "accepted" });
 }

@@ -1,18 +1,20 @@
 import { Fragment } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
-import { getBuild, getBuildAssets, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities } from "@/lib/queries";
+import { getBuild, getBuildAssets, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, resolveBuild } from "@/lib/queries";
 import { assetTotals, orderAssets, readAssetExcerpt } from "@/lib/assets";
+import { canonicalBuildId, parseBuildParam } from "@/lib/slug";
 import type { BuildRecord } from "@/lib/types";
 import SimilarBuilds from "./SimilarBuilds";
 import FileTree from "./FileTree";
 import AssetGallery from "./AssetGallery";
+import AssetViewerHost from "./AssetViewerHost";
 
 // The assets section previews at most this many items per kind; the rest live
-// on /builds/<sha256>/assets.
+// on /builds/<id>/assets.
 const ASSET_PREVIEW_PER_KIND = { image: 30, audio: 20, video: 10, source: 10, text: 10 };
 
 export const runtime = "nodejs";
@@ -22,7 +24,7 @@ export const runtime = "nodejs";
 // is rendered per-request and `revalidate` never engages — with it, pages are
 // ISR-cached on first visit and refreshed in the background.
 export const revalidate = 3600;
-export function generateStaticParams(): Array<{ sha256: string }> {
+export function generateStaticParams(): Array<{ buildId: string }> {
   return [];
 }
 
@@ -88,9 +90,20 @@ function metaSections(record: BuildRecord): MetaSection[] {
   return sections;
 }
 
-export default async function BuildPage({ params }: { params: Promise<{ sha256: string }> }) {
-  const { sha256 } = await params;
+export default async function BuildPage({ params }: { params: Promise<{ buildId: string }> }) {
+  const { buildId } = await params;
+  const parsed = parseBuildParam(buildId);
+  if (!parsed) notFound();
   const pool = getPool();
+  // Any unique sha256 prefix (with or without slug) resolves; everything
+  // non-canonical redirects to the canonical <short sha>-<slug> URL.
+  const resolved = await resolveBuild(pool, parsed.hex, parsed.slug);
+  if (!resolved) notFound();
+  const canonical = canonicalBuildId(resolved.sha256, resolved.name);
+  if (buildId !== canonical) permanentRedirect(`/builds/${canonical}`);
+  const sha256 = resolved.sha256;
+  const href = `/builds/${canonical}`;
+
   const build = await getBuild(pool, sha256);
   if (!build) notFound();
 
@@ -130,6 +143,9 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
 
   return (
     <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
+      {/* One lightbox for the whole page (gallery + file tree); it rewrites the
+          URL to <href>/assets/<path> while an asset is open. */}
+      <AssetViewerHost assets={assets} buildHref={href} returnHref={href}>
       <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
 
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">
@@ -181,7 +197,7 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
           <h2 className="text-lg font-medium">
             Assets <span className="text-sm font-normal text-neutral-400">({assets.length} viewable)</span>
           </h2>
-          <AssetGallery sha256={sha256} assets={previewAssets} totals={assetTotals(assets)} excerpts={excerpts} />
+          <AssetGallery buildHref={href} assets={previewAssets} totals={assetTotals(assets)} excerpts={excerpts} />
         </section>
       )}
 
@@ -191,6 +207,7 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
         </h2>
         <FileTree sha256={sha256} roots={pruneToExpanded(tree, expanded)} initiallyExpanded={[...expanded]} assets={assets} />
       </section>
+      </AssetViewerHost>
     </main>
   );
 }

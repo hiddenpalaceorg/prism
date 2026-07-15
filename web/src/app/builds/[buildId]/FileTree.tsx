@@ -8,7 +8,8 @@ import {
   graftChildren,
   type TreeNode,
 } from "@/lib/filetree";
-import AssetViewer, { type ViewableAsset } from "./AssetViewer";
+import { type ViewableAsset } from "./AssetViewer";
+import { useOpenAsset } from "./AssetViewerHost";
 
 // Chip label on viewable file rows, by asset kind.
 const KIND_TAG: Record<string, string> = { image: "img", audio: "aud", video: "vid", source: "src", text: "txt" };
@@ -68,12 +69,10 @@ export default function FileTree({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(initiallyExpanded));
   const [loading, setLoading] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  // Index into `assets` of the file open in the viewer overlay, if any.
-  const [viewing, setViewing] = useState<number | null>(null);
-  const assetIndexByPath = useMemo(
-    () => new Map(assets.map((a, i) => [a.path, i] as const)),
-    [assets]
-  );
+  // Viewable rows open in the page's AssetViewerHost overlay (which also
+  // updates the URL to the asset's deep link).
+  const openAsset = useOpenAsset();
+  const assetByPath = useMemo(() => new Map(assets.map((a) => [a.path, a] as const)), [assets]);
 
   const rows = visibleRows(tree, expanded);
 
@@ -163,7 +162,7 @@ export default function FileTree({
         {rows.map(({ node, depth }) => {
           const open = expanded.has(node.path);
           const busy = loading.has(node.path);
-          const assetIdx = node.dir ? undefined : assetIndexByPath.get(node.path);
+          const asset = node.dir ? undefined : assetByPath.get(node.path);
           return (
             <div
               key={node.path}
@@ -189,15 +188,15 @@ export default function FileTree({
                     <span className="truncate">{node.name}/</span>
                     <span className="shrink-0 text-xs text-neutral-400">({node.fileCount})</span>
                   </button>
-                ) : assetIdx !== undefined ? (
+                ) : asset !== undefined ? (
                   <button
-                    onClick={() => setViewing(assetIdx)}
+                    onClick={() => openAsset(asset.path)}
                     title={`View ${node.name}`}
                     className="flex w-full min-w-0 items-center gap-1.5 pl-4 text-left text-sky-700 hover:underline dark:text-sky-400"
                   >
                     <span className="truncate">{node.name}</span>
                     <span className="shrink-0 rounded bg-neutral-100 px-1 text-[10px] uppercase tracking-wide text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-                      {KIND_TAG[assets[assetIdx].kind] ?? assets[assetIdx].kind}
+                      {KIND_TAG[asset.kind] ?? asset.kind}
                     </span>
                   </button>
                 ) : (
@@ -214,14 +213,6 @@ export default function FileTree({
           );
         })}
       </div>
-      {viewing !== null && assets[viewing] && (
-        <AssetViewer
-          assets={assets}
-          index={viewing}
-          onClose={() => setViewing(null)}
-          onNavigate={setViewing}
-        />
-      )}
     </>
   );
 }

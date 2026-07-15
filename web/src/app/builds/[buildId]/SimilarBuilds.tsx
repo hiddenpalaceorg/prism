@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import RowLink from "../RowLink";
+import { buildHref } from "@/lib/slug";
 import { TIERS, applicableTiers, fusedScore, type FusedBuild, type TierKey } from "@/lib/tiers";
 
 const MIN_SCORE = 0.01; // > 1%
@@ -77,31 +78,33 @@ export default function SimilarBuilds({ builds, queryCaps }: { builds: FusedBuil
       ) : (
         <table className="mt-4 w-full border-collapse text-sm">
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900/60">
-            {ranked.map(({ b, score, applic }) => (
+            {ranked.map(({ b, score, applic }) => {
+              const href = buildHref(b.sha256, b.name);
+              return (
               <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
                 <td className="max-w-[55vw] sm:max-w-xs h-full p-0 font-medium first:[&>a]:pl-0">
-                  <RowLink href={`/builds/${b.sha256}`} focusable className="px-3 hover:underline">
+                  <RowLink href={href} focusable className="px-3 hover:underline">
                     <span className="block truncate">{b.name}</span>
                     {/* On mobile the per-tier breakdown column is hidden; stack it under the name instead. */}
                     <TierBreakdown b={b} applic={applic} className="mt-1 font-normal text-neutral-400 sm:hidden" />
                   </RowLink>
                 </td>
                 <td className="w-px h-full p-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3">
+                  <RowLink href={href} className="px-3">
                     <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs whitespace-nowrap dark:bg-neutral-800">{b.system || "unknown"}</span>
                   </RowLink>
                 </td>
                 {/* per-tier contributions (active tiers this build actually matched) — desktop only */}
                 <td className="hidden sm:table-cell h-full p-0 text-neutral-400">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3">
+                  <RowLink href={href} className="px-3">
                     <TierBreakdown b={b} applic={applic} />
                   </RowLink>
                 </td>
                 <td className="w-12 h-full p-0 last:[&>a]:pr-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3 text-right font-mono text-xs font-semibold tabular-nums">{(score * 100).toFixed(1)}%</RowLink>
+                  <RowLink href={href} className="px-3 text-right font-mono text-xs font-semibold tabular-nums">{(score * 100).toFixed(1)}%</RowLink>
                 </td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
       )}

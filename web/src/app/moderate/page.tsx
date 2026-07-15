@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { buildHref } from "@/lib/slug";
 
 interface Submission {
   sha256: string;
@@ -120,7 +121,7 @@ export default function Moderate() {
           {items.map((s) => (
             <li key={s.sha256} className="flex items-center justify-between gap-4 py-3">
               <div className="min-w-0">
-                <Link href={`/builds/${s.sha256}`} className="font-medium hover:underline">
+                <Link href={buildHref(s.sha256, s.name ?? "")} className="font-medium hover:underline">
                   {s.name ?? s.sha256}
                 </Link>
                 <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-neutral-500">
