@@ -529,13 +529,13 @@ export async function listBuildsPage(pool: Pool, opts: BuildsPageOpts = {}): Pro
   };
 }
 
-/** One viewable asset of a build, for the build page's inline viewer. */
+/** One extracted asset of a build, for the build page's inline viewer. */
 export interface BuildAsset {
   path: string;
   sha256: string;
   size: number;
   mime: string;
-  kind: string; // image | audio | video | source | text
+  kind: string; // image | audio | video | source | text | binary (head snippet)
 }
 
 /// A build's viewable assets, in path order (one indexed lookup).

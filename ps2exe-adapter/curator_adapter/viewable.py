@@ -6,11 +6,18 @@ served as text/plain — never text/html — so a crafted HTML file in a dump
 can't script against the web origin.
 """
 
-# Hard cap on extracted asset size. Files past this are skipped outright.
+# Hard cap on extracted asset size. Files past this fall back to a head snippet.
 MAX_ASSET_SIZE = 20 * 1024 * 1024
 
 # How many leading bytes sniffing needs (SVG tag scan is the long pole).
 SNIFF_BYTES = 4096
+
+# Files nothing below claims (plus sniff failures and oversized candidates) are
+# still shipped: their leading bytes go into the store raw, so the UIs can show
+# a hex view — and change how they render it without re-analyzing collections.
+SNIPPET_BYTES = 2048
+SNIPPET_KIND = "binary"
+SNIPPET_MIME = "application/octet-stream"
 
 _IMAGE = {
     "png": "image/png",

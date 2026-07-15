@@ -84,14 +84,16 @@ impl Analyzer {
         // 1. Image identity (single streaming read in Rust).
         let image = fingerprint::hash_image(path, &observer)?;
 
-        // 2. Cache short-circuit. Pre-assets records (assets == None) get topped
-        // up here — extraction alone, no re-hash — so re-running analyze over an
-        // existing collection backfills its asset store.
+        // 2. Cache short-circuit. Records whose assets predate the current
+        // ASSET_PROFILE (or never ran, assets == None) get topped up here —
+        // extraction alone, no re-hash — so re-running analyze over an existing
+        // collection backfills its asset store.
         if let Some(mut record) = self.cache.load(&image.sha256)? {
             observer.on_event(Event::Message(format!("cache hit {}", image.sha256)));
-            if record.assets.is_none() {
+            if record.assets.is_none() || record.asset_profile < schema::ASSET_PROFILE {
                 if let Some(assets) = self.extract_assets(path, &observer)? {
                     record.assets = Some(assets);
+                    record.asset_profile = schema::ASSET_PROFILE;
                     let xml = render::to_dat_xml(&record);
                     let jp = self.cache.store(&record, &xml)?;
                     self.db.upsert_build(&record, &jp.to_string_lossy())?;
@@ -158,10 +160,12 @@ impl Analyzer {
         let sidecar = fingerprint::chunk_sidecar(&raw.files);
         let contents = fingerprint::build_tree(&raw.files);
 
-        // Asset pass: pull browser-viewable files (images/audio/text ≤ 20MB) into
-        // the content-addressed store. Enrichment only — a failure is reported and
-        // leaves `assets` unset (None), so the next analyze retries it.
+        // Asset pass: pull browser-viewable files (images/audio/text ≤ 20MB) whole
+        // and every other file's head snippet into the content-addressed store.
+        // Enrichment only — a failure is reported and leaves `assets` unset
+        // (None), so the next analyze retries it.
         let assets = self.extract_assets(path, &observer)?;
+        let asset_profile = if assets.is_some() { schema::ASSET_PROFILE } else { 0 };
 
         let record = BuildRecord {
             record_schema_version: schema::RECORD_SCHEMA_VERSION,
@@ -197,6 +201,7 @@ impl Analyzer {
             chunk_signature,
             resemblance,
             assets,
+            asset_profile,
         };
 
         // 5. Render, cache, index.

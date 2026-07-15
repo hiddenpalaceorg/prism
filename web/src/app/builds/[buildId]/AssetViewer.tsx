@@ -5,6 +5,7 @@
 // once seen comes back from browser cache). ← → step through the list, Esc closes.
 
 import { useEffect, useState } from "react";
+import { hexDump } from "@/lib/hexdump";
 import SourceCode from "./SourceCode";
 
 /** Mirrors queries.ts BuildAsset — redeclared here so client components don't
@@ -14,7 +15,7 @@ export interface ViewableAsset {
   sha256: string;
   size: number;
   mime: string;
-  kind: string; // image | audio | video | source | text
+  kind: string; // image | audio | video | source | text | binary
 }
 
 export function assetUrl(a: ViewableAsset): string {
@@ -74,6 +75,48 @@ function TextBody({ asset }: { asset: ViewableAsset }) {
   );
 }
 
+// The analyzer stores only this much of an unidentified file (viewable.py
+// SNIPPET_BYTES) — a blob exactly this long is (almost surely) a truncated head.
+const SNIPPET_BYTES = 2048;
+
+// Unidentified files: xxd-style hex view over the stored head snippet. The
+// blob is raw bytes, so this rendering can evolve without re-analysis.
+function HexBody({ asset }: { asset: ViewableAsset }) {
+  const url = assetUrl(asset);
+  const [state, setState] = useState<Uint8Array | "loading" | "error">("loading");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = await res.arrayBuffer();
+        if (!cancelled) setState(new Uint8Array(buf));
+      } catch {
+        if (!cancelled) setState("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
+  if (state === "loading") return <p className="p-6 text-sm text-neutral-400">Loading…</p>;
+  if (state === "error") return <p className="p-6 text-sm text-red-500">Failed to load file.</p>;
+  return (
+    <div className="max-h-[70vh] overflow-auto rounded bg-white p-4 dark:bg-neutral-900">
+      <pre className="whitespace-pre font-mono text-xs leading-5 text-neutral-800 dark:text-neutral-200">
+        {hexDump(state)}
+      </pre>
+      {asset.size >= SNIPPET_BYTES && (
+        <p className="mt-3 text-xs text-neutral-400">
+          Unidentified file — only its first 2 KB is stored.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Body({ asset }: { asset: ViewableAsset }) {
   const [failed, setFailed] = useState(false);
   const url = assetUrl(asset);
@@ -104,6 +147,8 @@ function Body({ asset }: { asset: ViewableAsset }) {
           onError={() => setFailed(true)}
         />
       );
+    case "binary":
+      return <HexBody asset={asset} />;
     default:
       return <TextBody asset={asset} />;
   }

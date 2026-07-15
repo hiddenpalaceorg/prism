@@ -1,8 +1,9 @@
 "use client";
 
 // Grouped preview of a build's viewable assets: image thumbnails, audio embeds
-// with waveforms, small video players, text excerpt cards. The server page
-// passes an already-capped subset plus the full per-kind totals; when a kind is
+// with waveforms, small video players, text excerpt cards, hex-preview cards
+// for unidentified files' head snippets. The server page passes an
+// already-capped subset plus the full per-kind totals; when a kind is
 // truncated, a "view all" affordance links to <buildHref>/assets.
 // Images and text open the page's AssetViewerHost lightbox (shared with the
 // file tree), which also deep-links the asset in the URL.
@@ -19,6 +20,7 @@ const SECTIONS: { kind: string; title: string }[] = [
   { kind: "video", title: "Video" },
   { kind: "source", title: "Source code" },
   { kind: "text", title: "Text" },
+  { kind: "binary", title: "Unidentified" },
 ];
 
 function baseName(path: string): string {
@@ -106,7 +108,7 @@ export default function AssetGallery({
               </div>
             )}
 
-            {(kind === "source" || kind === "text") && (
+            {(kind === "source" || kind === "text" || kind === "binary") && (
               <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {group.map((a) => (
                   <button
@@ -121,6 +123,7 @@ export default function AssetGallery({
                       </span>
                       <span className="shrink-0 text-[10px] text-neutral-400">{humanSize(a.size)}</span>
                     </div>
+                    {/* Binary cards preview the head snippet as spaced hex pairs. */}
                     <pre className="mt-1.5 line-clamp-4 whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-neutral-500">
                       {kind === "source" ? (
                         <SourceCode path={a.path} text={excerpts[a.path] ?? ""} />

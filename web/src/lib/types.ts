@@ -58,17 +58,20 @@ export interface BuildRecord {
   resemblance?: Signature | null;
   exe_fp?: { tlsh?: string; imphash?: string } | null;
   media?: MediaFp[];
-  /** Browser-viewable files in the blob store. Absent = extraction never ran. */
+  /** Extracted files in the blob store (viewable ones whole, the rest as head
+   *  snippets). Absent = extraction never ran. */
   assets?: AssetRef[] | null;
+  /** Asset-extraction generation (see curator-core ASSET_PROFILE). */
+  asset_profile?: number;
 }
 
-/** One extracted viewable asset; the bytes live in the store under `sha256`. */
+/** One extracted asset; the bytes live in the store under `sha256`. */
 export interface AssetRef {
   path: string;
   sha256: string;
   size: number;
   mime: string;
-  kind: string; // "image" | "audio" | "video" | "source" | "text"
+  kind: string; // "image" | "audio" | "video" | "source" | "text" | "binary" (head snippet)
 }
 
 export interface MediaFp {

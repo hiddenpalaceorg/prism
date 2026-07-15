@@ -705,27 +705,44 @@ def _extract_assets(reader, out_dir, manager):
 
     # Candidate list first, bytes second — the same two-step the hashing pass
     # uses, so one-pass archive streams see opens in iterator order only.
+    # Every non-empty file is a candidate: viewable types ship whole, everything
+    # else (unknown extension, oversized, sniff mismatch below) ships as a raw
+    # head snippet the UIs render as a hex view.
     entries = []
     for f in reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=False):
         path = _clean_path(reader.get_file_path(f))
-        classified = viewable.classify(path)
-        if classified is None:
-            continue
         try:
             size = int(reader.get_file_size(f))
         except Exception:  # noqa: BLE001
             size = None
-        if size is not None and (size == 0 or size > viewable.MAX_ASSET_SIZE):
+        if size == 0:
             continue
+        classified = viewable.classify(path)
+        if classified is not None and size is not None and size > viewable.MAX_ASSET_SIZE:
+            classified = None  # too big to serve whole — keep the head snippet only
         entries.append((f, path, classified))
 
     out = []
     with manager.counter(total=len(entries), desc="Extracting assets", unit="files") as pbar:
-        for f, path, (kind, mime) in entries:
-            data = _read_capped(reader, f, viewable.MAX_ASSET_SIZE)
+        for f, path, classified in entries:
+            if classified is None:
+                head = _read_head(reader, f, viewable.SNIPPET_BYTES)
+                asset = (head, viewable.SNIPPET_MIME, viewable.SNIPPET_KIND) if head else None
+            else:
+                kind, mime = classified
+                data = _read_capped(reader, f, viewable.MAX_ASSET_SIZE)
+                if data and viewable.sniff(data[: viewable.SNIFF_BYTES], mime):
+                    asset = (data, mime, kind)
+                elif data:
+                    # Extension claimed a viewable type but the bytes disagree —
+                    # keep the head snippet, same as any unidentified file.
+                    asset = (data[: viewable.SNIPPET_BYTES], viewable.SNIPPET_MIME, viewable.SNIPPET_KIND)
+                else:
+                    asset = None
             pbar.update()
-            if not data or not viewable.sniff(data[: viewable.SNIFF_BYTES], mime):
+            if asset is None:
                 continue
+            data, mime, kind = asset
             sha = hashlib.sha256(data).hexdigest()
             _store_blob(out_dir, sha, data)
             out.append({"path": path, "sha256": sha, "size": len(data), "mime": mime, "kind": kind})
@@ -753,6 +770,27 @@ def _read_capped(reader, f, cap):
         logging.getLogger("curator-adapter").debug("asset read failed: %s", e)
         return None
     return bytes(buf)
+
+
+def _read_head(reader, f, n):
+    """The file's first `n` bytes (the whole file when shorter), or None when
+    unreadable or empty."""
+    buf = bytearray()
+    try:
+        fh = reader.open_file(f)
+        is_ctx = hasattr(fh, "__enter__")
+        if is_ctx:
+            fh.__enter__()
+        try:
+            while len(buf) < n and (chunk := fh.read(min(65536, n - len(buf)))):
+                buf.extend(chunk)
+        finally:
+            with contextlib.suppress(Exception):
+                fh.__exit__(None, None, None) if is_ctx else fh.close()
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("curator-adapter").debug("asset head read failed: %s", e)
+        return None
+    return bytes(buf) if buf else None
 
 
 def _store_blob(out_dir, sha, data):
