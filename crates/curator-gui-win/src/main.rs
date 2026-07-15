@@ -169,6 +169,9 @@ mod app {
         selected_sections: Vec<Section>,
         /// Web service base URL (CURATOR_WEB_URL, default https://hiddenpalace.org).
         web_url: String,
+        /// Optional moderation secret (CURATOR_MODERATION_TOKEN). When set, a submit
+        /// is auto-accepted so it replaces the live build instead of waiting in the queue.
+        moderation_token: String,
         /// The "Recent" submenu and the sha256s backing its items (by position).
         recent_menu: HMENU,
         recent: Vec<String>,
@@ -559,6 +562,7 @@ mod app {
             selected_sections: Vec::new(),
             web_url: std::env::var("CURATOR_WEB_URL")
                 .unwrap_or_else(|_| "https://hiddenpalace.org".to_string()),
+            moderation_token: std::env::var("CURATOR_MODERATION_TOKEN").unwrap_or_default(),
             recent_menu,
             recent: Vec::new(),
             library_mode: false,
@@ -2029,7 +2033,7 @@ mod app {
         // Resolve which of the build's asset blobs exist locally (sha256 → path)
         // up front on the UI thread; the worker uploads whichever the server lacks.
         ensure_reader(hwnd);
-        let (base, sha, local_assets) = {
+        let (base, sha, local_assets, token) = {
             let Some(st) = state(hwnd) else { return };
             let mut local: HashMap<String, PathBuf> = HashMap::new();
             for a in &st.assets {
@@ -2037,7 +2041,12 @@ mod app {
                     local.insert(a.sha256.clone(), p);
                 }
             }
-            (st.web_url.trim_end_matches('/').to_string(), st.last_sha.clone(), local)
+            (
+                st.web_url.trim_end_matches('/').to_string(),
+                st.last_sha.clone(),
+                local,
+                st.moderation_token.clone(),
+            )
         };
         let url = format!("{base}/api/submissions");
         // { "nickname": <json string>, "record": <record> } — embed the raw record JSON.
@@ -2055,10 +2064,17 @@ mod app {
                         .ok()
                         .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(String::from))
                         .unwrap_or_else(|| "queued".into());
-                    let note = match sha {
-                        Some(sha) => upload_missing_assets(hwnd_i, &base, &sha, &local_assets),
+                    let mut note = match &sha {
+                        Some(sha) => upload_missing_assets(hwnd_i, &base, sha, &local_assets),
                         None => String::new(),
                     };
+                    // With a moderation token, finish the job: accept the submission so
+                    // it replaces the live build (assets are uploaded first, above).
+                    if let Some(sha) = &sha {
+                        if !token.is_empty() {
+                            note.push_str(&accept_submission(&base, sha, &token));
+                        }
+                    }
                     format!("Submitted — {status}.{note}")
                 }
                 Ok((code, b)) => format!("Server error {code}: {}", b.trim()),
@@ -2117,6 +2133,20 @@ mod app {
         }
         note.push('.');
         note
+    }
+
+    /// Accept the just-submitted build with the moderation token, so the record
+    /// (and its refreshed assets) replaces the live build immediately. A failure
+    /// degrades to a note — the submission stays queued for manual moderation.
+    unsafe fn accept_submission(base: &str, build_sha: &str, token: &str) -> String {
+        let url = format!("{base}/api/submissions/{build_sha}");
+        let headers = format!("Content-Type: application/json\r\nx-moderation-token: {token}");
+        match http_request("POST", &url, Some(&headers), b"{\"action\":\"accept\"}") {
+            Ok((code, _)) if (200..300).contains(&code) => " Accepted — live build updated.".into(),
+            Ok((401, _)) => " Accept failed: moderation token rejected.".into(),
+            Ok((code, b)) => format!(" Accept failed: server error {code}: {}.", b.trim()),
+            Err(e) => format!(" Accept failed: {e}."),
+        }
     }
 
     /// Upload chunk size — small enough to clear typical proxy body-size limits.
