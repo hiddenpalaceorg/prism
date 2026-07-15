@@ -11,7 +11,7 @@ import {
 import AssetViewer, { type ViewableAsset } from "./AssetViewer";
 
 // Chip label on viewable file rows, by asset kind.
-const KIND_TAG: Record<string, string> = { image: "img", audio: "aud", video: "vid", text: "txt" };
+const KIND_TAG: Record<string, string> = { image: "img", audio: "aud", video: "vid", source: "src", text: "txt" };
 
 function humanSize(bytes?: number): string {
   if (bytes == null) return "—";

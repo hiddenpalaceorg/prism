@@ -31,7 +31,7 @@ export default async function BuildAssetsPage({ params }: { params: Promise<{ sh
   const excerpts = Object.fromEntries(
     await Promise.all(
       ordered
-        .filter((a) => a.kind === "text")
+        .filter((a) => a.kind === "source" || a.kind === "text")
         .slice(0, MAX_EXCERPT_READS)
         .map(async (a) => [a.path, (await readAssetExcerpt(a.sha256)) ?? ""] as const)
     )

@@ -52,7 +52,7 @@ pub struct AssetRef {
     pub sha256: String,
     pub size: u64,
     pub mime: String,
-    pub kind: String, // "image" | "audio" | "video" | "text"
+    pub kind: String, // "image" | "audio" | "video" | "source" | "text"
 }
 
 /// Image-level identity. `sha256` is the primary key everywhere.

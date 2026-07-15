@@ -527,7 +527,7 @@ export interface BuildAsset {
   sha256: string;
   size: number;
   mime: string;
-  kind: string; // image | audio | video | text
+  kind: string; // image | audio | video | source | text
 }
 
 /// A build's viewable assets, in path order (one indexed lookup).

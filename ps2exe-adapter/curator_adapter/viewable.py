@@ -38,15 +38,26 @@ _VIDEO = {
     "webm": "video/webm",
 }
 
-# Docs, configs, sources — the formats prototype discs actually carry. All are
-# served as text/plain regardless of what they'd mean to a browser (html, js).
+# Docs, configs, data — the formats prototype discs actually carry. All are
+# served as text/plain regardless of what they'd mean to a browser (html).
 _TEXT = frozenset(
     """
     txt nfo diz me 1st doc readme md log ini cfg conf inf cue gdi lst csv tsv
-    json xml htm html css js mjs h c cc cpp hpp hh s asm inc mak mk bat cmd sh
-    py pl bas yml yaml toml srt
+    json xml htm html yml yaml toml srt
     """.split()
 )
+
+# Program sources and build files — split from _TEXT so the UIs can group and
+# syntax-highlight them. Same posture: always served as text/plain.
+_SOURCE = frozenset(
+    """
+    c h cc cpp cxx hpp hh hxx inc s asm pas bas lua py pl sh bat cmd js mjs css
+    ssl mak mk rc def lnk prj
+    """.split()
+)
+
+# Extensionless filenames that are still source (matched case-insensitively).
+_SOURCE_NAMES = frozenset({"makefile", "gnumakefile"})
 
 _KINDS = (
     [(_IMAGE, "image")] + [(_AUDIO, "audio")] + [(_VIDEO, "video")]
@@ -61,11 +72,13 @@ def classify(path):
     name = path.rsplit("/", 1)[-1]
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if not ext:
-        return None
+        return ("source", "text/plain") if name.lower() in _SOURCE_NAMES else None
     for table, kind in _KINDS:
         mime = table.get(ext)
         if mime:
             return kind, mime
+    if ext in _SOURCE:
+        return "source", "text/plain"
     if ext in _TEXT:
         return "text", "text/plain"
     return None

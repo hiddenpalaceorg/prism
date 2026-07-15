@@ -172,15 +172,15 @@ import { orderAssets, assetTotals } from "../src/lib/assets";
 
 test("orderAssets groups by display kind and caps per kind", () => {
   const mk = (kind: string, n: number) => Array.from({ length: n }, (_, i) => ({ kind, path: `${kind}${i}` }));
-  const mixed = [...mk("text", 3), ...mk("image", 12), ...mk("audio", 1)];
+  const mixed = [...mk("text", 3), ...mk("image", 12), ...mk("source", 2), ...mk("audio", 1)];
   const ordered = orderAssets(mixed, 10);
   assert.deepEqual(
     ordered.map((a) => a.kind),
-    [...Array(10).fill("image"), "audio", ...Array(3).fill("text")]
+    [...Array(10).fill("image"), "audio", ...Array(2).fill("source"), ...Array(3).fill("text")]
   );
   // Uncapped keeps everything, still grouped.
-  assert.equal(orderAssets(mixed).length, 16);
-  assert.deepEqual(assetTotals(mixed), { text: 3, image: 12, audio: 1 });
+  assert.equal(orderAssets(mixed).length, 18);
+  assert.deepEqual(assetTotals(mixed), { text: 3, image: 12, source: 2, audio: 1 });
 });
 
 test("orderAssets accepts a per-kind cap map (missing kind = uncapped)", () => {
