@@ -1,8 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
+import type { Pool } from "pg";
 import { getPool } from "@/lib/db";
-import { getBuildAssets, resolveBuild } from "@/lib/queries";
+import { getBuildAssets, resolveBuild, type BuildAsset } from "@/lib/queries";
 import { assetTotals, orderAssets, readAssetExcerpt } from "@/lib/assets";
+import { humanSize } from "@/lib/meta";
 import { canonicalBuildId, parseBuildParam, safeDecodeSegment } from "@/lib/slug";
 import AssetGallery from "../../AssetGallery";
 import AssetViewerHost from "../../AssetViewerHost";
@@ -17,6 +20,64 @@ export function generateStaticParams(): Array<{ buildId: string; path: string[] 
 // Excerpt reads are tiny (2KB head per file) but keep them bounded on builds
 // with pathological text counts; cards past the cap still open in the viewer.
 const MAX_EXCERPT_READS = 200;
+
+// Stored asset paths carry a leading "/" that URL segments drop.
+async function findAsset(pool: Pool, buildSha: string, relPath: string): Promise<BuildAsset | null> {
+  const r = await pool.query(
+    `SELECT path, sha256, size::float8 AS size, mime, kind FROM build_asset
+     WHERE build_sha256=$1 AND (path=$2 OR path='/'||$2) LIMIT 1`,
+    [buildSha, relPath]
+  );
+  return (r.rows[0] as BuildAsset) ?? null;
+}
+
+// Unfurl metadata: the gallery inherits the build's card; a deep-linked asset
+// gets its file name as the title, and image assets unfurl as the image itself.
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ buildId: string; path?: string[] }>;
+}): Promise<Metadata> {
+  const { buildId, path } = await params;
+  const parsed = parseBuildParam(buildId);
+  if (!parsed) return {};
+  const pool = getPool();
+  const resolved = await resolveBuild(pool, parsed.hex, parsed.slug);
+  if (!resolved) return {};
+  const href = `/builds/${canonicalBuildId(resolved.sha256, resolved.name)}`;
+
+  // The build's generated card (see ../opengraph-image.tsx). Referenced
+  // explicitly: the file convention doesn't cascade into this nested segment.
+  const card = `${href}/opengraph-image`;
+
+  const relPath = (path ?? []).map(safeDecodeSegment).join("/");
+  const asset = relPath ? await findAsset(pool, resolved.sha256, relPath) : null;
+  if (!asset) {
+    const title = `Assets · ${resolved.name}`;
+    return {
+      title,
+      alternates: { canonical: `${href}/assets` },
+      openGraph: { title, url: `${href}/assets`, siteName: "Hidden Palace", images: [card] },
+      twitter: { card: "summary_large_image" },
+    };
+  }
+
+  const name = asset.path.split("/").pop() || asset.path;
+  const description = `${resolved.name} · ${humanSize(asset.size)} · ${asset.mime}`;
+  return {
+    title: name,
+    description,
+    alternates: { canonical: `${href}/assets/${relPath.split("/").map(encodeURIComponent).join("/")}` },
+    openGraph: {
+      title: name,
+      description,
+      siteName: "Hidden Palace",
+      // Image assets unfurl as themselves; everything else gets the build card.
+      images: [asset.kind === "image" ? `/api/asset/${asset.sha256}` : card],
+    },
+    twitter: { card: "summary_large_image" },
+  };
+}
 
 // /builds/<id>/assets — the full gallery; /builds/<id>/assets/<path…> — the
 // same gallery with the viewer open on that file (the URL the lightbox writes).

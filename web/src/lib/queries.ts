@@ -575,6 +575,29 @@ export async function resolveBuild(
   return null;
 }
 
+export interface BuildMetaRow {
+  sha256: string;
+  name: string;
+  system: string;
+  file_count: number;
+  total_size: number;
+  build_date: string | null;
+  /** Display title from the canonical record, when the system extractor found one. */
+  title: string | null;
+}
+
+/// The handful of scalar fields social-preview metadata needs — the full
+/// record (MBs of jsonb) stays out of generateMetadata.
+export async function getBuildMeta(pool: Pool, sha256: string): Promise<BuildMetaRow | null> {
+  const r = await pool.query(
+    `SELECT sha256, name, system, file_count, total_size, build_date,
+            record->'info'->>'title' AS title
+     FROM builds WHERE sha256=$1`,
+    [sha256]
+  );
+  return (r.rows[0] as BuildMetaRow) ?? null;
+}
+
 /// Fetch one stored build (with its full canonical record) by sha256.
 export async function getBuild(pool: Pool, sha256: string): Promise<BuildRow | null> {
   const r = await pool.query(

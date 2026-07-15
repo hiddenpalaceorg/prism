@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getPool } from "@/lib/db";
 import { listBuildsPage, type BuildSortKey } from "@/lib/queries";
 import BuildsBrowser from "./BuildsBrowser";
 
 export const runtime = "nodejs";
+
+export const metadata: Metadata = {
+  title: "Builds",
+  description: "Browse and search every build in the Hidden Palace library.",
+};
 
 const PER_PAGE = 100;
 

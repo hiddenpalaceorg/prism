@@ -1,11 +1,13 @@
 import { Fragment } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
-import { getBuild, getBuildAssets, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, resolveBuild } from "@/lib/queries";
+import { getBuild, getBuildAssets, getBuildMeta, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, resolveBuild } from "@/lib/queries";
 import { assetTotals, orderAssets, readAssetExcerpt } from "@/lib/assets";
+import { buildDescription, displayTitle } from "@/lib/meta";
 import { canonicalBuildId, parseBuildParam } from "@/lib/slug";
 import type { BuildRecord } from "@/lib/types";
 import SimilarBuilds from "./SimilarBuilds";
@@ -88,6 +90,31 @@ function metaSections(record: BuildRecord): MetaSection[] {
   }
 
   return sections;
+}
+
+// Social-preview metadata (og:*/twitter:*) so shared build links unfurl with
+// the build's title, facts, and the generated card (opengraph-image.tsx).
+export async function generateMetadata({ params }: { params: Promise<{ buildId: string }> }): Promise<Metadata> {
+  const { buildId } = await params;
+  const parsed = parseBuildParam(buildId);
+  if (!parsed) return {};
+  const pool = getPool();
+  const resolved = await resolveBuild(pool, parsed.hex, parsed.slug);
+  if (!resolved) return {};
+  const meta = await getBuildMeta(pool, resolved.sha256);
+  if (!meta) return {};
+  const href = `/builds/${canonicalBuildId(meta.sha256, meta.name)}`;
+  const title = displayTitle(meta);
+  const description = buildDescription(meta);
+  return {
+    title,
+    description,
+    alternates: { canonical: href },
+    // siteName repeated here: a deeper segment's openGraph replaces the
+    // layout's whole object (Next merges per-field, not deep).
+    openGraph: { title, description, url: href, siteName: "Hidden Palace" },
+    twitter: { card: "summary_large_image" },
+  };
 }
 
 export default async function BuildPage({ params }: { params: Promise<{ buildId: string }> }) {
