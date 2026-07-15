@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { buildHref } from "@/lib/slug";
 
 interface Hit {
   sha256: string;
@@ -83,7 +84,7 @@ export default function Home() {
             <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
               {hits.map((h) => (
                 <li key={h.sha256} className="py-3">
-                  <Link href={`/builds/${h.sha256}`} className="font-medium hover:underline">
+                  <Link href={buildHref(h.sha256, h.name)} className="font-medium hover:underline">
                     {h.name}
                   </Link>
                   <div className="mt-0.5 flex gap-3 text-xs text-neutral-500">

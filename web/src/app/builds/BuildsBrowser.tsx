@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import RowLink from "./RowLink";
+import { buildHref } from "@/lib/slug";
 import type { BuildListItem, BuildSortKey } from "@/lib/queries";
 
 function humanSize(bytes?: number): string {
@@ -120,30 +121,32 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900/60">
-            {rows.map((b) => (
+            {rows.map((b) => {
+              const href = buildHref(b.sha256, b.name);
+              return (
               <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
                 <td className="h-full p-0 font-medium first:[&>a]:pl-0">
-                  <RowLink href={`/builds/${b.sha256}`} focusable className="px-3 hover:underline">{b.name}</RowLink>
+                  <RowLink href={href} focusable className="px-3 hover:underline">{b.name}</RowLink>
                 </td>
                 <td className="h-full p-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3 font-mono text-xs text-neutral-400">{b.sha256.slice(0, 16)}…</RowLink>
+                  <RowLink href={href} className="px-3 font-mono text-xs text-neutral-400">{b.sha256.slice(0, 16)}…</RowLink>
                 </td>
                 <td className="h-full p-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3">
+                  <RowLink href={href} className="px-3">
                     <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">{b.system || "unknown"}</span>
                   </RowLink>
                 </td>
                 <td className="h-full p-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3 font-mono text-xs text-neutral-500">{formatDate(b.build_date)}</RowLink>
+                  <RowLink href={href} className="px-3 font-mono text-xs text-neutral-500">{formatDate(b.build_date)}</RowLink>
                 </td>
                 <td className="h-full p-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3 text-right tabular-nums text-neutral-500">{b.file_count}</RowLink>
+                  <RowLink href={href} className="px-3 text-right tabular-nums text-neutral-500">{b.file_count}</RowLink>
                 </td>
                 <td className="h-full p-0 last:[&>a]:pr-0">
-                  <RowLink href={`/builds/${b.sha256}`} className="px-3 text-right tabular-nums text-neutral-500">{humanSize(b.total_size)}</RowLink>
+                  <RowLink href={href} className="px-3 text-right tabular-nums text-neutral-500">{humanSize(b.total_size)}</RowLink>
                 </td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
       )}

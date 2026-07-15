@@ -3,12 +3,13 @@
 // Grouped preview of a build's viewable assets: image thumbnails, audio embeds
 // with waveforms, small video players, text excerpt cards. The server page
 // passes an already-capped subset plus the full per-kind totals; when a kind is
-// truncated, a "view all" affordance links to /builds/<sha256>/assets.
-// Images and text open the same AssetViewer lightbox the file tree uses.
+// truncated, a "view all" affordance links to <buildHref>/assets.
+// Images and text open the page's AssetViewerHost lightbox (shared with the
+// file tree), which also deep-links the asset in the URL.
 
-import { useMemo, useState } from "react";
 import Link from "next/link";
-import AssetViewer, { assetUrl, humanSize, type ViewableAsset } from "./AssetViewer";
+import { assetUrl, humanSize, type ViewableAsset } from "./AssetViewer";
+import { useOpenAsset } from "./AssetViewerHost";
 import AudioEmbed from "./AudioEmbed";
 import SourceCode from "./SourceCode";
 
@@ -25,12 +26,13 @@ function baseName(path: string): string {
 }
 
 export default function AssetGallery({
-  sha256,
+  buildHref,
   assets,
   totals,
   excerpts,
 }: {
-  sha256: string;
+  /** Canonical /builds/<id> of the build the assets belong to. */
+  buildHref: string;
   /** Assets to display, grouped in kind order (capped per kind by the server page). */
   assets: ViewableAsset[];
   /** Full per-kind counts, so truncation is visible. */
@@ -38,10 +40,9 @@ export default function AssetGallery({
   /** Text asset path → excerpt of its leading bytes. */
   excerpts: Record<string, string>;
 }) {
-  const [viewing, setViewing] = useState<number | null>(null);
-  const indexByPath = useMemo(() => new Map(assets.map((a, i) => [a.path, i] as const)), [assets]);
-  const open = (a: ViewableAsset) => setViewing(indexByPath.get(a.path) ?? null);
-  const allHref = `/builds/${sha256}/assets`;
+  const openAsset = useOpenAsset();
+  const open = (a: ViewableAsset) => openAsset(a.path);
+  const allHref = `${buildHref}/assets`;
 
   return (
     <>
@@ -143,15 +144,6 @@ export default function AssetGallery({
           </div>
         );
       })}
-
-      {viewing !== null && assets[viewing] && (
-        <AssetViewer
-          assets={assets}
-          index={viewing}
-          onClose={() => setViewing(null)}
-          onNavigate={setViewing}
-        />
-      )}
     </>
   );
 }

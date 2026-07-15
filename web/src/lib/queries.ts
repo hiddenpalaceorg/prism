@@ -2,6 +2,7 @@
 
 import type { Pool } from "pg";
 import { minhashJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
+import { slugify } from "./slug";
 import { tlshDiff } from "./tlsh";
 import type { BuildRecord, SimilarityResult } from "./types";
 import type { FusedBuild, TierKey } from "./tiers";
@@ -545,6 +546,33 @@ export async function getBuildAssets(pool: Pool, sha256: string): Promise<BuildA
     [sha256]
   );
   return r.rows as BuildAsset[];
+}
+
+/// Resolve a /builds/ URL param (hex prefix + optional slug) to a stored build.
+/// A full 64-hex sha resolves exactly; a shorter prefix must match a unique
+/// build — if two builds ever share a prefix, the slug disambiguates.
+export async function resolveBuild(
+  pool: Pool,
+  hex: string,
+  slug: string | null
+): Promise<{ sha256: string; name: string } | null> {
+  if (hex.length === 64) {
+    const r = await pool.query("SELECT sha256, name FROM builds WHERE sha256=$1", [hex]);
+    return (r.rows[0] as { sha256: string; name: string }) ?? null;
+  }
+  // Range probe instead of LIKE so the pkey index serves it under any collation
+  // (values are lowercase hex, so appending 'g' upper-bounds every extension).
+  const r = await pool.query(
+    "SELECT sha256, name FROM builds WHERE sha256 >= $1 AND sha256 < ($1 || 'g') LIMIT 3",
+    [hex]
+  );
+  const rows = r.rows as Array<{ sha256: string; name: string }>;
+  if (rows.length === 1) return rows[0];
+  if (rows.length > 1 && slug) {
+    const bySlug = rows.filter((row) => slugify(row.name) === slug);
+    if (bySlug.length === 1) return bySlug[0];
+  }
+  return null;
 }
 
 /// Fetch one stored build (with its full canonical record) by sha256.
