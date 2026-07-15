@@ -103,6 +103,29 @@ test("a tier absent from either build is dropped from the denominator (not penal
   assert.equal(fusedScore({ files: 0.5 }, ap2), 0.5);
 });
 
+// --- fusion filtering ---------------------------------------------------------
+
+import { fuseSimilar } from "../src/lib/queries";
+import type { SimilarityResult } from "../src/lib/types";
+
+const emptySimilarity = (): SimilarityResult => ({
+  identical_content: [], shared_files: [], similar_chunks: [], resemblance: [], exe_imports: [], exe_similar: [], audio_neighbors: [],
+});
+
+test("text-only neighbors below 70% are dropped; others survive", () => {
+  const s = emptySimilarity();
+  s.shared_files = [{ sha256: "c".repeat(64), name: "files+weak text", system: "test", jaccard: 0.4 }];
+  const fused = fuseSimilar(s, [
+    { sha256: "a".repeat(64), name: "weak text only", system: "test", cosine: 0.6 },
+    { sha256: "b".repeat(64), name: "strong text only", system: "test", cosine: 0.8 },
+    { sha256: "c".repeat(64), name: "files+weak text", system: "test", cosine: 0.6 },
+  ]);
+  const shas = fused.map((f) => f.sha256);
+  assert.ok(!shas.includes("a".repeat(64)), "weak text-only neighbor dropped");
+  assert.ok(shas.includes("b".repeat(64)), "text-only neighbor at ≥0.7 kept");
+  assert.ok(shas.includes("c".repeat(64)), "weak text kept when another tier also matched");
+});
+
 // --- asset ingest semantics -------------------------------------------------
 // ingestRecord against a fake Queryable: assets == null means "extraction never
 // ran" and must not touch existing build_asset rows; only an extracted list
