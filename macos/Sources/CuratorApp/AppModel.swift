@@ -475,13 +475,28 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Analyze a single file, or recursively import a dropped/chosen folder.
+    /// Analyze a single file, or a folder that holds one build split across files
+    /// (a multi-track dump); recursively import any other dropped/chosen folder.
     func open(url: URL) {
         var isDir: ObjCBool = false
         FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-        if isDir.boolValue {
+        if isDir.boolValue && !folderIsSingleBuild(root: url.path) {
             importFolder(url: url)
         } else {
+            analyze(url: url)
+        }
+    }
+
+    /// Present a folder picker and force the choice through as ONE build (a split
+    /// multi-track dump), regardless of the single-build heuristic.
+    func openFolderAsBuildDialog() {
+        guard !isWorking else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open as Build"
+        if panel.runModal() == .OK, let url = panel.url {
             analyze(url: url)
         }
     }

@@ -382,6 +382,11 @@ RustBuffer uniffi_curator_ffi_fn_method_engine_search_library(uint64_t ptr, Rust
 void uniffi_curator_ffi_fn_init_callback_vtable_progresslistener(const UniffiVTableCallbackInterfaceProgressListener* _Nonnull vtable
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_FUNC_FOLDER_IS_SINGLE_BUILD
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_FUNC_FOLDER_IS_SINGLE_BUILD
+int8_t uniffi_curator_ffi_fn_func_folder_is_single_build(RustBuffer root, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_FFI_CURATOR_FFI_RUSTBUFFER_ALLOC
 #define UNIFFI_FFIDEF_FFI_CURATOR_FFI_RUSTBUFFER_ALLOC
 RustBuffer ffi_curator_ffi_rustbuffer_alloc(uint64_t size, RustCallStatus *_Nonnull out_status
@@ -640,6 +645,12 @@ void ffi_curator_ffi_rust_future_free_void(uint64_t handle
 #ifndef UNIFFI_FFIDEF_FFI_CURATOR_FFI_RUST_FUTURE_COMPLETE_VOID
 #define UNIFFI_FFIDEF_FFI_CURATOR_FFI_RUST_FUTURE_COMPLETE_VOID
 void ffi_curator_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_FUNC_FOLDER_IS_SINGLE_BUILD
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_FUNC_FOLDER_IS_SINGLE_BUILD
+uint16_t uniffi_curator_ffi_checksum_func_folder_is_single_build(void
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_CANCELHANDLE_CANCEL

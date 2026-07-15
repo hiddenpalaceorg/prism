@@ -76,7 +76,10 @@ impl Analyzer {
         })
     }
 
-    /// Analyze one image/container. Idempotent: a known sha256 is served from cache.
+    /// Analyze one image/container, or a folder holding one build split across
+    /// files (a multi-track dump — identity comes from the track set, see
+    /// [`fingerprint::hash_image`]). Idempotent: a known sha256 is served from
+    /// cache.
     pub fn analyze(
         &self,
         path: &str,
@@ -515,6 +518,168 @@ fn asset_blob_in(store: &Path, sha256: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// Descriptor files that lay out one disc's tracks. Exactly one at a folder's top
+/// level marks the folder as a single multi-track build (see
+/// [`folder_is_single_build`]).
+const DISC_DESCRIPTOR_EXTENSIONS: &[&str] = &["cue", "gdi", "ccd"];
+
+/// Whether `root` holds ONE dump split across files (a multi-track disc) rather
+/// than a collection of separate images. True when the folder's top level has
+/// exactly one `.cue`/`.gdi`/`.ccd` descriptor and at least one importable file,
+/// or no descriptor but two or more importable files all named like tracks of one
+/// set ("Track 1.bin", "Game (Track 02).bin", …) with a matching prefix. A folder
+/// whose subdirectories hold importable files is a collection, never a single
+/// build. `Open Folder as Build` bypasses this check — it's for routing drops and
+/// batch imports.
+pub fn folder_is_single_build(root: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(root) else { return false };
+    let mut descriptors = 0usize;
+    let mut stems: Vec<String> = Vec::new(); // lowercased stems of importable files
+    for entry in entries.flatten() {
+        let path = entry.path();
+        match entry.file_type() {
+            Ok(ft) if ft.is_dir() => {
+                if !list_importable_files(&path).is_empty() {
+                    return false;
+                }
+            }
+            Ok(ft) if ft.is_file() => {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_ascii_lowercase());
+                if ext.as_deref().is_some_and(|e| DISC_DESCRIPTOR_EXTENSIONS.contains(&e)) {
+                    descriptors += 1;
+                } else if looks_importable(&path) {
+                    stems.push(
+                        path.file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_ascii_lowercase(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    if stems.is_empty() {
+        return false;
+    }
+    match descriptors {
+        1 => true,
+        0 => stems.len() >= 2 && is_track_set(&stems),
+        _ => false, // several descriptors ⇒ several discs
+    }
+}
+
+/// True when every stem ends in a track-number suffix and the prefixes before it
+/// all match — the naming of one split dump.
+fn is_track_set(stems: &[String]) -> bool {
+    let mut prefix: Option<&str> = None;
+    for stem in stems {
+        let Some(p) = strip_track_suffix(stem) else { return false };
+        if *prefix.get_or_insert(p) != p {
+            return false;
+        }
+    }
+    true
+}
+
+/// For a (lowercased) stem like "game (track 12)", the prefix before the track
+/// suffix ("game"), or `None` when the stem doesn't end in one. "track" must sit
+/// at the stem's start or after a separator, so "backtrack 2" doesn't count.
+fn strip_track_suffix(stem: &str) -> Option<&str> {
+    let base = stem.trim_end().trim_end_matches(')');
+    let no_digits = base.trim_end_matches(|c: char| c.is_ascii_digit());
+    if no_digits.len() == base.len() {
+        return None; // no trailing digits
+    }
+    let s = no_digits.trim_end_matches([' ', '_', '-', '#', '.']).strip_suffix("track")?;
+    if !s.is_empty() && !s.ends_with([' ', '-', '_', '(', '.']) {
+        return None;
+    }
+    Some(s.trim_end_matches(['(', ' ', '-', '_', '.']))
+}
+
+/// The files that constitute a folder-as-one-build's disc image: its importable
+/// files in natural name order ("Track 2" before "Track 10"), so identity hashing
+/// concatenates the tracks in disc order.
+pub fn dir_image_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = list_importable_files(root);
+    files.sort_by(|a, b| natural_cmp(&a.to_string_lossy(), &b.to_string_lossy()));
+    files
+}
+
+/// Case-insensitive ordering that compares embedded digit runs by numeric value,
+/// with a raw tiebreak so the order is total and deterministic.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (ab, bb) = (a.as_bytes(), b.as_bytes());
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < ab.len() && j < bb.len() {
+        if ab[i].is_ascii_digit() && bb[j].is_ascii_digit() {
+            let (si, sj) = (i, j);
+            while i < ab.len() && ab[i].is_ascii_digit() {
+                i += 1;
+            }
+            while j < bb.len() && bb[j].is_ascii_digit() {
+                j += 1;
+            }
+            let da = trim_leading_zeros(&ab[si..i]);
+            let db = trim_leading_zeros(&bb[sj..j]);
+            match da.len().cmp(&db.len()).then_with(|| da.cmp(db)) {
+                Ordering::Equal => {}
+                other => return other,
+            }
+        } else {
+            match ab[i].to_ascii_lowercase().cmp(&bb[j].to_ascii_lowercase()) {
+                Ordering::Equal => {
+                    i += 1;
+                    j += 1;
+                }
+                other => return other,
+            }
+        }
+    }
+    (ab.len() - i).cmp(&(bb.len() - j)).then_with(|| a.cmp(b))
+}
+
+fn trim_leading_zeros(digits: &[u8]) -> &[u8] {
+    let start = digits.iter().position(|&b| b != b'0').unwrap_or(digits.len() - 1);
+    &digits[start..]
+}
+
+/// Import units under `root`: like [`list_importable_files`], but a directory
+/// holding one build split across files (see [`folder_is_single_build`]) comes
+/// back as a single unit instead of its member files, so batch import analyzes
+/// it as one build. When `root` itself is such a folder, it is the sole unit.
+pub fn list_import_units(root: &Path) -> Vec<PathBuf> {
+    if folder_is_single_build(root) {
+        return vec![root.to_path_buf()];
+    }
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            match entry.file_type() {
+                Ok(ft) if ft.is_dir() => {
+                    let path = entry.path();
+                    if folder_is_single_build(&path) {
+                        out.push(path);
+                    } else {
+                        stack.push(path);
+                    }
+                }
+                Ok(ft) if ft.is_file() && looks_importable(&entry.path()) => out.push(entry.path()),
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// Recursively collect importable files under `root`, depth-first, sorted for a
 /// deterministic order. Non-disc files (per ps2exe's blocklist) and symlinks are
 /// skipped; unreadable directories are silently skipped. Backs the GUIs' folder
@@ -572,6 +737,127 @@ mod walk_tests {
         let root = std::env::temp_dir().join("curator-walk-nope-zzz");
         let _ = std::fs::remove_dir_all(&root);
         assert!(list_importable_files(&root).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod folder_build_tests {
+    use super::{dir_image_files, folder_is_single_build, list_import_units, natural_cmp};
+    use std::path::{Path, PathBuf};
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("curator-fb-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn touch(root: &Path, rel: &str) {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"x").unwrap();
+    }
+
+    #[test]
+    fn cue_plus_tracks_is_single_build() {
+        let root = scratch("cue");
+        touch(&root, "Track 1.bin");
+        touch(&root, "Track 2.bin");
+        touch(&root, "disc.cue");
+        assert!(folder_is_single_build(&root));
+        assert_eq!(list_import_units(&root), vec![root.clone()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn track_named_bins_without_cue_are_single_build() {
+        let root = scratch("nocue");
+        touch(&root, "Track 1.bin");
+        touch(&root, "Track 2.bin");
+        assert!(folder_is_single_build(&root));
+
+        // Redump-style naming with a shared prefix counts too.
+        let root2 = scratch("redump");
+        touch(&root2, "Game (USA) (Track 1).bin");
+        touch(&root2, "Game (USA) (Track 02).bin");
+        assert!(folder_is_single_build(&root2));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
+    }
+
+    #[test]
+    fn collections_are_not_single_builds() {
+        // Two descriptors ⇒ two discs.
+        let root = scratch("twodiscs");
+        touch(&root, "disc1.cue");
+        touch(&root, "disc1.bin");
+        touch(&root, "disc2.cue");
+        touch(&root, "disc2.bin");
+        assert!(!folder_is_single_build(&root));
+
+        // Unrelated loose images, no descriptor.
+        let root2 = scratch("loose");
+        touch(&root2, "game-a.iso");
+        touch(&root2, "game-b.iso");
+        assert!(!folder_is_single_build(&root2));
+
+        // A single lone image isn't a *split* build; "backtrack" isn't "track".
+        let root3 = scratch("lone");
+        touch(&root3, "backtrack 1.bin");
+        touch(&root3, "backtrack 2.bin");
+        assert!(!folder_is_single_build(&root3));
+
+        // A subdirectory with importable content ⇒ collection.
+        let root4 = scratch("nested");
+        touch(&root4, "disc.cue");
+        touch(&root4, "Track 1.bin");
+        touch(&root4, "extras/bonus.iso");
+        assert!(!folder_is_single_build(&root4));
+
+        for r in [root, root2, root3, root4] {
+            let _ = std::fs::remove_dir_all(&r);
+        }
+    }
+
+    #[test]
+    fn import_units_group_single_build_dirs() {
+        let root = scratch("units");
+        touch(&root, "loose.iso");
+        touch(&root, "dump/Track 1.bin");
+        touch(&root, "dump/Track 2.bin");
+        touch(&root, "dump/disc.cue");
+        touch(&root, "other/a.chd");
+        touch(&root, "other/b.chd");
+        let rel: Vec<String> = list_import_units(&root)
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(rel, ["dump", "loose.iso", "other/a.chd", "other/b.chd"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dir_image_files_use_natural_track_order() {
+        let root = scratch("order");
+        for name in ["Track 1.bin", "Track 2.bin", "Track 10.bin", "disc.cue"] {
+            touch(&root, name);
+        }
+        let names: Vec<String> = dir_image_files(&root)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["Track 1.bin", "Track 2.bin", "Track 10.bin"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn natural_cmp_orders_numbers_by_value() {
+        use std::cmp::Ordering;
+        assert_eq!(natural_cmp("track 2", "track 10"), Ordering::Less);
+        assert_eq!(natural_cmp("Track 02", "track 2"), Ordering::Less); // total order tiebreak
+        assert_eq!(natural_cmp("a", "ab"), Ordering::Less);
+        assert_eq!(natural_cmp("b1", "a2"), Ordering::Greater);
     }
 }
 

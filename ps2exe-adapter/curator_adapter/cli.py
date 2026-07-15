@@ -1,4 +1,5 @@
-"""Analyze a disc image/container with ps2exe and emit canonical-raw JSON on stdout.
+"""Analyze a disc image, container, or folder (a split multi-track dump opened as
+one build) with ps2exe and emit canonical-raw JSON on stdout.
 
 Progress is streamed as NDJSON on stderr (see progress.ProgressManager). All ps2exe
 logging/prints are forced to stderr so stdout carries only the final JSON document.
@@ -154,19 +155,49 @@ def _score_volume(reader):
     return (priority, count)
 
 
-def _enumerate_volumes(fp, basename, parent, mods, manager):
-    """Every leaf filesystem volume reachable from `fp`, paired with the list of
-    archive-member names ('locator') needed to re-reach it (empty = top level).
+def _is_container(reader, mods):
+    """Containers hold member files rather than a filesystem volume: an archive,
+    or a directory (a folder opened as one multi-track build)."""
+    return isinstance(reader, (mods["compressed"], mods["directory"]))
+
+
+@contextlib.contextmanager
+def _source_readers(path, basename, parent_dir, mods, manager):
+    """Top-level path readers for a source. A directory becomes a directory
+    container whose members are the folder's files (so a split multi-track dump
+    processes like an archive of its tracks); a file goes through the factory's
+    magic sniffing."""
+    if os.path.isdir(path):
+        yield [mods["directory"](pathlib.Path(path))]
+    else:
+        with open(path, "rb") as fp:
+            parent = mods["directory"](parent_dir)
+            readers, _exc = mods["factory"].get_iso_path_readers(fp, basename, parent, manager)
+            yield readers
+
+
+def _member_path(reader, entry, mods):
+    """A member's path within its container. Directory members come back as host
+    paths, so relativize them against the container root, with / separators."""
+    path = reader.get_file_path(entry)
+    if isinstance(reader, mods["directory"]):
+        path = os.path.relpath(path, str(reader.get_root_dir())).replace(os.sep, "/")
+    return path
+
+
+def _enumerate_volumes(readers, mods, manager):
+    """Every leaf filesystem volume reachable from the top-level `readers`, paired
+    with the list of container-member names ('locator') needed to re-reach it
+    (empty = top level).
 
     Reading member *directories* in a single archive pass is fine; reading member
     *content* is not, on a one-pass stream. So callers select a volume here, then
     reopen it via `_open_volume` to actually read bytes."""
     factory = mods["factory"]
-    readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
     found = []
 
     def walk(reader, locator, depth):
-        if not isinstance(reader, mods["compressed"]):
+        if not _is_container(reader, mods):
             found.append((locator, reader))
             return
         if depth > 4:
@@ -188,12 +219,12 @@ def _enumerate_volumes(fp, basename, parent, mods, manager):
     return found
 
 
-def _open_volume(fp, basename, parent, locator, vtype, mods, manager):
-    """Reopen the volume identified by (`locator`, `vtype`) on a fresh `fp`, opening
-    *only* the members along `locator`. Touching sibling members first would strand
-    a Dreamcast high-density track's content on a single-pass archive stream."""
+def _open_volume(readers, locator, vtype, mods, manager):
+    """Reopen the volume identified by (`locator`, `vtype`) from fresh top-level
+    `readers`, opening *only* the members along `locator`. Touching sibling members
+    first would strand a Dreamcast high-density track's content on a single-pass
+    archive stream."""
     factory = mods["factory"]
-    readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
 
     def pick(candidates):
         if not candidates:
@@ -202,12 +233,12 @@ def _open_volume(fp, basename, parent, locator, vtype, mods, manager):
         return (match or candidates)[0]
 
     if not locator:
-        fs = [r for r in readers if not isinstance(r, mods["compressed"])]
+        fs = [r for r in readers if not _is_container(r, mods)]
         return pick(fs or readers)
 
     current = readers
     for name in locator:
-        container = next((r for r in current if isinstance(r, mods["compressed"])), None)
+        container = next((r for r in current if _is_container(r, mods)), None)
         if container is None:
             return None
         target = next(
@@ -256,9 +287,8 @@ def _process_streaming(path, basename, parent_dir, locator, vtype, mods, manager
     self-contained volume (PS1/2/3, Saturn, Mega CD, 3DO, combined Dreamcast
     images, …)."""
     factory, base, generic = mods["factory"], mods["base"], mods["generic"]
-    with open(path, "rb") as fp:
-        parent = mods["directory"](parent_dir)
-        reader = _open_volume(fp, basename, parent, locator, vtype, mods, manager)
+    with _source_readers(path, basename, parent_dir, mods, manager) as readers:
+        reader = _open_volume(readers, locator, vtype, mods, manager)
         if reader is None:
             raise SystemExit(f"could not reopen chosen volume in {path!r}")
         system = base.get_system_type(reader) or "unknown"
@@ -304,10 +334,8 @@ def _process_gdrom(path, basename, parent_dir, mods, manager, work):
     reader is seekable (its tracks are mmapped), so we rank candidates by file count
     and hash only the richest."""
     factory, base, generic = mods["factory"], mods["base"], mods["generic"]
-    with open(path, "rb") as fp:
-        parent = mods["directory"](parent_dir)
-        readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
-        container = next((r for r in readers if isinstance(r, mods["compressed"])), None)
+    with _source_readers(path, basename, parent_dir, mods, manager) as readers:
+        container = next((r for r in readers if _is_container(r, mods)), None)
         members = (
             list(container.iso_iterator(container.get_root_dir(), recursive=True, include_dirs=False))
             if container else [None]
@@ -621,9 +649,8 @@ def _select_volume(path, basename, parent_dir, mods, manager):
     high-density volume, not the first (low-density) one the old "first readable"
     pick returned. A non-zero start sector marks that high-density volume, whose
     files may span several tracks needing .cue/.gdi reassembly."""
-    with open(path, "rb") as fp:
-        parent = mods["directory"](parent_dir)
-        candidates = _enumerate_volumes(fp, basename, parent, mods, manager)
+    with _source_readers(path, basename, parent_dir, mods, manager) as readers:
+        candidates = _enumerate_volumes(readers, mods, manager)
         if not candidates:
             raise SystemExit(f"no readable volume found in {path!r} (unsupported format?)")
         locator, chosen = max(candidates, key=lambda c: _score_volume(c[1]))
@@ -656,9 +683,9 @@ def _process(path, basename, parent_dir, mods, manager, work):
 
 def analyze(path):
     mods = _import_ps2exe()
-    factory = mods["factory"]
     manager = ProgressManager()
 
+    path = os.path.normpath(path)  # a folder path may arrive with a trailing slash
     basename = os.path.basename(path)
     parent_dir = pathlib.Path(path).resolve().parent
 
@@ -676,9 +703,7 @@ def analyze(path):
     # content packages trip ps2exe's re-iteration bug (ConsumedArchiveEntry).
     media = []
     if system in AUDIO_SYSTEMS:
-        with open(path, "rb") as fp:
-            parent = mods["directory"](parent_dir)
-            audio_readers, _exc = factory.get_iso_path_readers(fp, basename, parent, manager)
+        with _source_readers(path, basename, parent_dir, mods, manager) as audio_readers:
             media = _scan_audio_tracks(audio_readers, mods, manager)
 
     return {"info": info, "files": files, "media": media, "exe_fp": exe_fp}
@@ -691,6 +716,7 @@ def extract(path, out_dir):
     mods = _import_ps2exe()
     manager = ProgressManager()
 
+    path = os.path.normpath(path)  # a folder path may arrive with a trailing slash
     basename = os.path.basename(path)
     parent_dir = pathlib.Path(path).resolve().parent
 
@@ -862,18 +888,18 @@ AUDIO_SYSTEMS = frozenset({"megacd", "saturn", "ps1", "3do", "cdi", "cd32", "dre
 
 
 def _scan_audio_tracks(readers, mods, manager):
-    """Fingerprint raw CDDA audio tracks.
+    """Fingerprint raw CDDA audio tracks in an archive or folder container.
 
     Two layouts: a single combined .bin described by a .cue (Redump), or one .bin per
     track sitting beside the data track."""
     media = []
-    containers = [r for r in readers if isinstance(r, mods["compressed"])]
+    containers = [r for r in readers if _is_container(r, mods)]
     for r in containers:
         cue_media = _scan_cue_audio(r)
         if cue_media is not None:
             media.extend(cue_media)
         else:
-            media.extend(_scan_member_audio(r))
+            media.extend(_scan_member_audio(r, mods))
     return media
 
 
@@ -889,13 +915,28 @@ def _read_entry(reader, entry, length=None):
             fh.__exit__(None, None, None) if is_ctx else fh.close()
 
 
-def _scan_member_audio(r):
+_NATURAL_SPLIT = re.compile(r"(\d+)")
+
+
+def _natural_key(s):
+    """Sort key comparing embedded digit runs by value ("Track 2" < "Track 10")."""
+    return [int(p) if p.isdigit() else p.lower() for p in _NATURAL_SPLIT.split(s)]
+
+
+def _scan_member_audio(r, mods):
     """Per-member: separate raw-CDDA .bin tracks beside the data track."""
     from . import audio
 
+    entries = r.iso_iterator(r.get_root_dir(), recursive=True, include_dirs=False)
+    if isinstance(r, mods["directory"]):
+        # Directory members come back in filesystem glob order; sort into track
+        # order so media output is deterministic. (Archives keep iteration order —
+        # a one-pass stream must be read in sequence.)
+        entries = sorted(entries, key=lambda e: _natural_key(_member_path(r, e, mods)))
+
     out = []
-    for entry in r.iso_iterator(r.get_root_dir(), recursive=True, include_dirs=False):
-        path = r.get_file_path(entry)
+    for entry in entries:
+        path = _member_path(r, entry, mods)
         try:
             size = int(r.get_file_size(entry))
         except Exception:  # noqa: BLE001
@@ -985,7 +1026,7 @@ def _scan_cue_audio(r):
 def main():
     parser = argparse.ArgumentParser(prog="curator-adapter")
     sub = parser.add_subparsers(dest="command", required=True)
-    p_an = sub.add_parser("analyze", help="analyze a disc image/container")
+    p_an = sub.add_parser("analyze", help="analyze a disc image/container/folder")
     p_an.add_argument("--path", required=True)
     p_ex = sub.add_parser("extract", help="extract browser-viewable assets into a store")
     p_ex.add_argument("--path", required=True)
