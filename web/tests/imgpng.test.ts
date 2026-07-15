@@ -332,6 +332,86 @@ test("tiffToPng resolves palettes, including 8-bit-quirk colormaps", () => {
   }
 });
 
+test("tiffToPng converts CMYK inks in both byte orders", () => {
+  // 4x1: no ink (white), pure cyan, pure black, and a rounding case —
+  // C=128 under K=128 must match Pillow's MULDIV255 arithmetic exactly.
+  const inks = Buffer.from([0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 255, 128, 0, 0, 128]);
+  for (const le of [true, false]) {
+    const tif = tinyTiff(
+      [
+        [256, 3, [4]],
+        [257, 3, [1]],
+        [258, 3, [8, 8, 8, 8]],
+        [259, 3, [1]],
+        [262, 3, [5]], // Separated (CMYK)
+        [273, 4, [8]],
+        [277, 3, [4]],
+        [279, 4, [16]],
+      ],
+      inks,
+      le
+    );
+    const png = PNG.sync.read(tiffToPng(tif));
+    assert.deepEqual([...png.data.subarray(0, 4)], [255, 255, 255, 255], `le=${le}`);
+    assert.deepEqual([...png.data.subarray(4, 8)], [0, 255, 255, 255], `le=${le}`);
+    assert.deepEqual([...png.data.subarray(8, 12)], [0, 0, 0, 255], `le=${le}`);
+    assert.deepEqual([...png.data.subarray(12, 16)], [63, 127, 127, 255], `le=${le}`);
+  }
+});
+
+test("tiffToPng decodes PackBits CMYK and rejects non-CMYK separations", () => {
+  // 2x1 cyan + black behind one literal PackBits packet — pins the 4-sample
+  // row width through the compressed path.
+  const packed = Buffer.from([7, 255, 0, 0, 0, 0, 0, 0, 255]);
+  const tif = tinyTiff(
+    [
+      [256, 3, [2]],
+      [257, 3, [1]],
+      [258, 3, [8, 8, 8, 8]],
+      [259, 3, [32773]],
+      [262, 3, [5]],
+      [273, 4, [8]],
+      [277, 3, [4]],
+      [279, 4, [packed.length]],
+    ],
+    packed
+  );
+  const png = PNG.sync.read(tiffToPng(tif));
+  assert.deepEqual([...png.data.subarray(0, 4)], [0, 255, 255, 255]);
+  assert.deepEqual([...png.data.subarray(4, 8)], [0, 0, 0, 255]);
+
+  const cmyk1x1 = (extra: Array<[number, number, number[]]>): Buffer =>
+    tinyTiff(
+      [
+        [256, 3, [1]],
+        [257, 3, [1]],
+        [258, 3, [8, 8, 8, 8]],
+        [259, 3, [1]],
+        [262, 3, [5]],
+        [273, 4, [8]],
+        [277, 3, [4]],
+        [279, 4, [4]],
+        ...extra,
+      ],
+      Buffer.from([0, 0, 0, 0])
+    );
+  assert.throws(() => tiffToPng(cmyk1x1([[332, 3, [2]]])), /CMYK/); // InkSet: not CMYK
+  const spp3 = tinyTiff(
+    [
+      [256, 3, [1]],
+      [257, 3, [1]],
+      [258, 3, [8, 8, 8]],
+      [259, 3, [1]],
+      [262, 3, [5]],
+      [273, 4, [8]],
+      [277, 3, [3]],
+      [279, 4, [3]],
+    ],
+    Buffer.from([0, 0, 0])
+  );
+  assert.throws(() => tiffToPng(spp3), /CMYK/);
+});
+
 /** Pack 9-bit LZW codes MSB-first (enough for streams that never grow the
  *  code width). */
 function lzwPack(codes: number[]): Buffer {

@@ -241,8 +241,8 @@ export function tgaToPng(bytes: Buffer): Buffer {
 // TIFF decode, hand-rolled like TGA — scoped to the baseline subset dumps
 // carry: either byte order, first IFD only, strip-based chunky layout,
 // uncompressed/PackBits/LZW (with the horizontal predictor), bilevel/
-// grayscale/palette and 8-bit RGB(A). Tiled, planar, and fax/JPEG/deflate
-// files are rejected; callers fall back to the generated card.
+// grayscale/palette and 8-bit RGB(A)/CMYK. Tiled, planar, and fax/JPEG/
+// deflate files are rejected; callers fall back to the generated card.
 
 /** PackBits (TIFF §9): n >= 0 copies n+1 literals, n <= -1 repeats the next
  *  byte 1-n times, -128 is a no-op. */
@@ -354,6 +354,13 @@ function lzwDecode(src: Buffer, expected: number): Buffer {
   return out;
 }
 
+/** Rounded a*b/255 — Pillow's MULDIV255, so CMYK output stays byte-exact
+ *  with `Image.convert("RGB")` (and matches libtiff's tiff2rgba). */
+function mulDiv255(a: number, b: number): number {
+  const t = a * b + 128;
+  return (t + (t >> 8)) >> 8;
+}
+
 /** Undo predictor 2 (horizontal differencing) in place, row by row. */
 function undiff(data: Buffer, rows: number, rowBytes: number, spp: number): void {
   for (let y = 0; y < rows; y++) {
@@ -422,9 +429,15 @@ export function tiffToPng(bytes: Buffer): Buffer {
   const gray = photometric === 0 || photometric === 1;
   const rgb = photometric === 2;
   const paletted = photometric === 3;
+  const cmyk = photometric === 5;
   if (rgb) {
     if ((spp !== 3 && spp !== 4) || bits.some((b) => b !== 8)) {
       throw new Error("unsupported TIFF RGB layout");
+    }
+  } else if (cmyk) {
+    // InkSet (332) 1 = CMYK; anything else names arbitrary ink separations.
+    if (spp !== 4 || bits.some((b) => b !== 8) || tag1(332, 1) !== 1) {
+      throw new Error("unsupported TIFF CMYK layout");
     }
   } else if (gray || paletted) {
     if (spp !== 1 || ![1, 4, 8].includes(bits[0])) {
@@ -450,7 +463,7 @@ export function tiffToPng(bytes: Buffer): Buffer {
     }
   }
 
-  const bitsPerPixel = rgb ? spp * 8 : bits[0];
+  const bitsPerPixel = rgb || cmyk ? spp * 8 : bits[0];
   const rowBytes = (width * bitsPerPixel + 7) >> 3;
   const rowsPerStrip = Math.min(tag1(278, height) || height, height);
   const offsets = tags.get(273);
@@ -482,6 +495,15 @@ export function tiffToPng(bytes: Buffer): Buffer {
         px[o + 1] = data[p + 1];
         px[o + 2] = data[p + 2];
         px[o + 3] = spp === 4 ? data[p + 3] : 255;
+      } else if (cmyk) {
+        // Uncalibrated ink → RGB (any embedded ICC profile is ignored):
+        // channel = (255 - ink) scaled by what black leaves uncovered.
+        const p = base + x * spp;
+        const nk = 255 - data[p + 3];
+        px[o] = nk - mulDiv255(data[p], nk);
+        px[o + 1] = nk - mulDiv255(data[p + 1], nk);
+        px[o + 2] = nk - mulDiv255(data[p + 2], nk);
+        px[o + 3] = 255;
       } else if (paletted) {
         const p = sample1(data, base, x) * 3;
         px[o] = pal[p];
