@@ -52,6 +52,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   const c = await pool.connect();
   try {
     await c.query("BEGIN");
+    // Transaction-scoped: moderation is token-gated and rare, and the corpus-wide
+    // audio-IDF refresh below outlives the pool's page-query statement_timeout on
+    // slower hosts. Page queries keep their cap.
+    await c.query("SET LOCAL statement_timeout = 0");
     const r = await c.query<{ record: BuildRecord }>(
       "SELECT record FROM submission_queue WHERE sha256=$1 FOR UPDATE",
       [sha256]
@@ -69,7 +73,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
     // similarity tier's IDF weighting stays accurate; atomic with the accept.
     await refreshAudioIdf(c);
     await c.query("COMMIT");
-  } catch {
+  } catch (e) {
+    console.error(`accept ${sha256}: ingest failed:`, e);
     await c.query("ROLLBACK");
     return Response.json({ error: "ingest failed" }, { status: 500 });
   } finally {
