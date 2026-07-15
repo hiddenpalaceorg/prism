@@ -31,7 +31,9 @@ export async function PUT(
   request: NextRequest,
   ctx: { params: Promise<{ sha256: string; assetSha: string }> }
 ) {
-  if (!rateLimit(`assets-put:${clientKey(request)}`, 240, 60_000)) {
+  // Generous: a bulk desktop upload is many sequential chunk PUTs (a 4096-asset
+  // build is legitimate), and the clients treat 429 as a hard failure.
+  if (!rateLimit(`assets-put:${clientKey(request)}`, 1200, 60_000)) {
     return Response.json({ error: "rate limit exceeded" }, { status: 429 });
   }
   const { sha256, assetSha } = await ctx.params;
