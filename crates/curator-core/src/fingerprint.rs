@@ -27,13 +27,19 @@ pub fn is_ignored(path: &str) -> bool {
 }
 
 /// Stream the image once, computing md5/sha1/sha256 and emitting progress.
+/// A directory (a folder opened as one build) hashes its track set instead —
+/// see [`hash_dir`].
 pub fn hash_image(path: &str, observer: &Arc<dyn ProgressObserver>) -> Result<ImageInfo> {
-    let name = std::path::Path::new(path)
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        return hash_dir(p, observer);
+    }
+    let name = p
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string());
 
-    let mut file = File::open(path)?;
+    let file = File::open(path)?;
     let size = file.metadata()?.len();
 
     const ID: u64 = 0;
@@ -44,35 +50,101 @@ pub fn hash_image(path: &str, observer: &Arc<dyn ProgressObserver>) -> Result<Im
         total: Some(size as f64),
     });
 
-    let mut md5 = Md5::new();
-    let mut sha1 = Sha1::new();
-    let mut sha256 = Sha256::new();
-    let mut buf = vec![0u8; READ_CHUNK];
+    let mut hashers = ImageHashers::new();
+    let done = hashers.consume(file, 0, ID, observer)?;
+    observer.on_event(Event::CounterClose { id: ID });
+
+    Ok(hashers.finish(name, done))
+}
+
+/// Identity for a folder opened as one build: the folder's importable files (its
+/// track set — descriptors and sidecars like `.cue`/`.gdi` are excluded, so a
+/// cue edit or a scan file doesn't change identity), concatenated in natural
+/// name order ("Track 2" before "Track 10", i.e. disc order) and hashed as one
+/// stream. Depends only on the member files' names and bytes, not the folder's
+/// own name or location.
+fn hash_dir(root: &std::path::Path, observer: &Arc<dyn ProgressObserver>) -> Result<ImageInfo> {
+    let name = root
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| root.to_string_lossy().into_owned());
+    let files = crate::dir_image_files(root);
+    if files.is_empty() {
+        return Err(crate::error::Error::Unsupported(root.to_string_lossy().into_owned()));
+    }
+
+    let mut total: u64 = 0;
+    for f in &files {
+        total += std::fs::metadata(f)?.len();
+    }
+
+    const ID: u64 = 0;
+    observer.on_event(Event::CounterOpen {
+        id: ID,
+        label: format!("Hashing image {name}"),
+        unit: "B".into(),
+        total: Some(total as f64),
+    });
+
+    let mut hashers = ImageHashers::new();
     let mut done: u64 = 0;
-    loop {
-        if observer.is_cancelled() {
-            observer.on_event(Event::CounterClose { id: ID });
-            return Err(crate::error::Error::Cancelled);
-        }
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        md5.update(&buf[..n]);
-        sha1.update(&buf[..n]);
-        sha256.update(&buf[..n]);
-        done += n as u64;
-        observer.on_event(Event::Progress { id: ID, count: done as f64 });
+    for f in &files {
+        done = hashers.consume(File::open(f)?, done, ID, observer)?;
     }
     observer.on_event(Event::CounterClose { id: ID });
 
-    Ok(ImageInfo {
-        name,
-        size,
-        md5: hex::encode(md5.finalize()),
-        sha1: hex::encode(sha1.finalize()),
-        sha256: hex::encode(sha256.finalize()),
-    })
+    Ok(hashers.finish(name, done))
+}
+
+/// The md5+sha1+sha256 triple an image identity is built from, fed one reader
+/// at a time (a single image file, or each track of a folder build in turn).
+struct ImageHashers {
+    md5: Md5,
+    sha1: Sha1,
+    sha256: Sha256,
+}
+
+impl ImageHashers {
+    fn new() -> Self {
+        ImageHashers { md5: Md5::new(), sha1: Sha1::new(), sha256: Sha256::new() }
+    }
+
+    /// Stream `reader` into all three hashers, advancing the progress counter
+    /// from `done`. Returns the new byte count.
+    fn consume(
+        &mut self,
+        mut reader: impl Read,
+        mut done: u64,
+        counter_id: u64,
+        observer: &Arc<dyn ProgressObserver>,
+    ) -> Result<u64> {
+        let mut buf = vec![0u8; READ_CHUNK];
+        loop {
+            if observer.is_cancelled() {
+                observer.on_event(Event::CounterClose { id: counter_id });
+                return Err(crate::error::Error::Cancelled);
+            }
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                return Ok(done);
+            }
+            self.md5.update(&buf[..n]);
+            self.sha1.update(&buf[..n]);
+            self.sha256.update(&buf[..n]);
+            done += n as u64;
+            observer.on_event(Event::Progress { id: counter_id, count: done as f64 });
+        }
+    }
+
+    fn finish(self, name: String, size: u64) -> ImageInfo {
+        ImageInfo {
+            name,
+            size,
+            md5: hex::encode(self.md5.finalize()),
+            sha1: hex::encode(self.sha1.finalize()),
+            sha256: hex::encode(self.sha256.finalize()),
+        }
+    }
 }
 
 /// Content composites from the adapter's per-file sha1s.

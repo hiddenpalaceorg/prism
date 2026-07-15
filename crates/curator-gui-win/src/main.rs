@@ -82,6 +82,7 @@ mod app {
     const IDM_EXPORT: usize = 10;
     const IDM_BROWSE: usize = 11;
     const IDM_VIEW_ASSETS: usize = 12;
+    const IDM_OPEN_DIR_BUILD: usize = 13;
     const IDM_RECENT_BASE: usize = 2000;
     const MAX_RECENT: u32 = 15;
 
@@ -589,6 +590,7 @@ mod app {
         let file = CreatePopupMenu().unwrap_or_default();
         let recent = CreatePopupMenu().unwrap_or_default();
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN, w!("&Open Image…\tCtrl+O"));
+        let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_DIR_BUILD, w!("Open Folder as &Build…"));
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_FOLDER, w!("&Import Folder (recursive)…"));
         let _ = AppendMenuW(file, MF_POPUP, recent.0 as usize, w!("Open &Recent"));
         let _ = AppendMenuW(file, MF_STRING, IDM_BROWSE, w!("&Browse Library…\tCtrl+B"));
@@ -654,9 +656,22 @@ mod app {
                     start_analysis(hwnd, path);
                 }
             }
+            IDM_OPEN_DIR_BUILD => {
+                // Force the whole folder through as ONE build (a split multi-track
+                // dump), regardless of the single-build heuristic.
+                if let Some(dir) = pick_folder(hwnd) {
+                    start_analysis(hwnd, dir);
+                }
+            }
             IDM_OPEN_FOLDER => {
                 if let Some(dir) = pick_folder(hwnd) {
-                    start_import(hwnd, expand_inputs(vec![dir]));
+                    let units = expand_inputs(vec![dir]);
+                    // A folder that is itself one split build analyzes as one unit.
+                    match units.len() {
+                        0 => set_status(hwnd, "Nothing to import."),
+                        1 => start_analysis(hwnd, units.into_iter().next().unwrap()),
+                        _ => start_import(hwnd, units),
+                    }
                 }
             }
             IDM_CANCEL => {
@@ -1252,8 +1267,8 @@ mod app {
         }
     }
 
-    /// WM_DROPFILES: analyze a single dropped file, or batch-import when multiple
-    /// items (or a folder) are dropped.
+    /// WM_DROPFILES: analyze a single dropped file (or a folder that is one split
+    /// multi-track build), or batch-import when the drop expands to several units.
     unsafe fn on_drop(hwnd: HWND, wparam: WPARAM) {
         let hdrop = HDROP(wparam.0 as *mut core::ffi::c_void);
         let count = DragQueryFileW(hdrop, u32::MAX, None);
@@ -1275,14 +1290,16 @@ mod app {
         }
     }
 
-    /// Expand dropped/selected paths to a flat file list: directories are walked
-    /// recursively; plain files pass through. Order is deterministic.
+    /// Expand dropped/selected paths to a flat list of import units: directories
+    /// are walked recursively, except that a folder holding one build split across
+    /// files (a multi-track dump) stays a single unit and analyzes as one build.
+    /// Plain files pass through. Order is deterministic.
     fn expand_inputs(paths: Vec<String>) -> Vec<String> {
         let mut out = Vec::new();
         for p in paths {
             let path = std::path::Path::new(&p);
             if path.is_dir() {
-                for f in curator_core::list_importable_files(path) {
+                for f in curator_core::list_import_units(path) {
                     out.push(f.to_string_lossy().into_owned());
                 }
             } else if path.is_file() {

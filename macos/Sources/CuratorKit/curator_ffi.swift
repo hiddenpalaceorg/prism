@@ -729,8 +729,10 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func librarySystems() throws  -> [String]
     
     /**
-     * Recursively list every file under `root`, sorted. Used by folder import:
-     * the UI walks the tree, then calls `analyze` on each and skips non-discs.
+     * Recursively list the import units under `root`, sorted: importable files,
+     * except that a folder holding one build split across files (a multi-track
+     * dump) comes back as a single unit. Used by folder import: the UI walks the
+     * list, then calls `analyze` on each and skips non-discs.
      */
     func listFiles(root: String) throws  -> [String]
     
@@ -888,8 +890,10 @@ open func librarySystems()throws  -> [String]  {
 }
     
     /**
-     * Recursively list every file under `root`, sorted. Used by folder import:
-     * the UI walks the tree, then calls `analyze` on each and skips non-discs.
+     * Recursively list the import units under `root`, sorted: importable files,
+     * except that a folder holding one build split across files (a multi-track
+     * dump) comes back as a single unit. Used by folder import: the UI walks the
+     * list, then calls `analyze` on each and skips non-discs.
      */
 open func listFiles(root: String)throws  -> [String]  {
     return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
@@ -2033,6 +2037,18 @@ fileprivate struct FfiConverterSequenceTypeLibraryEntry: FfiConverterRustBuffer 
         return seq
     }
 }
+/**
+ * Whether `root` is a folder holding ONE build split across files (a multi-track
+ * dump) rather than a collection of separate images — the UI routes such folders
+ * to `analyze` instead of batch import. See `curator_core::folder_is_single_build`.
+ */
+public func folderIsSingleBuild(root: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_curator_ffi_fn_func_folder_is_single_build(
+        FfiConverterString.lower(root),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -2048,6 +2064,9 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_curator_ffi_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_curator_ffi_checksum_func_folder_is_single_build() != 6360) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_cancelhandle_cancel() != 40201) {
         return InitializationResult.apiChecksumMismatch
@@ -2070,7 +2089,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_curator_ffi_checksum_method_engine_library_systems() != 32687) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_curator_ffi_checksum_method_engine_list_files() != 6362) {
+    if (uniffi_curator_ffi_checksum_method_engine_list_files() != 51427) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_load_build() != 49667) {

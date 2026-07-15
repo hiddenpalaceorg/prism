@@ -260,6 +260,14 @@ impl ProgressObserver for ListenerObserver {
     }
 }
 
+/// Whether `root` is a folder holding ONE build split across files (a multi-track
+/// dump) rather than a collection of separate images — the UI routes such folders
+/// to `analyze` instead of batch import. See `curator_core::folder_is_single_build`.
+#[uniffi::export]
+pub fn folder_is_single_build(root: String) -> bool {
+    curator_core::folder_is_single_build(std::path::Path::new(&root))
+}
+
 // ---- Engine ----
 
 /// The analysis engine. Construct once; methods are thread-safe.
@@ -347,10 +355,12 @@ impl Engine {
         Ok(self.reader.lock().unwrap_or_else(|e| e.into_inner()).list_systems()?)
     }
 
-    /// Recursively list every file under `root`, sorted. Used by folder import:
-    /// the UI walks the tree, then calls `analyze` on each and skips non-discs.
+    /// Recursively list the import units under `root`, sorted: importable files,
+    /// except that a folder holding one build split across files (a multi-track
+    /// dump) comes back as a single unit. Used by folder import: the UI walks the
+    /// list, then calls `analyze` on each and skips non-discs.
     pub fn list_files(&self, root: String) -> Result<Vec<String>, CuratorError> {
-        Ok(curator_core::list_importable_files(std::path::Path::new(&root))
+        Ok(curator_core::list_import_units(std::path::Path::new(&root))
             .into_iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect())
