@@ -77,20 +77,19 @@ struct SimilarityResponse: Decodable {
 }
 
 /// Read-only client for the Curator web service. Base URL from `CURATOR_WEB_URL`
-/// (default `http://localhost:3001`, the dev port).
+/// (default `https://hiddenpalace.org`; point it at a local dev server to test).
 struct CuratorService {
-    /// The dev default, built once without a force-unwrap.
+    /// The production default, built once without a force-unwrap.
     static let defaultBaseURL: URL = {
         var c = URLComponents()
-        c.scheme = "http"
-        c.host = "localhost"
-        c.port = 3001
+        c.scheme = "https"
+        c.host = "hiddenpalace.org"
         return c.url ?? URL(fileURLWithPath: "/")
     }()
     let baseURL: URL
 
     init() {
-        let raw = ProcessInfo.processInfo.environment["CURATOR_WEB_URL"] ?? "http://localhost:3001"
+        let raw = ProcessInfo.processInfo.environment["CURATOR_WEB_URL"] ?? "https://hiddenpalace.org"
         baseURL = URL(string: raw) ?? CuratorService.defaultBaseURL
     }
 
