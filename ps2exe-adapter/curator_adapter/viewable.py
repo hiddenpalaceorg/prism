@@ -48,6 +48,18 @@ _VIDEO = {
     "webm": "video/webm",
 }
 
+# Print-format documents. Browsers render PDF natively; PostScript (.eps, .ps,
+# and the classic Illustrator .ai, which is EPS under the hood) is rasterized
+# server-side when Ghostscript is available. .ai needs the sniff more than
+# anything: game discs reuse the extension for AI behavior data (Eternal
+# Champions' 68k blobs, Wild Metal's AIDEF scripts) — only %!PS bytes pass.
+_DOCUMENT = {
+    "pdf": "application/pdf",
+    "eps": "application/postscript",
+    "ps": "application/postscript",
+    "ai": "application/postscript",
+}
+
 # Docs, configs, data — the formats prototype discs actually carry. All are
 # served as text/plain regardless of what they'd mean to a browser (html).
 _TEXT = frozenset(
@@ -70,7 +82,7 @@ _SOURCE = frozenset(
 _SOURCE_NAMES = frozenset({"makefile", "gnumakefile"})
 
 _KINDS = (
-    [(_IMAGE, "image")] + [(_AUDIO, "audio")] + [(_VIDEO, "video")]
+    [(_IMAGE, "image")] + [(_AUDIO, "audio")] + [(_VIDEO, "video")] + [(_DOCUMENT, "document")]
 )
 
 
@@ -140,6 +152,9 @@ _MAGIC = {
     "audio/mp4": lambda h: h[4:8] == b"ftyp",
     "video/mp4": lambda h: h[4:8] == b"ftyp",
     "video/webm": lambda h: h.startswith(b"\x1aE\xdf\xa3"),
+    "application/pdf": lambda h: h.startswith(b"%PDF-"),
+    # ASCII PostScript/EPS, or the DOS EPS binary wrapper around one.
+    "application/postscript": lambda h: h.startswith((b"%!PS", b"\xc5\xd0\xd3\xc6")),
     "text/plain": _looks_text,
 }
 

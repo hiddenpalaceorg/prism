@@ -24,7 +24,7 @@ export function assetStagingPath(sha256: string): string {
 }
 
 /** Display order for asset kinds on the build pages. */
-export const ASSET_KIND_ORDER = ["image", "audio", "video", "source", "text", "binary"] as const;
+export const ASSET_KIND_ORDER = ["image", "audio", "video", "document", "source", "text", "binary"] as const;
 
 /** Per-kind asset counts. */
 export function assetTotals(assets: { kind: string }[]): Record<string, number> {

@@ -71,7 +71,7 @@ export interface AssetRef {
   sha256: string;
   size: number;
   mime: string;
-  kind: string; // "image" | "audio" | "video" | "source" | "text" | "binary" (head snippet)
+  kind: string; // "image" | "audio" | "video" | "document" | "source" | "text" | "binary" (head snippet)
 }
 
 export interface MediaFp {

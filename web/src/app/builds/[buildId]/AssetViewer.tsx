@@ -15,7 +15,7 @@ export interface ViewableAsset {
   sha256: string;
   size: number;
   mime: string;
-  kind: string; // image | audio | video | source | text | binary
+  kind: string; // image | audio | video | document | source | text | binary
 }
 
 export function assetUrl(a: ViewableAsset): string {
@@ -125,6 +125,41 @@ function HexBody({ asset }: { asset: ViewableAsset }) {
   );
 }
 
+// PDFs embed the browser's own viewer; PostScript/EPS goes through the
+// server's Ghostscript rasterization. Either can be unavailable (mobile
+// browsers won't embed PDFs; the server may lack Ghostscript), so both
+// fall back to a download card rather than an error.
+function DocumentBody({ asset }: { asset: ViewableAsset }) {
+  const [failed, setFailed] = useState(false);
+  const url = assetUrl(asset);
+  const name = asset.path.split("/").pop() || asset.path;
+  const fallback = (
+    <div className="flex flex-col items-center gap-3 rounded bg-neutral-900 p-10 text-sm text-neutral-300">
+      <p>No inline preview for this file.</p>
+      <a href={url} download={name} className="rounded bg-neutral-700 px-3 py-1.5 text-neutral-100 hover:bg-neutral-600">
+        Download {name}
+      </a>
+    </div>
+  );
+  if (asset.mime === "application/pdf") {
+    return (
+      <object data={url} type="application/pdf" className="h-[75vh] w-[min(70rem,90vw)] rounded" aria-label={asset.path}>
+        {fallback}
+      </object>
+    );
+  }
+  if (failed) return fallback;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`${url}/png`}
+      alt={asset.path}
+      className="max-h-[75vh] max-w-[90vw] rounded object-contain"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function Body({ asset }: { asset: ViewableAsset }) {
   const [failed, setFailed] = useState(false);
   const url = assetUrl(asset);
@@ -155,6 +190,8 @@ function Body({ asset }: { asset: ViewableAsset }) {
           onError={() => setFailed(true)}
         />
       );
+    case "document":
+      return <DocumentBody asset={asset} />;
     case "binary":
       return <HexBody asset={asset} />;
     default:

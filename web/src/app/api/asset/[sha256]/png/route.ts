@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { NextRequest } from "next/server";
 import { assetBlobPath } from "@/lib/assets";
 import { getPool } from "@/lib/db";
+import { gsAvailable, gsRenderable, gsToPng } from "@/lib/gs";
 import { pngConvertible, toPng, WEB_SAFE_IMAGE } from "@/lib/imgpng";
 import { isSha256 } from "@/lib/validate";
 
@@ -9,8 +10,9 @@ export const runtime = "nodejs";
 
 // GET /api/asset/<sha256>/png — the asset converted to PNG, for og:image use
 // on formats unfurlers won't render and inline display of formats browsers
-// won't (today: BMP, TGA, and TIFF). Web-safe formats redirect to the raw
-// asset route; content-addressed, so responses cache hard.
+// won't (today: BMP, TGA, and TIFF in-process, plus EPS/PS and PDF first
+// pages through Ghostscript when the server has it). Web-safe formats
+// redirect to the raw asset route; content-addressed, so responses cache hard.
 
 const CACHE = "public, max-age=31536000, immutable";
 
@@ -32,7 +34,8 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
   if (WEB_SAFE_IMAGE.test(meta.mime)) {
     return Response.redirect(new URL(`/api/asset/${sha256}`, _request.url), 308);
   }
-  if (!pngConvertible(meta.mime) || meta.size > MAX_CONVERT_BYTES) {
+  const viaGs = gsRenderable(meta.mime) && (await gsAvailable());
+  if ((!pngConvertible(meta.mime) && !viaGs) || meta.size > MAX_CONVERT_BYTES) {
     return Response.json({ error: `no PNG conversion for ${meta.mime}` }, { status: 415 });
   }
 
@@ -45,7 +48,7 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
 
   let png: Buffer;
   try {
-    png = toPng(meta.mime, bytes);
+    png = viaGs ? await gsToPng(meta.mime, bytes) : toPng(meta.mime, bytes);
   } catch {
     return Response.json({ error: "undecodable image" }, { status: 415 });
   }
