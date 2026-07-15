@@ -85,6 +85,7 @@ export default function Moderate() {
       </div>
       <p className="mt-1 text-sm text-neutral-500">
         Review contributor submissions. Accepting ingests the build into the library.
+        While a token is saved here, build pages also show moderator tools (rename, lot).
       </p>
 
       <input

@@ -442,6 +442,8 @@ export interface BuildRow {
   fingerprint_profile: string;
   ingested_at: string;
   record: BuildRecord;
+  /** Moderator-assigned display group, e.g. "Sonic Month 2026". */
+  lot: string | null;
 }
 
 export interface BuildListItem {
@@ -453,6 +455,8 @@ export interface BuildListItem {
   ingested_at: string;
   /** Disc mastering date — volume creation, else the header release date. */
   build_date: string | null;
+  /** Moderator-assigned display group, e.g. "Sonic Month 2026". */
+  lot: string | null;
 }
 
 export type BuildSortKey = "name" | "system" | "build_date" | "file_count" | "total_size";
@@ -460,6 +464,7 @@ export type BuildSortKey = "name" | "system" | "build_date" | "file_count" | "to
 export interface BuildsPageOpts {
   q?: string;
   system?: string;
+  lot?: string;
   sort?: BuildSortKey;
   dir?: "asc" | "desc";
   offset?: number;
@@ -499,6 +504,10 @@ export async function listBuildsPage(pool: Pool, opts: BuildsPageOpts = {}): Pro
     params.push(opts.system);
     conds.push(`system = $${params.length}`);
   }
+  if (opts.lot) {
+    params.push(opts.lot);
+    conds.push(`lot = $${params.length}`);
+  }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
   const key = opts.sort && BUILD_SORT[opts.sort] ? opts.sort : "name";
@@ -514,7 +523,7 @@ export async function listBuildsPage(pool: Pool, opts: BuildsPageOpts = {}): Pro
 
   const [rows, count, systems] = await Promise.all([
     pool.query(
-      `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date
+      `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot
        FROM builds ${where} ORDER BY ${order}
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]
@@ -602,11 +611,56 @@ export async function getBuildMeta(pool: Pool, sha256: string): Promise<BuildMet
 export async function getBuild(pool: Pool, sha256: string): Promise<BuildRow | null> {
   const r = await pool.query(
     `SELECT sha256, name, system, size, md5, sha1, content_hash, file_count,
-            total_size, fingerprint_profile, ingested_at, record
+            total_size, fingerprint_profile, ingested_at, record, lot
      FROM builds WHERE sha256=$1`,
     [sha256]
   );
   return (r.rows[0] as BuildRow) ?? null;
+}
+
+/// Moderator metadata edit: rename and/or move between lots. Omitted fields are
+/// untouched; lot=null clears it. Returns the previous name/lot (so the caller
+/// can revalidate pages of the lot the build left), or null when not found.
+export async function updateBuildMeta(
+  pool: Pool,
+  sha256: string,
+  fields: { name?: string; lot?: string | null }
+): Promise<{ name: string; lot: string | null } | null> {
+  const sets: string[] = [];
+  const params: unknown[] = [sha256];
+  if (fields.name !== undefined) {
+    params.push(fields.name);
+    sets.push(`name=$${params.length}`);
+  }
+  if (fields.lot !== undefined) {
+    params.push(fields.lot);
+    sets.push(`lot=$${params.length}`);
+  }
+  if (!sets.length) throw new Error("updateBuildMeta: no fields to update");
+  const r = await pool.query(
+    `UPDATE builds b SET ${sets.join(", ")}
+     FROM (SELECT name, lot FROM builds WHERE sha256=$1) old
+     WHERE b.sha256=$1
+     RETURNING old.name, old.lot`,
+    params
+  );
+  return (r.rows[0] as { name: string; lot: string | null }) ?? null;
+}
+
+/// All builds in a lot, for the build page's lot section and revalidation.
+export async function getLotBuilds(pool: Pool, lot: string): Promise<BuildListItem[]> {
+  const r = await pool.query(
+    `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot
+     FROM builds WHERE lot=$1 ORDER BY lower(name)`,
+    [lot]
+  );
+  return r.rows as BuildListItem[];
+}
+
+/** Distinct lot names, for the moderator edit box's suggestions. */
+export async function listLots(pool: Pool): Promise<string[]> {
+  const r = await pool.query("SELECT DISTINCT lot FROM builds WHERE lot IS NOT NULL ORDER BY lot");
+  return r.rows.map((row) => row.lot as string);
 }
 
 export async function submissionStatus(pool: Pool, sha256: string) {

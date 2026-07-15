@@ -5,15 +5,16 @@ import { notFound, permanentRedirect } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
-import { getBuild, getBuildAssets, getBuildMeta, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, resolveBuild } from "@/lib/queries";
+import { getBuild, getBuildAssets, getBuildMeta, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, getLotBuilds, listLots, resolveBuild } from "@/lib/queries";
 import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
 import { buildDescription, displayTitle } from "@/lib/meta";
-import { canonicalBuildId, parseBuildParam } from "@/lib/slug";
+import { buildHref, canonicalBuildId, parseBuildParam } from "@/lib/slug";
 import type { BuildRecord } from "@/lib/types";
 import SimilarBuilds from "./SimilarBuilds";
 import FileTree from "./FileTree";
 import AssetGallery from "./AssetGallery";
 import AssetViewerHost from "./AssetViewerHost";
+import ModeratorTools from "./ModeratorTools";
 
 // The assets section previews at most this many items per kind; the rest live
 // on /builds/<id>/assets.
@@ -137,11 +138,14 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
   const q = deriveQueryFeatures(build.record);
   // Pull a wide candidate set per tier so the fused top-50 is well-populated.
   // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const [similar, textNeighbors, assets] = await Promise.all([
+  const [similar, textNeighbors, assets, lotBuilds, lots] = await Promise.all([
     findSimilar(pool, q, 100),
     findByEmbeddingOf(pool, sha256, 100),
     getBuildAssets(pool, sha256),
+    build.lot ? getLotBuilds(pool, build.lot) : Promise.resolve([]),
+    listLots(pool),
   ]);
+  const lotMates = lotBuilds.filter((b) => b.sha256 !== sha256);
   const fused = fuseSimilar(similar, textNeighbors);
 
   // A tier only counts when both builds have its data — attach each build's capabilities
@@ -161,6 +165,7 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
   const counts = treeCounts(tree);
   const meta = metaSections(build.record);
   const filteredContentHash = build.record.composites?.filtered_content_hash;
+  const discTitle = build.record.info?.title as string | undefined;
 
   return (
     <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
@@ -169,15 +174,26 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
       <AssetViewerHost assets={assets} buildHref={href} returnHref={href}>
       <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
 
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-        {build.record.info?.title as string | undefined ?? build.name}
-      </h1>
+      {/* The name column is the display identity everywhere (lists, search, rename);
+          the disc's own title stays visible as a subtitle when it differs. */}
+      <h1 className="mt-3 text-2xl font-semibold tracking-tight">{build.name}</h1>
+      {discTitle && discTitle !== build.name && (
+        <p className="mt-1 text-sm text-neutral-500">{discTitle}</p>
+      )}
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         <Chip>{build.system || "unknown"}</Chip>
         <Chip>{build.file_count} files</Chip>
         <Chip>{humanSize(build.total_size)}</Chip>
         <Chip>profile {build.fingerprint_profile}</Chip>
         {assets.length > 0 && <Chip>{assets.length} assets</Chip>}
+        {build.lot && (
+          <Link
+            href={`/builds?lot=${encodeURIComponent(build.lot)}`}
+            className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900 hover:underline dark:bg-amber-900/40 dark:text-amber-200"
+          >
+            {build.lot}
+          </Link>
+        )}
       </div>
 
       <dl className="mt-4 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
@@ -189,6 +205,35 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
           <Hash label="Filtered content hash" value={filteredContentHash} />
         )}
       </dl>
+
+      <ModeratorTools
+        key={`${build.name}\0${build.lot ?? ""}`}
+        sha256={build.sha256}
+        name={build.name}
+        lot={build.lot}
+        lots={lots}
+      />
+
+      {build.lot && lotMates.length > 0 && (
+        <section className="mt-8">
+          <h2 className="text-lg font-medium">
+            Lot: {build.lot}{" "}
+            <span className="text-sm font-normal text-neutral-400">({lotMates.length + 1} builds)</span>
+          </h2>
+          <ul className="mt-3 divide-y divide-neutral-100 dark:divide-neutral-900/60">
+            {lotMates.map((b) => (
+              <li key={b.sha256} className="flex items-center gap-3 py-2 text-sm">
+                <Link href={buildHref(b.sha256, b.name)} className="min-w-0 truncate font-medium hover:underline">
+                  {b.name}
+                </Link>
+                <Chip>{b.system || "unknown"}</Chip>
+                <span className="text-xs text-neutral-500">{b.file_count} files</span>
+                <span className="text-xs text-neutral-500">{humanSize(b.total_size)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {meta.length > 0 && (
         <section className="mt-8">

@@ -34,7 +34,8 @@ CREATE TABLE builds (
     fingerprint_profile   TEXT NOT NULL,
     record                JSONB NOT NULL,           -- full canonical record
     ingested_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    build_date            TEXT                      -- volume creation date, else header release date (sortable copy)
+    build_date            TEXT,                     -- volume creation date, else header release date (sortable copy)
+    lot                   TEXT                      -- moderator-assigned display group, e.g. "Sonic Month 2026"
 );
 CREATE INDEX idx_builds_content      ON builds(content_hash);
 CREATE INDEX idx_builds_filtered     ON builds(filtered_content_hash);
@@ -43,6 +44,7 @@ CREATE INDEX idx_builds_name_lower   ON builds (lower(name));
 CREATE INDEX idx_builds_name_trgm    ON builds USING gin (name gin_trgm_ops);
 CREATE INDEX idx_builds_textdoc_fts  ON builds USING gin (to_tsvector('simple', text_doc));
 CREATE INDEX idx_builds_embedding    ON builds USING hnsw (text_embedding vector_cosine_ops);
+CREATE INDEX idx_builds_lot          ON builds(lot) WHERE lot IS NOT NULL;
 
 -- ── files (per-build) — filename FTS/fuzzy + exact hash lookup ────────────────
 CREATE TABLE files (
