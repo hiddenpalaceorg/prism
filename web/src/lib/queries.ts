@@ -117,6 +117,10 @@ export async function findAudioSimilar(
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+// A build whose *only* signal is semantic text must clear this to be listed at all —
+// weak text-only cosine neighbors are noise, not evidence of a related build.
+const TEXT_ONLY_MIN = 0.7;
+
 /**
  * Collapse the per-tier similarity lists (+ text neighbors) into one per-build matrix
  * of similarities in [0,1], for weighted fusion + filtering on the client. Distances
@@ -143,7 +147,10 @@ export function fuseSimilar(s: SimilarityResult, text: EmbeddingHit[]): FusedBui
   for (const x of s.exe_similar) add(x.sha256, x.name, x.system, "tlsh", clamp01(1 - x.distance / TLSH_MAX_DISTANCE));
   for (const x of s.audio_neighbors) add(x.sha256, x.name, x.system, "audio", clamp01(x.best));
   for (const x of text) add(x.sha256, x.name, x.system, "text", clamp01(x.cosine));
-  return [...map.values()];
+  return [...map.values()].filter((e) => {
+    const keys = Object.keys(e.scores) as TierKey[];
+    return keys.length !== 1 || keys[0] !== "text" || (e.scores.text ?? 0) >= TEXT_ONLY_MIN;
+  });
 }
 
 /**
