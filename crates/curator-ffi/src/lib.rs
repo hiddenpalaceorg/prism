@@ -61,7 +61,7 @@ pub struct AssetInfo {
     pub sha256: String,
     pub size: u64,
     pub mime: String,
-    pub kind: String, // "image" | "audio" | "video" | "text"
+    pub kind: String, // "image" | "audio" | "video" | "source" | "text"
     /// Absolute path of the blob in the local store, when present.
     pub blob_path: Option<String>,
 }

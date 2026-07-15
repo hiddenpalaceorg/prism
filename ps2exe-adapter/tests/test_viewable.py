@@ -10,6 +10,21 @@ def test_classify_by_extension():
     assert viewable.classify("/docs/index.html") == ("text", "text/plain")
 
 
+def test_classify_source():
+    assert viewable.classify("/SRC/GFXCORE.C") == ("source", "text/plain")
+    assert viewable.classify("/SRC/DEFS.H") == ("source", "text/plain")
+    assert viewable.classify("/SCRIPTS/INTRO.SSL") == ("source", "text/plain")
+    assert viewable.classify("/tools/mkiso.bat") == ("source", "text/plain")
+    assert viewable.classify("/SRC/VECMATH.S") == ("source", "text/plain")
+    # Build files count as source, including extensionless makefiles.
+    assert viewable.classify("/SRC/MAKEFILE") == ("source", "text/plain")
+    assert viewable.classify("/proj/Makefile") == ("source", "text/plain")
+    assert viewable.classify("/proj/win32.mak") == ("source", "text/plain")
+    # Docs and configs stay plain text; other extensionless names stay rejected.
+    assert viewable.classify("/prefs.ini") == ("text", "text/plain")
+    assert viewable.classify("/notes.md") == ("text", "text/plain")
+
+
 def test_classify_rejects_unknown_and_extensionless():
     assert viewable.classify("/SLPS_123.45") is None
     assert viewable.classify("/GAME.TIM") is None

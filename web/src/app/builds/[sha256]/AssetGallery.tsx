@@ -10,11 +10,13 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import AssetViewer, { assetUrl, humanSize, type ViewableAsset } from "./AssetViewer";
 import AudioEmbed from "./AudioEmbed";
+import SourceCode from "./SourceCode";
 
 const SECTIONS: { kind: string; title: string }[] = [
   { kind: "image", title: "Images" },
   { kind: "audio", title: "Audio" },
   { kind: "video", title: "Video" },
+  { kind: "source", title: "Source code" },
   { kind: "text", title: "Text" },
 ];
 
@@ -103,7 +105,7 @@ export default function AssetGallery({
               </div>
             )}
 
-            {kind === "text" && (
+            {(kind === "source" || kind === "text") && (
               <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {group.map((a) => (
                   <button
@@ -119,7 +121,11 @@ export default function AssetGallery({
                       <span className="shrink-0 text-[10px] text-neutral-400">{humanSize(a.size)}</span>
                     </div>
                     <pre className="mt-1.5 line-clamp-4 whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-neutral-500">
-                      {excerpts[a.path] ?? ""}
+                      {kind === "source" ? (
+                        <SourceCode path={a.path} text={excerpts[a.path] ?? ""} />
+                      ) : (
+                        excerpts[a.path] ?? ""
+                      )}
                     </pre>
                   </button>
                 ))}

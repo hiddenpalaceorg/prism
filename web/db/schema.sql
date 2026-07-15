@@ -69,7 +69,7 @@ CREATE TABLE build_asset (
     sha256       TEXT NOT NULL,           -- content hash = key into the blob store
     size         BIGINT NOT NULL,
     mime         TEXT NOT NULL,           -- as served; text is always text/plain
-    kind         TEXT NOT NULL,           -- image|audio|video|text
+    kind         TEXT NOT NULL,           -- image|audio|video|source|text
     PRIMARY KEY (build_sha256, path)
 );
 CREATE INDEX idx_build_asset_sha256 ON build_asset(sha256);

@@ -964,8 +964,13 @@ mod app {
     }
 
     /// Display order + section titles for asset kinds — mirrors the web build pages.
-    const ASSET_KINDS: [(&str, &str); 4] =
-        [("image", "Images"), ("audio", "Audio"), ("video", "Video"), ("text", "Text")];
+    const ASSET_KINDS: [(&str, &str); 5] = [
+        ("image", "Images"),
+        ("audio", "Audio"),
+        ("video", "Video"),
+        ("source", "Source code"),
+        ("text", "Text"),
+    ];
 
     /// Fill the grouped ListView with the loaded build's assets (one group per kind)
     /// and rebuild the row → asset index map used by double-click-to-open.
@@ -1849,9 +1854,9 @@ mod app {
 
     /// Open the asset at `assets[idx]`. Media kinds go to their default app via a
     /// temp copy carrying the original filename (store blobs are extensionless, so
-    /// the shell can't pick a handler for them directly). Text kinds always open
-    /// in Notepad: handing a `.bat`/`.cmd`/`.js` from an untrusted disc to the
-    /// shell's default verb would execute it.
+    /// the shell can't pick a handler for them directly). Text and source kinds
+    /// always open in Notepad: handing a `.bat`/`.cmd`/`.js` from an untrusted
+    /// disc to the shell's default verb would execute it.
     unsafe fn open_asset_at(hwnd: HWND, idx: usize) {
         ensure_reader(hwnd);
         let (asset, blob) = {
@@ -1872,7 +1877,7 @@ mod app {
             }
         };
         let path_str = path.to_string_lossy().into_owned();
-        let launched = if asset.kind == "text" {
+        let launched = if matches!(asset.kind.as_str(), "text" | "source") {
             let args = wide(&format!("\"{path_str}\""));
             ShellExecuteW(hwnd, w!("open"), w!("notepad.exe"), PCWSTR(args.as_ptr()), PCWSTR::null(), SW_SHOWNORMAL)
         } else {

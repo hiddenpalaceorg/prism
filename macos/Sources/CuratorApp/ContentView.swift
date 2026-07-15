@@ -467,15 +467,20 @@ struct DocumentView: View {
 // MARK: - Assets (browser-viewable files extracted from the build)
 
 /// Display order for asset kinds — mirrors the web build pages.
-private let assetKindOrder = ["image", "audio", "video", "text"]
+private let assetKindOrder = ["image", "audio", "video", "source", "text"]
 
 private func assetKindIcon(_ kind: String) -> String {
     switch kind {
     case "image": return "photo"
     case "audio": return "music.note"
     case "video": return "film"
+    case "source": return "chevron.left.forwardslash.chevron.right"
     default: return "doc.text"
     }
+}
+
+private func assetKindTitle(_ kind: String) -> String {
+    kind == "source" ? "Source code" : kind.capitalized
 }
 
 struct AssetsView: View {
@@ -496,13 +501,13 @@ struct AssetsView: View {
                 systemImage: "photo.on.rectangle",
                 message: summary.assets == nil
                     ? "Asset extraction hasn't run for this build yet — re-analyze the image to extract viewable files."
-                    : "This build carries no browser-viewable images, audio, video, or text."
+                    : "This build carries no browser-viewable images, audio, video, source, or text."
             )
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(grouped, id: \.0) { kind, assets in
-                        Text("\(kind.capitalized) (\(assets.count))")
+                        Text("\(assetKindTitle(kind)) (\(assets.count))")
                             .font(.caption.bold()).foregroundStyle(.secondary)
                             .padding(.horizontal, 12)
                         if kind == "image" {
@@ -595,7 +600,7 @@ struct AssetMenu: View {
     let asset: AssetInfo
 
     var body: some View {
-        Button(asset.kind == "text" ? "Preview" : "Open") { model.openAsset(asset) }
+        Button(asset.kind == "text" || asset.kind == "source" ? "Preview" : "Open") { model.openAsset(asset) }
         Button("Copy SHA-256") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(asset.sha256, forType: .string)

@@ -68,7 +68,7 @@ export interface AssetRef {
   sha256: string;
   size: number;
   mime: string;
-  kind: string; // "image" | "audio" | "video" | "text"
+  kind: string; // "image" | "audio" | "video" | "source" | "text"
 }
 
 export interface MediaFp {

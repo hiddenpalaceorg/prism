@@ -13,7 +13,7 @@ import AssetGallery from "./AssetGallery";
 
 // The assets section previews at most this many items per kind; the rest live
 // on /builds/<sha256>/assets.
-const ASSET_PREVIEW_PER_KIND = { image: 30, audio: 20, video: 10, text: 10 };
+const ASSET_PREVIEW_PER_KIND = { image: 30, audio: 20, video: 10, source: 10, text: 10 };
 
 export const runtime = "nodejs";
 // The corpus only changes at ingest; render once and serve cached for an hour
@@ -111,12 +111,12 @@ export default async function BuildPage({ params }: { params: Promise<{ sha256: 
   for (const f of fused) f.caps = caps.get(f.sha256) ?? [];
 
   // Preview subset for the assets section, plus server-read excerpts for its
-  // text cards (tiny head reads from the local blob store).
+  // source/text cards (tiny head reads from the local blob store).
   const previewAssets = orderAssets(assets, ASSET_PREVIEW_PER_KIND);
   const excerpts = Object.fromEntries(
     await Promise.all(
       previewAssets
-        .filter((a) => a.kind === "text")
+        .filter((a) => a.kind === "source" || a.kind === "text")
         .map(async (a) => [a.path, (await readAssetExcerpt(a.sha256)) ?? ""] as const)
     )
   );

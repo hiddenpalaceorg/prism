@@ -5,6 +5,7 @@
 // once seen comes back from browser cache). ← → step through the list, Esc closes.
 
 import { useEffect, useState } from "react";
+import SourceCode from "./SourceCode";
 
 /** Mirrors queries.ts BuildAsset — redeclared here so client components don't
  *  import the server-only queries module (it pulls in pg). */
@@ -13,7 +14,7 @@ export interface ViewableAsset {
   sha256: string;
   size: number;
   mime: string;
-  kind: string; // image | audio | video | text
+  kind: string; // image | audio | video | source | text
 }
 
 export function assetUrl(a: ViewableAsset): string {
@@ -34,7 +35,8 @@ export function humanSize(bytes: number): string {
 // Show at most this much decoded text — a 20MB DOM node makes the tab crawl.
 const TEXT_DISPLAY_CAP = 1_000_000;
 
-function TextBody({ url }: { url: string }) {
+function TextBody({ asset }: { asset: ViewableAsset }) {
+  const url = assetUrl(asset);
   // No reset-on-url-change needed: the viewer remounts this per asset (see the
   // key on <Body/>), so "loading" as initial state always holds.
   const [state, setState] = useState<{ text: string; truncated: boolean } | "loading" | "error">(
@@ -63,7 +65,7 @@ function TextBody({ url }: { url: string }) {
   return (
     <div className="max-h-[70vh] w-[min(80rem,90vw)] overflow-auto rounded bg-white p-4 dark:bg-neutral-900">
       <pre className="whitespace-pre-wrap break-words font-mono text-xs text-neutral-800 dark:text-neutral-200">
-        {state.text}
+        {asset.kind === "source" ? <SourceCode path={asset.path} text={state.text} /> : state.text}
       </pre>
       {state.truncated && (
         <p className="mt-3 text-xs text-neutral-400">Preview truncated — download for the full file.</p>
@@ -103,7 +105,7 @@ function Body({ asset }: { asset: ViewableAsset }) {
         />
       );
     default:
-      return <TextBody url={url} />;
+      return <TextBody asset={asset} />;
   }
 }
 
