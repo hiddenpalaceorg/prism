@@ -346,12 +346,13 @@ final class AppModel: ObservableObject {
 
     // MARK: - Asset viewer
 
-    /// Open one extracted asset. Media kinds go to the default app via a temp
-    /// copy carrying the original filename (blobs are extensionless, so the
-    /// store path alone can't pick a handler). Text and source kinds preview
-    /// in-app only: shell-opening a `.sh`/`.bat`/`.js` from an untrusted disc
-    /// could hand it to something that executes it. Binary kinds (unidentified
-    /// files' head snippets) preview in-app as a hex dump.
+    /// Open one extracted asset. Media and document kinds go to the default
+    /// app via a temp copy carrying the original filename (blobs are
+    /// extensionless, so the store path alone can't pick a handler) — PDFs
+    /// land in Preview. Text and source kinds preview in-app only:
+    /// shell-opening a `.sh`/`.bat`/`.js` from an untrusted disc could hand
+    /// it to something that executes it. Binary kinds (unidentified files'
+    /// head snippets) preview in-app as a hex dump.
     func openAsset(_ asset: AssetInfo) {
         guard let blob = asset.blobPath else {
             status = "Asset not in the local store — re-analyze the image to extract it."

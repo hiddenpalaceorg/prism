@@ -69,6 +69,25 @@ def test_sniff_tiff_magic_and_case_insensitive_extension():
     assert not viewable.sniff(b"Not a TIFF at all, honest.", "image/tiff")
 
 
+def test_classify_documents():
+    assert viewable.classify("/COMIC/BOOK.PDF") == ("document", "application/pdf")
+    assert viewable.classify("/ART/LOGO.EPS") == ("document", "application/postscript")
+    assert viewable.classify("/ART/banner.ps") == ("document", "application/postscript")
+    # Classic Illustrator files are EPS under the hood (Visual Park's clipart).
+    assert viewable.classify("/CLIPART/CLIP0001.AI") == ("document", "application/postscript")
+
+
+def test_sniff_documents():
+    assert viewable.sniff(b"%PDF-1.4\r%\xe2\xe3\xcf\xd3\r\n176 0 obj", "application/pdf")
+    assert not viewable.sniff(b"%!PS-Adobe-3.0 EPSF-3.0\r\n", "application/pdf")
+    assert viewable.sniff(b"%!PS-Adobe-3.0 \r\n%%Creator: Adobe Illustrator(TM) 5.0", "application/postscript")
+    # DOS EPS binary wrapper (preview + PostScript behind a 4-byte magic).
+    assert viewable.sniff(b"\xc5\xd0\xd3\xc6\x20\x00\x00\x00", "application/postscript")
+    # Game data squatting on .ai (Eternal Champions' 68k blobs) must not pass.
+    assert not viewable.sniff(b"\x00\x00\x00\x00\x00\x18\x00\x00\x00\x00C\xfa\x02\xae0<", "application/postscript")
+    assert not viewable.sniff(b"%PDF-1.4 pdf bytes under a .ai name", "application/postscript")
+
+
 def test_sniff_text_accepts_legacy_encodings_rejects_binary():
     # Shift-JIS bytes are >= 0x80 — must pass the text heuristic.
     assert viewable.sniff("日本語のテキスト".encode("shift_jis"), "text/plain")

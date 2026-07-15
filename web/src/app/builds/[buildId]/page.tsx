@@ -17,7 +17,7 @@ import AssetViewerHost from "./AssetViewerHost";
 
 // The assets section previews at most this many items per kind; the rest live
 // on /builds/<id>/assets.
-const ASSET_PREVIEW_PER_KIND = { image: 30, audio: 20, video: 10, source: 10, text: 10, binary: 9 };
+const ASSET_PREVIEW_PER_KIND = { image: 30, audio: 20, video: 10, document: 12, source: 10, text: 10, binary: 9 };
 
 export const runtime = "nodejs";
 // The corpus only changes at ingest; render once and serve cached for an hour

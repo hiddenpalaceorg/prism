@@ -66,6 +66,20 @@ def test_tiff_ships_as_image(tmp_path):
     assert blob(tmp_path, a["sha256"]) == tif
 
 
+def test_documents_ship_whole_and_imposter_degrades(tmp_path):
+    pdf = b"%PDF-1.4\r%\xe2\xe3\xcf\xd3\r\n1 0 obj\r<<>>\rendobj\r%%EOF"
+    eps = b"%!PS-Adobe-3.0 \r\n%%Creator: Adobe Illustrator(TM) 5.0\r\n%%EOF\r\n"
+    fake = b"\x00\x00\x00\x00\x00\x18\x00\x00\x00\x00C\xfa\x02\xae0<" + bytes(50)
+    assets = extract({"/COMIC/BOOK.PDF": pdf, "/ART/CLIP0001.AI": eps, "/BLAD.AI": fake}, tmp_path)
+    a = assets["/COMIC/BOOK.PDF"]
+    assert (a["kind"], a["mime"], a["size"]) == ("document", "application/pdf", len(pdf))
+    assert blob(tmp_path, a["sha256"]) == pdf
+    a = assets["/ART/CLIP0001.AI"]
+    assert (a["kind"], a["mime"], a["size"]) == ("document", "application/postscript", len(eps))
+    # Game data squatting on .ai stays a hex snippet.
+    assert assets["/BLAD.AI"]["kind"] == viewable.SNIPPET_KIND
+
+
 def test_unidentified_files_ship_head_snippet(tmp_path):
     data = bytes(range(256)) * 20  # 5120 bytes of binary
     assets = extract({"/DATA/GAME.TIM": data}, tmp_path)

@@ -15,15 +15,22 @@ export const runtime = "nodejs";
 const CACHE = "public, max-age=31536000, immutable";
 
 // Defense against a hostile mime smuggled in through the submissions API: only
-// media types and bare text/plain are ever served inline. text/html (or
+// media types, PDF, and bare text/plain are ever served inline. text/html (or
 // anything else surprising) becomes a plain download instead of a document
 // that could script against this origin. The CSP sandbox below backstops even
 // the inline types (e.g. SVG's script capability when opened as a document).
 function servableMime(mime: string): boolean {
-  return mime === "text/plain" || /^(image|audio|video)\/[\w.+-]+$/.test(mime);
+  return mime === "text/plain" || mime === "application/pdf" || /^(image|audio|video)\/[\w.+-]+$/.test(mime);
 }
 
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+
+// PDFs render in the browser's PDF viewer, which `sandbox` blocks (Chrome
+// treats a sandboxed response as plugin-forbidden and downloads instead).
+// Dropping the directive is safe for this type only: with nosniff the
+// response can never be reinterpreted as HTML, and script inside a PDF runs
+// in the viewer's isolated world, not against this origin.
+const PDF_CSP = "default-src 'none'; style-src 'unsafe-inline'";
 
 // Asset metadata is immutable for a given content hash — cache the row lookup
 // so a screenshot gallery's burst of first-loads costs one query, not N.
@@ -85,7 +92,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
     "Cache-Control": CACHE,
     ETag: `"${sha256}"`,
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": CSP,
+    "Content-Security-Policy": meta.mime === "application/pdf" && inline ? PDF_CSP : CSP,
     "Accept-Ranges": "bytes",
   };
 

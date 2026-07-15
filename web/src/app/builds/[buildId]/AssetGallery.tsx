@@ -1,7 +1,8 @@
 "use client";
 
 // Grouped preview of a build's viewable assets: image thumbnails, audio embeds
-// with waveforms, small video players, text excerpt cards, hex-preview cards
+// with waveforms, small video players, document cards with server-rasterized
+// previews, text excerpt cards, hex-preview cards
 // for unidentified files' head snippets. The server page passes an
 // already-capped subset plus the full per-kind totals; when a kind is
 // truncated, a "view all" affordance links to <buildHref>/assets.
@@ -18,6 +19,7 @@ const SECTIONS: { kind: string; title: string }[] = [
   { kind: "image", title: "Images" },
   { kind: "audio", title: "Audio" },
   { kind: "video", title: "Video" },
+  { kind: "document", title: "Documents" },
   { kind: "source", title: "Source code" },
   { kind: "text", title: "Text" },
   { kind: "binary", title: "Unidentified" },
@@ -104,6 +106,33 @@ export default function AssetGallery({
                     title={a.path}
                     className="h-36 rounded border border-neutral-200 dark:border-neutral-800"
                   />
+                ))}
+              </div>
+            )}
+
+            {kind === "document" && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {group.map((a) => (
+                  <button
+                    key={a.path}
+                    onClick={() => open(a)}
+                    title={a.path}
+                    className="flex w-32 flex-col overflow-hidden rounded border border-neutral-200 hover:border-sky-400 dark:border-neutral-800 dark:hover:border-sky-600"
+                  >
+                    {/* Server-rasterized first page/artwork; the card stays
+                        useful without it (no Ghostscript on the server). */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`${assetUrl(a)}/png`}
+                      alt={a.path}
+                      loading="lazy"
+                      className="h-24 w-full bg-white object-contain"
+                      onError={(e) => (e.currentTarget.style.display = "none")}
+                    />
+                    <span className="w-full truncate px-2 py-1 text-left font-mono text-[11px] text-sky-700 dark:text-sky-400">
+                      {baseName(a.path)}
+                    </span>
+                  </button>
                 ))}
               </div>
             )}

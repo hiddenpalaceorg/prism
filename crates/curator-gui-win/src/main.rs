@@ -983,10 +983,11 @@ mod app {
     }
 
     /// Display order + section titles for asset kinds — mirrors the web build pages.
-    const ASSET_KINDS: [(&str, &str); 6] = [
+    const ASSET_KINDS: [(&str, &str); 7] = [
         ("image", "Images"),
         ("audio", "Audio"),
         ("video", "Video"),
+        ("document", "Documents"),
         ("source", "Source code"),
         ("text", "Text"),
         ("binary", "Unidentified"),
@@ -1874,10 +1875,11 @@ mod app {
 
     // ---- asset viewer ----
 
-    /// Open the asset at `assets[idx]`. Media kinds go to their default app via a
-    /// temp copy carrying the original filename (store blobs are extensionless, so
-    /// the shell can't pick a handler for them directly); TGA images are staged
-    /// as BMP because stock Windows has no TGA handler. Text and source kinds
+    /// Open the asset at `assets[idx]`. Media and document kinds go to their
+    /// default app via a temp copy carrying the original filename (store blobs
+    /// are extensionless, so the shell can't pick a handler for them directly)
+    /// — PDFs land in the default PDF viewer; TGA images are staged as BMP
+    /// because stock Windows has no TGA handler. Text and source kinds
     /// always open in Notepad: handing a `.bat`/`.cmd`/`.js` from an untrusted
     /// disc to the shell's default verb would execute it. Binary kinds
     /// (unidentified files' head snippets) open in Notepad as a hex dump.

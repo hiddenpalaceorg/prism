@@ -467,13 +467,14 @@ struct DocumentView: View {
 // MARK: - Assets (browser-viewable files extracted from the build)
 
 /// Display order for asset kinds — mirrors the web build pages.
-private let assetKindOrder = ["image", "audio", "video", "source", "text", "binary"]
+private let assetKindOrder = ["image", "audio", "video", "document", "source", "text", "binary"]
 
 private func assetKindIcon(_ kind: String) -> String {
     switch kind {
     case "image": return "photo"
     case "audio": return "music.note"
     case "video": return "film"
+    case "document": return "doc.richtext"
     case "source": return "chevron.left.forwardslash.chevron.right"
     case "binary": return "number"
     default: return "doc.text"
