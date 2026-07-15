@@ -167,7 +167,7 @@ mod app {
         node_sections: Vec<Section>,
         /// Sections for the currently selected tree node.
         selected_sections: Vec<Section>,
-        /// Web service base URL (CURATOR_WEB_URL, default http://localhost:3001).
+        /// Web service base URL (CURATOR_WEB_URL, default https://hiddenpalace.org).
         web_url: String,
         /// The "Recent" submenu and the sha256s backing its items (by position).
         recent_menu: HMENU,
@@ -558,7 +558,7 @@ mod app {
             node_sections: Vec::new(),
             selected_sections: Vec::new(),
             web_url: std::env::var("CURATOR_WEB_URL")
-                .unwrap_or_else(|_| "http://localhost:3001".to_string()),
+                .unwrap_or_else(|_| "https://hiddenpalace.org".to_string()),
             recent_menu,
             recent: Vec::new(),
             library_mode: false,

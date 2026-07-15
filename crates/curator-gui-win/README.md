@@ -24,7 +24,7 @@ Excluded from the root workspace so non-Windows `cargo build` skips it.
   **WinHTTP**) and lists tiered neighbors in the document pane.
 - **Analysis ▸ Submit Build…** — a small modal nickname prompt, then POSTs
   `{nickname, record}` to `/api/submissions`. Web base URL from `CURATOR_WEB_URL`
-  (default `http://localhost:3001`). Both calls run on a worker thread.
+  (default `https://hiddenpalace.org`). Both calls run on a worker thread.
 
 ## Build / check
 

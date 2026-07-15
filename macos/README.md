@@ -28,7 +28,7 @@ producing a static lib the app links. It exposes:
 The app finds the adapter in this order: `CURATOR_ADAPTER_BIN` →
 `Curator.app/Contents/Resources/adapter/curator-adapter` (embedded) →
 `CURATOR_ADAPTER_DIR` → `../ps2exe-adapter` (dev). Similarity/submit talk to the web
-service at `CURATOR_WEB_URL` (default `http://localhost:3001`).
+service at `CURATOR_WEB_URL` (default `https://hiddenpalace.org`).
 
 ## Build & run
 
