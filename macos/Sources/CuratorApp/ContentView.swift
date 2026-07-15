@@ -467,7 +467,7 @@ struct DocumentView: View {
 // MARK: - Assets (browser-viewable files extracted from the build)
 
 /// Display order for asset kinds — mirrors the web build pages.
-private let assetKindOrder = ["image", "audio", "video", "source", "text"]
+private let assetKindOrder = ["image", "audio", "video", "source", "text", "binary"]
 
 private func assetKindIcon(_ kind: String) -> String {
     switch kind {
@@ -475,12 +475,17 @@ private func assetKindIcon(_ kind: String) -> String {
     case "audio": return "music.note"
     case "video": return "film"
     case "source": return "chevron.left.forwardslash.chevron.right"
+    case "binary": return "number"
     default: return "doc.text"
     }
 }
 
 private func assetKindTitle(_ kind: String) -> String {
-    kind == "source" ? "Source code" : kind.capitalized
+    switch kind {
+    case "source": return "Source code"
+    case "binary": return "Unidentified"
+    default: return kind.capitalized
+    }
 }
 
 struct AssetsView: View {
@@ -501,7 +506,7 @@ struct AssetsView: View {
                 systemImage: "photo.on.rectangle",
                 message: summary.assets == nil
                     ? "Asset extraction hasn't run for this build yet — re-analyze the image to extract viewable files."
-                    : "This build carries no browser-viewable images, audio, video, source, or text."
+                    : "This build carries no extractable assets."
             )
         } else {
             ScrollView {
@@ -600,7 +605,7 @@ struct AssetMenu: View {
     let asset: AssetInfo
 
     var body: some View {
-        Button(asset.kind == "text" || asset.kind == "source" ? "Preview" : "Open") { model.openAsset(asset) }
+        Button(["text", "source", "binary"].contains(asset.kind) ? "Preview" : "Open") { model.openAsset(asset) }
         Button("Copy SHA-256") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(asset.sha256, forType: .string)
@@ -608,7 +613,8 @@ struct AssetMenu: View {
     }
 }
 
-/// In-app viewer for text assets (they are never handed to the shell).
+/// In-app viewer for text assets (they are never handed to the shell) and for
+/// unidentified files' head snippets rendered as hex dumps.
 struct AssetTextSheet: View {
     let preview: AssetTextPreview
     @Environment(\.dismiss) private var dismiss
@@ -626,8 +632,8 @@ struct AssetTextSheet: View {
             .frame(minWidth: 480, minHeight: 240, maxHeight: 480)
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
             HStack {
-                if preview.truncated {
-                    Text("Preview truncated to the first 256 KB.")
+                if let note = preview.note {
+                    Text(note)
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()

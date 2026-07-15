@@ -1,0 +1,87 @@
+import hashlib
+import io
+
+from curator_adapter import viewable
+from curator_adapter.cli import _extract_assets
+from curator_adapter.progress import ProgressManager
+
+
+class FakeReader:
+    """Minimal reader: files as {path: bytes}."""
+
+    def __init__(self, files):
+        self.files = list(files.items())
+
+    def get_root_dir(self):
+        return None
+
+    def iso_iterator(self, _root, recursive=True, include_dirs=False):
+        return iter(range(len(self.files)))
+
+    def get_file_path(self, f):
+        return self.files[f][0]
+
+    def get_file_size(self, f):
+        return len(self.files[f][1])
+
+    def open_file(self, f):
+        return io.BytesIO(self.files[f][1])
+
+
+def extract(files, tmp_path):
+    out = _extract_assets(FakeReader(files), str(tmp_path), ProgressManager())
+    return {a["path"]: a for a in out}
+
+
+def blob(tmp_path, sha):
+    return (tmp_path / sha[:2] / sha).read_bytes()
+
+
+def test_viewable_files_ship_whole(tmp_path):
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    assets = extract({"/GFX/TITLE.PNG": png}, tmp_path)
+    a = assets["/GFX/TITLE.PNG"]
+    assert (a["kind"], a["mime"], a["size"]) == ("image", "image/png", len(png))
+    assert blob(tmp_path, a["sha256"]) == png
+
+
+def test_unidentified_files_ship_head_snippet(tmp_path):
+    data = bytes(range(256)) * 20  # 5120 bytes of binary
+    assets = extract({"/DATA/GAME.TIM": data}, tmp_path)
+    a = assets["/DATA/GAME.TIM"]
+    assert (a["kind"], a["mime"]) == (viewable.SNIPPET_KIND, viewable.SNIPPET_MIME)
+    assert a["size"] == viewable.SNIPPET_BYTES
+    head = data[: viewable.SNIPPET_BYTES]
+    assert a["sha256"] == hashlib.sha256(head).hexdigest()
+    assert blob(tmp_path, a["sha256"]) == head
+
+
+def test_snippet_of_short_file_is_whole_file(tmp_path):
+    data = b"MZ\x90\x00tiny"
+    assets = extract({"/BOOT.XBE": data}, tmp_path)
+    a = assets["/BOOT.XBE"]
+    assert a["kind"] == viewable.SNIPPET_KIND
+    assert a["size"] == len(data)
+    assert blob(tmp_path, a["sha256"]) == data
+
+
+def test_sniff_mismatch_falls_back_to_snippet(tmp_path):
+    renamed = b"MZ\x00\x01\x02\x03" + bytes(range(1, 32)) * 100  # binary named .TXT
+    assets = extract({"/README.TXT": renamed}, tmp_path)
+    a = assets["/README.TXT"]
+    assert a["kind"] == viewable.SNIPPET_KIND
+    assert a["size"] == viewable.SNIPPET_BYTES
+    assert blob(tmp_path, a["sha256"]) == renamed[: viewable.SNIPPET_BYTES]
+
+
+def test_oversized_viewable_demoted_to_snippet(tmp_path, monkeypatch):
+    monkeypatch.setattr(viewable, "MAX_ASSET_SIZE", 64)
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 200
+    assets = extract({"/BIG.PNG": png}, tmp_path)
+    a = assets["/BIG.PNG"]
+    assert a["kind"] == viewable.SNIPPET_KIND
+    assert blob(tmp_path, a["sha256"]) == png[: viewable.SNIPPET_BYTES]
+
+
+def test_empty_files_are_skipped(tmp_path):
+    assert extract({"/EMPTY.BIN": b""}, tmp_path) == {}

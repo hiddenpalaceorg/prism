@@ -12,7 +12,7 @@ import { type ViewableAsset } from "./AssetViewer";
 import { useOpenAsset } from "./AssetViewerHost";
 
 // Chip label on viewable file rows, by asset kind.
-const KIND_TAG: Record<string, string> = { image: "img", audio: "aud", video: "vid", source: "src", text: "txt" };
+const KIND_TAG: Record<string, string> = { image: "img", audio: "aud", video: "vid", source: "src", text: "txt", binary: "hex" };
 
 function humanSize(bytes?: number): string {
   if (bytes == null) return "—";

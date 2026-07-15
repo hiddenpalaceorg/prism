@@ -263,6 +263,7 @@ mod tests {
             chunk_signature: None,
             resemblance: None,
             assets: None,
+            asset_profile: 0,
         }
     }
 

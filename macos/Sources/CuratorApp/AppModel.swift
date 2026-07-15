@@ -32,12 +32,14 @@ enum DetailTab: Hashable {
 }
 
 /// An in-app preview of one text asset (never shell-opened — a `.sh`/`.bat`/`.js`
-/// from an untrusted disc must not reach an app that might execute it).
+/// from an untrusted disc must not reach an app that might execute it) or of an
+/// unidentified file's head snippet rendered as a hex dump.
 struct AssetTextPreview: Identifiable {
     let id: String // asset sha256
     let name: String
     let text: String
-    let truncated: Bool
+    /// Caption under the preview (truncation / snippet notice), if any.
+    let note: String?
 }
 
 /// Forwards UniFFI progress callbacks (delivered on a background thread) to a main-actor sink.
@@ -332,10 +334,15 @@ final class AppModel: ObservableObject {
     /// copy carrying the original filename (blobs are extensionless, so the
     /// store path alone can't pick a handler). Text and source kinds preview
     /// in-app only: shell-opening a `.sh`/`.bat`/`.js` from an untrusted disc
-    /// could hand it to something that executes it.
+    /// could hand it to something that executes it. Binary kinds (unidentified
+    /// files' head snippets) preview in-app as a hex dump.
     func openAsset(_ asset: AssetInfo) {
         guard let blob = asset.blobPath else {
             status = "Asset not in the local store — re-analyze the image to extract it."
+            return
+        }
+        if asset.kind == "binary" {
+            previewHexAsset(asset, blob: blob)
             return
         }
         if asset.kind == "text" || asset.kind == "source" {
@@ -368,8 +375,51 @@ final class AppModel: ObservableObject {
             id: asset.sha256,
             name: (asset.path as NSString).lastPathComponent,
             text: text,
-            truncated: asset.size > UInt64(capBytes)
+            note: asset.size > UInt64(capBytes) ? "Preview truncated to the first 256 KB." : nil
         )
+    }
+
+    /// The analyzer stores only this much of an unidentified file (viewable.py
+    /// SNIPPET_BYTES) — a blob this long is (almost surely) a truncated head.
+    private static let snippetBytes = 2048
+
+    /// Show an unidentified file's stored head snippet as an xxd-style hex dump.
+    private func previewHexAsset(_ asset: AssetInfo, blob: String) {
+        guard let data = FileManager.default.contents(atPath: blob) else {
+            status = "Couldn't read asset from the local store."
+            return
+        }
+        assetPreview = AssetTextPreview(
+            id: asset.sha256,
+            name: (asset.path as NSString).lastPathComponent,
+            text: hexDump(data),
+            note: asset.size >= UInt64(Self.snippetBytes)
+                ? "Unidentified file — only its first 2 KB is stored." : nil
+        )
+    }
+
+    /// Classic xxd layout: 8-hex offset, 16 bytes as 2-byte groups, ASCII gutter.
+    /// Rendered at display time from the raw stored bytes, so the layout can
+    /// change without re-analyzing anything.
+    private func hexDump(_ data: Data) -> String {
+        var out = ""
+        var offset = 0
+        while offset < data.count {
+            let end = min(offset + 16, data.count)
+            out += String(format: "%08x: ", offset)
+            for j in 0..<16 {
+                out += offset + j < end ? String(format: "%02x", data[data.startIndex + offset + j]) : "  "
+                if j % 2 == 1 { out += " " }
+            }
+            out += " "
+            for i in offset..<end {
+                let b = data[data.startIndex + i]
+                out.append(b >= 0x20 && b < 0x7f ? Character(UnicodeScalar(b)) : ".")
+            }
+            out += "\n"
+            offset = end
+        }
+        return out
     }
 
     /// Copy a blob into a per-asset temp dir under its original filename so

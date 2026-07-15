@@ -4,6 +4,7 @@
 
 import path from "node:path";
 import { open } from "node:fs/promises";
+import { hexPreview } from "./hexdump";
 
 /** Root of the blob store. Blobs live at `<root>/<sha256[:2]>/<sha256>`. */
 export function assetStoreDir(): string {
@@ -23,7 +24,7 @@ export function assetStagingPath(sha256: string): string {
 }
 
 /** Display order for asset kinds on the build pages. */
-export const ASSET_KIND_ORDER = ["image", "audio", "video", "source", "text"] as const;
+export const ASSET_KIND_ORDER = ["image", "audio", "video", "source", "text", "binary"] as const;
 
 /** Per-kind asset counts. */
 export function assetTotals(assets: { kind: string }[]): Record<string, number> {
@@ -43,21 +44,54 @@ export function orderAssets<T extends { kind: string }>(
   return ASSET_KIND_ORDER.flatMap((k) => assets.filter((a) => a.kind === k).slice(0, cap(k)));
 }
 
-/** Leading bytes of a text blob decoded as lossy UTF-8 for an excerpt card, or
- *  null when the blob is missing from the store. */
-export async function readAssetExcerpt(sha256: string, maxBytes = 2048): Promise<string | null> {
+/** Leading bytes of a blob, or null when it is missing from the store. */
+export async function readAssetBytes(sha256: string, maxBytes = 2048): Promise<Buffer | null> {
   let fh;
   try {
     fh = await open(assetBlobPath(sha256), "r");
     const buf = Buffer.alloc(maxBytes);
     const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
-    return new TextDecoder("utf-8", { fatal: false })
-      .decode(buf.subarray(0, bytesRead))
-      .replace(/\u0000/g, "")
-      .replace(/\r\n?/g, "\n");
+    return buf.subarray(0, bytesRead);
   } catch {
     return null;
   } finally {
     await fh?.close();
   }
+}
+
+/** Leading bytes of a text blob decoded as lossy UTF-8 for an excerpt card, or
+ *  null when the blob is missing from the store. */
+export async function readAssetExcerpt(sha256: string, maxBytes = 2048): Promise<string | null> {
+  const buf = await readAssetBytes(sha256, maxBytes);
+  if (buf === null) return null;
+  return new TextDecoder("utf-8", { fatal: false })
+    .decode(buf)
+    .replace(/\u0000/g, "")
+    .replace(/\r\n?/g, "\n");
+}
+
+/** Kinds whose gallery cards carry a server-read preview of the blob's head. */
+const EXCERPT_KINDS = new Set(["source", "text", "binary"]);
+
+/** path -> preview text for the gallery cards: a lossy-UTF-8 excerpt for
+ *  source/text, spaced hex pairs for binary head snippets. Reads are tiny but
+ *  `cap` bounds them on builds with pathological file counts. */
+export async function assetExcerpts(
+  assets: { path: string; sha256: string; kind: string }[],
+  cap = Infinity
+): Promise<Record<string, string>> {
+  return Object.fromEntries(
+    await Promise.all(
+      assets
+        .filter((a) => EXCERPT_KINDS.has(a.kind))
+        .slice(0, cap)
+        .map(async (a) => {
+          if (a.kind === "binary") {
+            const bytes = await readAssetBytes(a.sha256, 96);
+            return [a.path, bytes ? hexPreview(bytes) : ""] as const;
+          }
+          return [a.path, (await readAssetExcerpt(a.sha256)) ?? ""] as const;
+        })
+    )
+  );
 }

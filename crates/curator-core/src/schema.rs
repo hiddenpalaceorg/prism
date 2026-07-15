@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 pub const RECORD_SCHEMA_VERSION: u32 = 1;
 /// Algorithm manifest in force. See `fingerprint::profile`.
 pub const FINGERPRINT_PROFILE: &str = "v1";
+/// Asset-extraction generation. 1 = browser-viewable kinds only (implicit in
+/// records that predate the field, which deserialize to 0); 2 = also head
+/// snippets (`kind: "binary"`) for every file that isn't viewable. A record
+/// below the current value gets its assets re-extracted on the next analyze.
+pub const ASSET_PROFILE: u32 = 2;
 
 /// A fully analyzed disc image / container — image-independent and self-describing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,11 +41,16 @@ pub struct BuildRecord {
     /// Byte-shingle resemblance signature (OPH). Survives many small scattered edits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resemblance: Option<Signature>,
-    /// Browser-viewable files extracted into the asset store (images, audio,
-    /// text ≤ 20MB). `None` = extraction never ran (pre-assets record — analyze
-    /// tops it up on the next cache hit); `Some(vec![])` = ran, nothing viewable.
+    /// Files extracted into the asset store: browser-viewable ones whole
+    /// (images, audio, text ≤ 20MB), everything else as a raw head snippet for
+    /// the hex view. `None` = extraction never ran (pre-assets record — analyze
+    /// tops it up on the next cache hit); `Some(vec![])` = ran, nothing kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets: Option<Vec<AssetRef>>,
+    /// [`ASSET_PROFILE`] the assets were extracted under; analyze re-extracts
+    /// when it lags the current constant, so collections backfill on re-runs.
+    #[serde(default)]
+    pub asset_profile: u32,
 }
 
 /// One extracted asset: where it sat on the disc and how to serve it. The blob
@@ -52,7 +62,7 @@ pub struct AssetRef {
     pub sha256: String,
     pub size: u64,
     pub mime: String,
-    pub kind: String, // "image" | "audio" | "video" | "source" | "text"
+    pub kind: String, // "image" | "audio" | "video" | "source" | "text" | "binary" (head snippet)
 }
 
 /// Image-level identity. `sha256` is the primary key everywhere.
@@ -355,6 +365,7 @@ mod tests {
             chunk_signature: None,
             resemblance: None,
             assets: None,
+            asset_profile: 0,
         };
         let j = serde_json::to_string(&rec).unwrap();
         assert!(!j.contains("\"header\""), "empty header should be skipped: {j}");

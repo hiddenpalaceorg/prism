@@ -964,12 +964,13 @@ mod app {
     }
 
     /// Display order + section titles for asset kinds — mirrors the web build pages.
-    const ASSET_KINDS: [(&str, &str); 5] = [
+    const ASSET_KINDS: [(&str, &str); 6] = [
         ("image", "Images"),
         ("audio", "Audio"),
         ("video", "Video"),
         ("source", "Source code"),
         ("text", "Text"),
+        ("binary", "Unidentified"),
     ];
 
     /// Fill the grouped ListView with the loaded build's assets (one group per kind)
@@ -983,7 +984,7 @@ mod app {
                 rows: vec![(
                     "Status".into(),
                     if st.assets_extracted {
-                        "No browser-viewable assets in this build.".into()
+                        "No extractable assets in this build.".into()
                     } else {
                         "Asset extraction hasn't run for this build — re-analyze the image.".into()
                     },
@@ -1856,7 +1857,8 @@ mod app {
     /// temp copy carrying the original filename (store blobs are extensionless, so
     /// the shell can't pick a handler for them directly). Text and source kinds
     /// always open in Notepad: handing a `.bat`/`.cmd`/`.js` from an untrusted
-    /// disc to the shell's default verb would execute it.
+    /// disc to the shell's default verb would execute it. Binary kinds
+    /// (unidentified files' head snippets) open in Notepad as a hex dump.
     unsafe fn open_asset_at(hwnd: HWND, idx: usize) {
         ensure_reader(hwnd);
         let (asset, blob) = {
@@ -1869,7 +1871,12 @@ mod app {
             set_status(hwnd, "Asset not in the local store — re-analyze the image to extract it.");
             return;
         };
-        let path = match materialize_asset(&asset, &blob) {
+        let staged = if asset.kind == "binary" {
+            materialize_hexdump(&asset, &blob)
+        } else {
+            materialize_asset(&asset, &blob)
+        };
+        let path = match staged {
             Ok(p) => p,
             Err(e) => {
                 set_status(hwnd, &format!("Couldn't stage asset: {e}"));
@@ -1877,7 +1884,7 @@ mod app {
             }
         };
         let path_str = path.to_string_lossy().into_owned();
-        let launched = if matches!(asset.kind.as_str(), "text" | "source") {
+        let launched = if matches!(asset.kind.as_str(), "text" | "source" | "binary") {
             let args = wide(&format!("\"{path_str}\""));
             ShellExecuteW(hwnd, w!("open"), w!("notepad.exe"), PCWSTR(args.as_ptr()), PCWSTR::null(), SW_SHOWNORMAL)
         } else {
@@ -1915,6 +1922,46 @@ mod app {
             std::fs::copy(blob, &dest).map_err(|e| e.to_string())?;
         }
         Ok(dest)
+    }
+
+    /// Render an unidentified file's head-snippet blob as an xxd-style dump in a
+    /// temp .txt for Notepad (the raw bytes would be garbage there). Layout
+    /// lives here, display-side — the store keeps the raw bytes.
+    fn materialize_hexdump(asset: &AssetRef, blob: &std::path::Path) -> std::result::Result<PathBuf, String> {
+        let dir = std::env::temp_dir().join("curator-assets").join(&asset.sha256);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let dest = dir.join("hexdump.txt");
+        if !dest.exists() {
+            let data = std::fs::read(blob).map_err(|e| e.to_string())?;
+            std::fs::write(&dest, hexdump(&data)).map_err(|e| e.to_string())?;
+        }
+        Ok(dest)
+    }
+
+    /// Classic xxd layout: 8-hex offset, 16 bytes as 2-byte groups, ASCII gutter.
+    fn hexdump(data: &[u8]) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::with_capacity(data.len() * 5);
+        for (i, row) in data.chunks(16).enumerate() {
+            let _ = write!(out, "{:08x}: ", i * 16);
+            for j in 0..16 {
+                match row.get(j) {
+                    Some(b) => {
+                        let _ = write!(out, "{b:02x}");
+                    }
+                    None => out.push_str("  "),
+                }
+                if j % 2 == 1 {
+                    out.push(' ');
+                }
+            }
+            out.push(' ');
+            for &b in row {
+                out.push(if (0x20..0x7f).contains(&b) { b as char } else { '.' });
+            }
+            out.push_str("\r\n");
+        }
+        out
     }
 
     // ---- web service: Find Similar / Submit ----

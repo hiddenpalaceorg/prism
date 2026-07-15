@@ -4,7 +4,7 @@ import { notFound, permanentRedirect } from "next/navigation";
 import type { Pool } from "pg";
 import { getPool } from "@/lib/db";
 import { getBuildAssets, resolveBuild, type BuildAsset } from "@/lib/queries";
-import { assetTotals, orderAssets, readAssetExcerpt } from "@/lib/assets";
+import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
 import { pngConvertible, WEB_SAFE_IMAGE } from "@/lib/imgpng";
 import { humanSize } from "@/lib/meta";
 import { canonicalBuildId, parseBuildParam, safeDecodeSegment } from "@/lib/slug";
@@ -112,14 +112,7 @@ export default async function BuildAssetsPage({
 
   const assets = await getBuildAssets(pool, sha256);
   const ordered = orderAssets(assets);
-  const excerpts = Object.fromEntries(
-    await Promise.all(
-      ordered
-        .filter((a) => a.kind === "source" || a.kind === "text")
-        .slice(0, MAX_EXCERPT_READS)
-        .map(async (a) => [a.path, (await readAssetExcerpt(a.sha256)) ?? ""] as const)
-    )
-  );
+  const excerpts = await assetExcerpts(ordered, MAX_EXCERPT_READS);
 
   // Deep link: open the viewer on the named file. Unknown paths (e.g. a file
   // that exists but isn't viewable) just render the plain gallery.
