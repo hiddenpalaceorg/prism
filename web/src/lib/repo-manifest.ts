@@ -262,10 +262,15 @@ export interface RepoLogEntryDto extends FileLogEntry {
   message: string;
 }
 
-/** "YYYY-MM-DD HH:MM" in the identity's own timezone (git log's convention). */
+/** The identity's wall-clock moment shifted to UTC — read it with the getUTC*
+ *  accessors to see the author's own local calendar (git log's convention). */
+export function identLocalDate(ident: RepoIdent): Date {
+  return new Date((ident.time - ident.tz * 60) * 1000);
+}
+
+/** "YYYY-MM-DD HH:MM" in the identity's own timezone. */
 export function formatCommitDate(ident: RepoIdent): string {
-  const local = new Date((ident.time - ident.tz * 60) * 1000);
-  return local.toISOString().slice(0, 16).replace("T", " ");
+  return identLocalDate(ident).toISOString().slice(0, 16).replace("T", " ");
 }
 
 /** First line of a commit message. */
