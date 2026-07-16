@@ -73,6 +73,16 @@ export default function RepoViewer({
   const [treeError, setTreeError] = useState(false);
   const [log, setLog] = useState<LogState>(initialLog ?? "loading");
 
+  // Whatever the main panel now shows, show it from the top — clicking a
+  // commit deep in an 11k-row history must not leave the new view scrolled to
+  // nowhere. Instant, not smooth. The panel scrolls internally at lg+, the
+  // window below that.
+  const mainRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, behavior: "instant" });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [view.path, view.diff, revOid]);
+
   const navigate = useCallback(
     (next: View, oid?: string) => {
       const qs = new URLSearchParams();
@@ -211,7 +221,7 @@ export default function RepoViewer({
         </div>
       </aside>
 
-      <section className="min-w-0 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable]">
+      <section ref={mainRef} className="min-w-0 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable]">
         {view.path !== null ? (
           view.diff !== null ? (
             <RepoDiffView apiBase={apiBase} path={view.path} log={log} diffOid={view.diff} onClose={closeDiff} />
