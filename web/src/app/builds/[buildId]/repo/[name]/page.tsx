@@ -29,6 +29,7 @@ interface Search {
   rev?: string | string[];
   path?: string | string[];
   diff?: string | string[];
+  blame?: string | string[];
 }
 
 const one = (v: string | string[] | undefined): string => (typeof v === "string" ? v : "");
@@ -115,6 +116,7 @@ export default async function RepoPage({
     if (one(sp.rev)) qs.set("rev", one(sp.rev));
     if (one(sp.path)) qs.set("path", one(sp.path));
     if (one(sp.diff)) qs.set("diff", one(sp.diff));
+    if (one(sp.blame)) qs.set("blame", one(sp.blame));
     permanentRedirect(`${repoHrefOf(canonical, name)}${qs.size ? `?${qs}` : ""}`);
   }
 
@@ -214,6 +216,7 @@ export default async function RepoPage({
         initialRevOid={revOid}
         initialPath={path}
         initialDiff={diff}
+        initialBlame={path !== null && one(sp.blame) === "1"}
         initialRoots={pruneToExpanded(tree, expanded)}
         initialExpandedPaths={[...expanded]}
         initialTotal={commits.total}

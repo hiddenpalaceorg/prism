@@ -16,7 +16,7 @@ export interface DiffRow {
 }
 
 /** value ("a\nb\n") -> ["a","b"]; a trailing newline is not an extra line. */
-function splitLines(value: string): string[] {
+export function splitLines(value: string): string[] {
   const lines = value.split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
   return lines;
