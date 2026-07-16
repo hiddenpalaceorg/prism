@@ -5,15 +5,19 @@
 //
 // The output format follows what the ffmpeg build can encode: H.264/AAC MP4
 // (universal) when libx264 is present, else VP9/Opus WebM (all modern
-// browsers) for the distro builds that omit GPL components.
+// browsers) for the distro builds that omit GPL components. The cache lookup
+// accepts either extension regardless of the local profile, so a transcode
+// produced on a better-equipped machine and dropped into the store serves
+// as-is.
 //
 // Unlike the PNG conversions, a transcode is too slow to redo per request, so
 // results are cached in the blob store under .transcode/ (which can't collide
 // with the two-hex-char blob dirs) and streamed from disk with Range support.
+// Poster stills live under .thumb/ the same way.
 
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { assetBlobPath, assetStoreDir } from "./assets";
@@ -21,11 +25,25 @@ import { assetBlobPath, assetStoreDir } from "./assets";
 const execFileP = promisify(execFile);
 
 const FFMPEG_BIN = process.env.FFMPEG_BIN || "ffmpeg";
+// ffprobe normally ships beside ffmpeg; follow a custom FFMPEG_BIN's naming.
+const FFPROBE_BIN =
+  process.env.FFPROBE_BIN ||
+  (/ffmpeg[^/\\]*$/.test(FFMPEG_BIN) ? FFMPEG_BIN.replace(/ffmpeg([^/\\]*)$/, "ffprobe$1") : "ffprobe");
 
-// Inputs are capped by the analyzer (viewable.py MAX_ASSET_SIZE, 20MB), so a
-// transcode is bounded work, but MPEG-2 decode plus encoding on a modest
-// server can still take tens of seconds. Kill anything that runs away.
-const FFMPEG_TIMEOUT_MS = 120_000;
+// A 5MB trailer transcodes in seconds, a 1GiB DVD VOB is upward of an hour of
+// MPEG-2 decode + re-encode on a modest server — scale the kill switch with
+// the input instead of guessing one number for both.
+const TIMEOUT_BASE_MS = 120_000;
+const TIMEOUT_PER_MB_MS = 6_000;
+const TIMEOUT_MAX_MS = 6 * 3_600_000;
+
+function transcodeTimeoutMs(inputBytes: number): number {
+  return Math.min(TIMEOUT_BASE_MS + Math.ceil(inputBytes / 1e6) * TIMEOUT_PER_MB_MS, TIMEOUT_MAX_MS);
+}
+
+// A poster still decodes a few dozen frames even from a 1GiB input (the seek
+// is on the input side), so a flat timeout is enough.
+const THUMB_TIMEOUT_MS = 120_000;
 
 /** Mimes ensureTranscode can convert. */
 export function transcodable(mime: string): boolean {
@@ -86,37 +104,139 @@ export function transcodePath(sha256: string, ext: string): string {
   return join(assetStoreDir(), ".transcode", `${sha256}${ext}`);
 }
 
+/** Where a blob's cached poster still lives. Caller must have validated `sha256`. */
+export function thumbPath(sha256: string): string {
+  return join(assetStoreDir(), ".thumb", `${sha256}.jpg`);
+}
+
+async function nonEmpty(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** The cached transcode under either extension, no matter which profile this
+ *  server would pick — precomputed MP4s must serve from a VP9-only box. */
+async function cachedTranscode(sha256: string): Promise<{ path: string; mime: string } | null> {
+  const mp4 = transcodePath(sha256, ".mp4");
+  if (await nonEmpty(mp4)) return { path: mp4, mime: "video/mp4" };
+  const webm = transcodePath(sha256, ".webm");
+  if (await nonEmpty(webm)) return { path: webm, mime: "video/webm" };
+  return null;
+}
+
 // One transcode per blob at a time: a gallery of players can fire several
-// requests for the same asset before the first transcode finishes.
-const inFlight = new Map<string, Promise<{ path: string; mime: string }>>();
+// requests for the same asset before the first transcode finishes. The job
+// entry keeps what the status probe needs to report progress.
+interface Job {
+  promise: Promise<{ path: string; mime: string }>;
+  progressPath: string;
+  durationUs: number | null;
+}
+
+const inFlight = new Map<string, Job>();
+
+// Blobs whose last transcode attempt failed, so the status probe can answer
+// "failed" instead of letting a client poll forever. A fresh ensureTranscode
+// (a new playback attempt) clears the mark and retries.
+const failed = new Set<string>();
 
 /**
  * The cached browser-playable transcode for this blob, produced on first use.
  * Throws when ffmpeg is missing, errors on the input, or times out.
  */
 export async function ensureTranscode(sha256: string): Promise<{ path: string; mime: string }> {
+  const cached = await cachedTranscode(sha256);
+  if (cached) return cached;
+  const running = inFlight.get(sha256);
+  if (running) return running.promise;
+
   const p = await transcodeProfile();
-  if (!p) throw new Error("ffmpeg not available");
+  if (!p) {
+    failed.add(sha256); // let the status probe answer "failed", not "none" forever
+    throw new Error("ffmpeg not available");
+  }
+  failed.delete(sha256);
   const out = transcodePath(sha256, p.ext);
+  const job: Job = {
+    progressPath: `${out}.${randomBytes(4).toString("hex")}.progress`,
+    durationUs: null,
+    promise: undefined as unknown as Promise<{ path: string; mime: string }>,
+  };
+  job.promise = transcode(sha256, out, p, job)
+    .catch((err) => {
+      failed.add(sha256);
+      throw err;
+    })
+    .finally(() => {
+      inFlight.delete(sha256);
+      rm(job.progressPath, { force: true }).catch(() => {});
+    });
+  inFlight.set(sha256, job);
+  return job.promise;
+}
+
+/** Input duration in microseconds via ffprobe, or null (missing binary, or a
+ *  stream it can't put a duration on). Best-effort — only progress reporting
+ *  depends on it. */
+async function probeDurationUs(path: string): Promise<number | null> {
   try {
-    if ((await stat(out)).size > 0) return { path: out, mime: p.mime };
+    const { stdout } = await execFileP(
+      FFPROBE_BIN,
+      ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path],
+      { timeout: 15_000 }
+    );
+    const seconds = Number.parseFloat(stdout.trim());
+    return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1e6) : null;
   } catch {
-    // Not cached yet.
+    return null;
   }
-  let job = inFlight.get(sha256);
-  if (!job) {
-    job = transcode(sha256, out, p).finally(() => inFlight.delete(sha256));
-    inFlight.set(sha256, job);
+}
+
+/** Percent complete of a running job, from ffmpeg's -progress file, or null
+ *  while it hasn't started writing (or the duration is unknown). */
+async function jobPercent(job: Job): Promise<number | null> {
+  if (!job.durationUs) return null;
+  let text: string;
+  try {
+    text = await readFile(job.progressPath, "utf8");
+  } catch {
+    return null;
   }
-  return job;
+  const matches = text.match(/^out_time_us=(\d+)$/gm);
+  if (!matches?.length) return null;
+  const outUs = Number(matches[matches.length - 1].slice("out_time_us=".length));
+  return Math.max(0, Math.min(99, Math.round((outUs / job.durationUs) * 100)));
+}
+
+export type TranscodeStatus =
+  | { state: "ready"; path: string; mime: string }
+  | { state: "transcoding"; percent: number | null }
+  | { state: "failed" }
+  | { state: "none" };
+
+/** Where this blob's transcode stands, without starting one. */
+export async function transcodeStatus(sha256: string): Promise<TranscodeStatus> {
+  const cached = await cachedTranscode(sha256);
+  if (cached) return { state: "ready", ...cached };
+  const running = inFlight.get(sha256);
+  if (running) return { state: "transcoding", percent: await jobPercent(running) };
+  if (failed.has(sha256)) return { state: "failed" };
+  return { state: "none" };
 }
 
 async function transcode(
   sha256: string,
   out: string,
-  p: TranscodeProfile
+  p: TranscodeProfile,
+  job: Job
 ): Promise<{ path: string; mime: string }> {
   await mkdir(dirname(out), { recursive: true });
+  const input = assetBlobPath(sha256);
+  const size = (await stat(input)).size;
+  job.durationUs = await probeDurationUs(input);
   // Private temp name in the final dir, atomically renamed on success, so a
   // concurrent request in another process never streams a partial file.
   const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
@@ -124,9 +244,11 @@ async function transcode(
     "-hide_banner",
     "-loglevel",
     "error",
+    "-progress",
+    job.progressPath,
     "-y",
     "-i",
-    assetBlobPath(sha256),
+    input,
     // First video + first audio track only: DVD VOBs carry alternate audio
     // tracks and subpicture/nav streams a browser player has no UI for.
     "-map",
@@ -143,12 +265,69 @@ async function transcode(
     tmp,
   ];
   try {
-    await execFileP(FFMPEG_BIN, args, { timeout: FFMPEG_TIMEOUT_MS, maxBuffer: 4_000_000 });
+    await execFileP(FFMPEG_BIN, args, { timeout: transcodeTimeoutMs(size), maxBuffer: 4_000_000 });
     if ((await stat(tmp)).size === 0) throw new Error("empty transcode");
     await rename(tmp, out);
     return { path: out, mime: p.mime };
   } catch (err) {
     await rm(tmp, { force: true });
     throw err;
+  }
+}
+
+// One thumbnail per blob at a time, same reason as transcodes.
+const thumbsInFlight = new Map<string, Promise<string>>();
+
+/**
+ * The cached poster still (JPEG) for this video blob, produced on first use.
+ * Works for every stored video format — the still needs only a decoder.
+ * Throws when ffmpeg is missing or can't find a frame.
+ */
+export async function ensureThumb(sha256: string): Promise<string> {
+  const out = thumbPath(sha256);
+  if (await nonEmpty(out)) return out;
+  let job = thumbsInFlight.get(sha256);
+  if (!job) {
+    job = thumb(sha256, out).finally(() => thumbsInFlight.delete(sha256));
+    thumbsInFlight.set(sha256, job);
+  }
+  return job;
+}
+
+async function thumb(sha256: string, out: string): Promise<string> {
+  await mkdir(dirname(out), { recursive: true });
+  const input = assetBlobPath(sha256);
+  await stat(input); // missing blob: fail before spawning ffmpeg
+  // A quarter in (bounded) skips studio logos and fade-ins; the thumbnail
+  // filter then picks the most representative of the next frames, dodging
+  // black frames around the seek point. Falls back to the very start for
+  // clips too short to seek into.
+  const durationUs = await probeDurationUs(input);
+  const seekSec = durationUs ? Math.min(Math.max((durationUs / 1e6) * 0.25, 1), 45) : 3;
+  const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
+  const argsAt = (seek: number) => [
+    "-hide_banner", "-loglevel", "error", "-y",
+    ...(seek > 0 ? ["-ss", String(seek)] : []),
+    "-i", input,
+    "-map", "0:v:0", "-dn", "-sn", "-an",
+    "-vf", "yadif=deint=interlaced,thumbnail=48,scale=trunc(min(iw\\,512)/2)*2:-2",
+    "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "4", "-f", "image2",
+    tmp,
+  ];
+  try {
+    for (const seek of seekSec > 0 ? [seekSec, 0] : [0]) {
+      try {
+        await execFileP(FFMPEG_BIN, argsAt(seek), { timeout: THUMB_TIMEOUT_MS, maxBuffer: 4_000_000 });
+        if ((await stat(tmp)).size > 0) {
+          await rename(tmp, out);
+          return out;
+        }
+      } catch {
+        // Retry from the start (a clip shorter than the seek), then give up.
+      }
+    }
+    throw new Error("no frame extracted");
+  } finally {
+    await rm(tmp, { force: true });
   }
 }

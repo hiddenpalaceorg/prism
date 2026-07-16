@@ -6,8 +6,14 @@ import type { Pool } from "pg";
 import type { AssetRef, BuildRecord } from "./types";
 import { isSha256 } from "./validate";
 
-/** Per-blob hard cap — mirrors MAX_ASSET_SIZE in the adapter's viewable.py. */
+/** Per-blob hard caps — mirror max_size() in the adapter's viewable.py:
+ *  videos ship whole up to DVD-VOB scale, everything else stays small. */
 export const MAX_ASSET_BLOB_BYTES = 20 * 1024 * 1024;
+export const MAX_VIDEO_BLOB_BYTES = 1280 * 1024 * 1024;
+
+function maxBlobBytes(kind: unknown): number {
+  return kind === "video" ? MAX_VIDEO_BLOB_BYTES : MAX_ASSET_BLOB_BYTES;
+}
 
 /** Cap on one build's summed (claimed) asset bytes; uploads past it refuse. */
 export const MAX_BUILD_ASSET_BYTES = 4 * 1024 * 1024 * 1024;
@@ -25,7 +31,7 @@ function collect(assets: AssetRef[] | null | undefined): ReferencedAssets {
   for (const a of assets ?? []) {
     if (!isSha256(a.sha256) || sizes.has(a.sha256)) continue;
     const size = Number(a.size);
-    if (!Number.isInteger(size) || size <= 0 || size > MAX_ASSET_BLOB_BYTES) continue;
+    if (!Number.isInteger(size) || size <= 0 || size > maxBlobBytes(a.kind)) continue;
     sizes.set(a.sha256, size);
     totalBytes += size;
   }
