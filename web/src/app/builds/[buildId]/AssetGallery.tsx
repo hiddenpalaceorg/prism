@@ -11,7 +11,7 @@
 // those it's the filename that opens the viewer.
 
 import Link from "next/link";
-import { assetUrl, humanSize, imageSrc, videoSrc, type ViewableAsset } from "./AssetViewer";
+import { assetUrl, humanSize, imageSrc, VideoPlayer, type ViewableAsset } from "./AssetViewer";
 import { useOpenAsset } from "./AssetViewerHost";
 import AudioEmbed from "./AudioEmbed";
 import SourceCode from "./SourceCode";
@@ -103,7 +103,7 @@ export default function AssetGallery({
                     key={a.path}
                     className="flex flex-col overflow-hidden rounded border border-neutral-200 dark:border-neutral-800"
                   >
-                    <video controls preload="none" src={videoSrc(a)} title={a.path} className="h-36" />
+                    <VideoPlayer asset={a} className="h-36" />
                     {/* w-0 min-w-full: the caption follows the player's width
                         instead of stretching the card to the filename's. */}
                     <button

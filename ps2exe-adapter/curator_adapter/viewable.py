@@ -9,6 +9,17 @@ can't script against the web origin.
 # Hard cap on extracted asset size. Files past this fall back to a head snippet.
 MAX_ASSET_SIZE = 20 * 1024 * 1024
 
+# Videos get a larger allowance: DVD-Video discs split a title into .VOB files
+# of up to 1 GiB each, and demoting those to head snippets would drop the only
+# viewable content such a disc carries. Files above MAX_ASSET_SIZE are streamed
+# into the store (see cli._stream_to_store), never buffered whole.
+MAX_VIDEO_SIZE = 1280 * 1024 * 1024
+
+
+def max_size(kind):
+    """Per-kind cap on shipping a file whole into the asset store."""
+    return MAX_VIDEO_SIZE if kind == "video" else MAX_ASSET_SIZE
+
 # How many leading bytes sniffing needs (SVG tag scan is the long pole).
 SNIFF_BYTES = 4096
 

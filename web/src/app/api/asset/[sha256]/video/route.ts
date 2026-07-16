@@ -16,9 +16,17 @@ export const runtime = "nodejs";
 // asset route. The transcode is produced once, cached on disk, and streamed
 // with Range support so the player can seek. The URL is content-addressed, so
 // responses cache hard.
+//
+// Small inputs finish within the soft wait and stream from this same request.
+// A DVD-sized input keeps transcoding in the background while this request
+// answers 202 — the client polls ./video/status and comes back when ready.
 
 const CACHE = "public, max-age=31536000, immutable";
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+
+// How long one request holds on for a transcode before handing off to the
+// status-poll flow. Long enough for the short clips that dominate the corpus.
+const SOFT_WAIT_MS = 25_000;
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await ctx.params;
@@ -48,7 +56,21 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
 
   let video: { path: string; mime: string };
   try {
-    video = await ensureTranscode(sha256);
+    const job = ensureTranscode(sha256);
+    const soft = await Promise.race([
+      job,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), SOFT_WAIT_MS).unref?.()),
+    ]);
+    if (soft === null) {
+      // Still transcoding — it finishes in the background (the eventual
+      // rejection, if any, surfaces through the status probe, not here).
+      job.catch(() => {});
+      return Response.json(
+        { state: "transcoding" },
+        { status: 202, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    video = soft;
   } catch {
     // No usable ffmpeg, blob missing from the store, or ffmpeg rejected or
     // timed out on the input.

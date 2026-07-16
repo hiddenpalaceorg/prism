@@ -217,7 +217,7 @@ test("orderAssets accepts a per-kind cap map (missing kind = uncapped)", () => {
 
 // --- submission asset uploads ---------------------------------------------------
 
-import { referencedAssets, MAX_ASSET_BLOB_BYTES } from "../src/lib/submission-assets";
+import { referencedAssets, MAX_ASSET_BLOB_BYTES, MAX_VIDEO_BLOB_BYTES } from "../src/lib/submission-assets";
 import type { Pool } from "pg";
 
 function fakePool(subRow?: { record: BuildRecord; status: string }, buildRow?: { record: BuildRecord }) {
@@ -238,11 +238,20 @@ test("referencedAssets dedupes shared blobs and drops malformed refs", async () 
     { path: "/B.PNG", sha256: "not-hex", size: 10, mime: "image/png", kind: "image" },
     { path: "/C.PNG", sha256: "aa".repeat(32), size: 0, mime: "image/png", kind: "image" },
     { path: "/D.PNG", sha256: "bb".repeat(32), size: MAX_ASSET_BLOB_BYTES + 1, mime: "image/png", kind: "image" },
+    // Videos alone get the DVD-VOB-scale allowance.
+    { path: "/V1.VOB", sha256: "11".repeat(32), size: MAX_ASSET_BLOB_BYTES + 1, mime: "video/mpeg", kind: "video" },
+    { path: "/V2.VOB", sha256: "22".repeat(32), size: MAX_VIDEO_BLOB_BYTES + 1, mime: "video/mpeg", kind: "video" },
   ];
   const refs = await referencedAssets(fakePool({ record: minimalRecord(assets), status: "queued" }), "ab".repeat(32));
   assert.ok(refs);
-  assert.deepEqual([...refs.sizes.entries()], [[sha, 10]]);
-  assert.equal(refs.totalBytes, 10);
+  assert.deepEqual(
+    [...refs.sizes.entries()],
+    [
+      [sha, 10],
+      ["11".repeat(32), MAX_ASSET_BLOB_BYTES + 1],
+    ]
+  );
+  assert.equal(refs.totalBytes, 10 + MAX_ASSET_BLOB_BYTES + 1);
 });
 
 test("referencedAssets falls back from rejected submission to the library build", async () => {

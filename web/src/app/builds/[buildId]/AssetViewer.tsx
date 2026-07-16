@@ -36,6 +36,11 @@ export function videoSrc(a: ViewableAsset): string {
   return a.mime === "video/mpeg" ? `${assetUrl(a)}/video` : assetUrl(a);
 }
 
+/** Poster still for a video asset (server-side ffmpeg frame grab). */
+export function videoThumbSrc(a: ViewableAsset): string {
+  return `${assetUrl(a)}/thumb`;
+}
+
 export function humanSize(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let v = bytes;
@@ -149,18 +154,126 @@ function DownloadCard({ asset }: { asset: ViewableAsset }) {
   );
 }
 
-// MP4/WebM play natively. MPEG program streams go through the server's ffmpeg
-// transcode, which can be unavailable (no ffmpeg on the server) or fail on a
-// damaged stream, so fall back to a download card rather than an error.
-function VideoBody({ asset }: { asset: ViewableAsset }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return <DownloadCard asset={asset} />;
+// How often the player re-asks the server about an in-flight transcode.
+const TRANSCODE_POLL_MS = 4_000;
+
+/**
+ * Video player over an extracted asset, shared by the viewer body and the
+ * gallery cards. MP4/WebM play natively; MPEG program streams (.mpg, DVD
+ * .vob) go through the server's ffmpeg transcode, which for DVD-sized inputs
+ * may still be running when playback is first attempted — the player then
+ * polls ./video/status, showing progress over the poster still, and starts
+ * playback when the stream is ready. A transcode that is unavailable (no
+ * ffmpeg on the server) or fails renders `fallback` (a download affordance).
+ */
+export function VideoPlayer({
+  asset,
+  className,
+  fallback,
+}: {
+  asset: ViewableAsset;
+  className?: string;
+  fallback?: React.ReactNode;
+}) {
+  const [phase, setPhase] = useState<"player" | "preparing" | "failed">("player");
+  // Bumped when a finished transcode re-mounts the <video>, so play resumes
+  // by itself (the user already hit play once). Also the retry limiter: a
+  // second error after a "ready" means the stream really doesn't play here.
+  const [readyAt, setReadyAt] = useState(0);
+  const [percent, setPercent] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (phase !== "preparing") return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      let state = "failed";
+      let pct: number | null = null;
+      try {
+        const res = await fetch(`${assetUrl(asset)}/video/status`, { cache: "no-store" });
+        if (res.ok) {
+          const s = (await res.json()) as { state: string; percent?: number | null };
+          state = s.state;
+          pct = typeof s.percent === "number" ? s.percent : null;
+        }
+      } catch {
+        // Network blip — poll again rather than giving up on a live transcode.
+        state = "transcoding";
+      }
+      if (cancelled) return;
+      if (state === "ready") {
+        setPhase("player");
+        setReadyAt((n) => n + 1);
+      } else if (state === "transcoding") {
+        setPercent(pct);
+        timer = window.setTimeout(poll, TRANSCODE_POLL_MS);
+      } else {
+        setPhase("failed");
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [phase, asset]);
+
+  if (phase === "failed") {
+    const name = asset.path.split("/").pop() || asset.path;
+    return (
+      fallback ?? (
+        <a
+          href={assetUrl(asset)}
+          download={name}
+          className={`flex min-w-[12rem] items-center justify-center bg-neutral-950 px-6 text-xs text-neutral-300 hover:text-white hover:underline ${className ?? ""}`}
+        >
+          No preview — download {name}
+        </a>
+      )
+    );
+  }
+  if (phase === "preparing") {
+    return (
+      <div className={`relative min-w-[16rem] overflow-hidden bg-neutral-950 ${className ?? ""}`}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={videoThumbSrc(asset)}
+          alt=""
+          className="h-full w-full object-contain opacity-40"
+          onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+        />
+        <span className="absolute inset-0 flex animate-pulse items-center justify-center px-4 text-center text-xs text-neutral-200">
+          Preparing video…{percent != null ? ` ${percent}%` : ""}
+        </span>
+      </div>
+    );
+  }
   return (
     <video
+      key={readyAt}
       controls
+      preload="none"
+      autoPlay={readyAt > 0}
+      poster={videoThumbSrc(asset)}
       src={videoSrc(asset)}
+      title={asset.path}
+      className={className}
+      onError={() => {
+        if (asset.mime === "video/mpeg" && readyAt === 0) setPhase("preparing");
+        else setPhase("failed");
+      }}
+    />
+  );
+}
+
+// The lightbox body wrapping the shared player: failures fall back to a
+// download card rather than an error.
+function VideoBody({ asset }: { asset: ViewableAsset }) {
+  return (
+    <VideoPlayer
+      asset={asset}
       className="max-h-[75vh] max-w-[90vw] rounded"
-      onError={() => setFailed(true)}
+      fallback={<DownloadCard asset={asset} />}
     />
   );
 }

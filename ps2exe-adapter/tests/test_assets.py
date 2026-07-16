@@ -118,5 +118,54 @@ def test_oversized_viewable_demoted_to_snippet(tmp_path, monkeypatch):
     assert blob(tmp_path, a["sha256"]) == png[: viewable.SNIPPET_BYTES]
 
 
+# MPEG program-stream pack start code — what viewable.py sniffs video/mpeg by.
+MPEG_PS = b"\x00\x00\x01\xba" + bytes(range(256)) * 40  # ~10KB
+
+
+def test_video_above_buffer_cap_streams_whole(tmp_path, monkeypatch):
+    # Past MAX_ASSET_SIZE a video takes the streaming path; it must still land
+    # in the store whole, under its full-content hash, with no temp left over.
+    monkeypatch.setattr(viewable, "MAX_ASSET_SIZE", 1024)
+    assets = extract({"/VIDEO_TS/VTS_01_1.VOB": MPEG_PS}, tmp_path)
+    a = assets["/VIDEO_TS/VTS_01_1.VOB"]
+    assert (a["kind"], a["mime"], a["size"]) == ("video", "video/mpeg", len(MPEG_PS))
+    assert a["sha256"] == hashlib.sha256(MPEG_PS).hexdigest()
+    assert blob(tmp_path, a["sha256"]) == MPEG_PS
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_video_above_video_cap_demoted_to_snippet(tmp_path, monkeypatch):
+    monkeypatch.setattr(viewable, "MAX_VIDEO_SIZE", 1024)
+    assets = extract({"/VIDEO_TS/VTS_01_1.VOB": MPEG_PS}, tmp_path)
+    a = assets["/VIDEO_TS/VTS_01_1.VOB"]
+    assert a["kind"] == viewable.SNIPPET_KIND
+    assert blob(tmp_path, a["sha256"]) == MPEG_PS[: viewable.SNIPPET_BYTES]
+
+
+def test_streamed_sniff_mismatch_falls_back_to_snippet(tmp_path, monkeypatch):
+    monkeypatch.setattr(viewable, "MAX_ASSET_SIZE", 1024)
+    fake = b"not a program stream" * 600  # > MAX_ASSET_SIZE, wrong leading bytes
+    assets = extract({"/MOVIE.VOB": fake}, tmp_path)
+    a = assets["/MOVIE.VOB"]
+    assert a["kind"] == viewable.SNIPPET_KIND
+    assert blob(tmp_path, a["sha256"]) == fake[: viewable.SNIPPET_BYTES]
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_streamed_size_lie_is_dropped(tmp_path, monkeypatch):
+    # The directory record understates the size; the stream overruns the cap
+    # and the file must be dropped entirely, leaving no temp file behind.
+    monkeypatch.setattr(viewable, "MAX_ASSET_SIZE", 1024)
+    monkeypatch.setattr(viewable, "MAX_VIDEO_SIZE", 4096)
+
+    class LyingReader(FakeReader):
+        def get_file_size(self, f):
+            return 2048  # over MAX_ASSET_SIZE (streams), under MAX_VIDEO_SIZE
+
+    out = _extract_assets(LyingReader({"/MOVIE.VOB": MPEG_PS}), str(tmp_path), ProgressManager())
+    assert out == []
+    assert not list(tmp_path.glob("*.part"))
+
+
 def test_empty_files_are_skipped(tmp_path):
     assert extract({"/EMPTY.BIN": b""}, tmp_path) == {}
