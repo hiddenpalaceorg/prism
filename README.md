@@ -15,8 +15,8 @@ Curator can:
   and similar-build discovery.
 
 <p>
-  <img src="docs/screenshot-macos.png" width="49%" alt="Curator on macOS">
-  <img src="docs/screenshot-windows.png" width="49%" alt="Curator on Windows">
+  <img src="docs/screenshot-macos.png" height="300" alt="Curator on macOS">
+  <img src="docs/screenshot-windows.png" height="300" alt="Curator on Windows">
 </p>
 
 # Dev
