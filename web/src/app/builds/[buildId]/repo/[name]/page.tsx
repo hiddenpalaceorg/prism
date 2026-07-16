@@ -27,6 +27,7 @@ const COMMIT_PAGE = 50;
 interface Search {
   rev?: string | string[];
   path?: string | string[];
+  diff?: string | string[];
 }
 
 const one = (v: string | string[] | undefined): string => (typeof v === "string" ? v : "");
@@ -92,6 +93,7 @@ export default async function RepoPage({
     const qs = new URLSearchParams();
     if (one(sp.rev)) qs.set("rev", one(sp.rev));
     if (one(sp.path)) qs.set("path", one(sp.path));
+    if (one(sp.diff)) qs.set("diff", one(sp.diff));
     permanentRedirect(`${repoHrefOf(canonical, name)}${qs.size ? `?${qs}` : ""}`);
   }
 
@@ -122,6 +124,10 @@ export default async function RepoPage({
   let path = normalizeAssetPath(one(sp.path)) || null;
   // A deep-linked directory just opens the tree; only files get a view.
   if (path && entryAt(idx, revOid, path)?.type === "tree") path = null;
+  // A deep-linked diff (a change from the file's history); resolved client-side
+  // against the log, so only the shape is validated here.
+  const rawDiff = one(sp.diff).toLowerCase();
+  const diff = path && /^[0-9a-f]{4,40}$/.test(rawDiff) ? rawDiff : null;
 
   // Initial payload, server-rendered: pruned tree (the build page's
   // RSC-payload discipline), first log page, and — when a file is deep-linked
@@ -177,6 +183,7 @@ export default async function RepoPage({
         initialRev={revParam}
         initialRevOid={revOid}
         initialPath={path}
+        initialDiff={diff}
         initialRoots={pruneToExpanded(tree, expanded)}
         initialExpandedPaths={[...expanded]}
         initialTotal={commits.total}
