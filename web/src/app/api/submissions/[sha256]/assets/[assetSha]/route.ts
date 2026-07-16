@@ -6,7 +6,7 @@ import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { assetBlobPath, assetStagingPath } from "@/lib/assets";
 import { referencedAssets, MAX_BUILD_ASSET_BYTES } from "@/lib/submission-assets";
-import { rateLimit, clientKey } from "@/lib/ratelimit";
+import { rateLimitCheck, clientKey } from "@/lib/ratelimit";
 import { isSha256 } from "@/lib/validate";
 
 export const runtime = "nodejs";
@@ -31,10 +31,16 @@ export async function PUT(
   request: NextRequest,
   ctx: { params: Promise<{ sha256: string; assetSha: string }> }
 ) {
-  // Generous: a bulk desktop upload is many sequential chunk PUTs (a 4096-asset
-  // build is legitimate), and the clients treat 429 as a hard failure.
-  if (!rateLimit(`assets-put:${clientKey(request)}`, 1200, 60_000)) {
-    return Response.json({ error: "rate limit exceeded" }, { status: 429 });
+  // Generous: a bulk desktop upload is many chunk PUTs, a few in parallel (a
+  // 4096-asset build is legitimate). On limit, answer 429 with `retryAfter`
+  // (seconds) so the clients can wait out the window and resume.
+  const rl = rateLimitCheck(`assets-put:${clientKey(request)}`, 6000, 60_000);
+  if (!rl.ok) {
+    const retryAfter = Math.max(1, Math.ceil(rl.retryAfterMs / 1000));
+    return Response.json(
+      { error: "rate limit exceeded", retryAfter },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } }
+    );
   }
   const { sha256, assetSha } = await ctx.params;
   if (!isSha256(sha256) || !isSha256(assetSha)) {

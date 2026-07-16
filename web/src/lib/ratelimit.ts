@@ -19,16 +19,25 @@ function prune(now: number): void {
 
 /** Returns true if the call for `key` is within `limit` per `windowMs`. */
 export function rateLimit(key: string, limit: number, windowMs: number): boolean {
+  return rateLimitCheck(key, limit, windowMs).ok;
+}
+
+/** `rateLimit` plus, when limited, milliseconds until the window resets. */
+export function rateLimitCheck(
+  key: string,
+  limit: number,
+  windowMs: number
+): { ok: boolean; retryAfterMs: number } {
   const now = Date.now();
   prune(now);
   const w = windows.get(key);
   if (!w || now >= w.resetAt) {
     windows.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
+    return { ok: true, retryAfterMs: 0 };
   }
-  if (w.count >= limit) return false;
+  if (w.count >= limit) return { ok: false, retryAfterMs: w.resetAt - now };
   w.count++;
-  return true;
+  return { ok: true, retryAfterMs: 0 };
 }
 
 // Reverse-proxy hops in front of the app (env TRUSTED_PROXY_HOPS, default 1).
