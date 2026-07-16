@@ -5,6 +5,7 @@ import type { NextRequest } from "next/server";
 import { unstable_cache } from "next/cache";
 import { assetBlobPath } from "@/lib/assets";
 import { getPool } from "@/lib/db";
+import { parseRange } from "@/lib/range";
 import { isSha256 } from "@/lib/validate";
 
 export const runtime = "nodejs";
@@ -45,18 +46,6 @@ const getMeta = unstable_cache(
   ["asset-meta"],
   { revalidate: 3600 }
 );
-
-/** One satisfiable `bytes=start-end` range, else null (serve the whole file). */
-function parseRange(header: string | null, size: number): { start: number; end: number } | null {
-  const m = header?.match(/^bytes=(\d*)-(\d*)$/);
-  if (!m || size === 0) return null;
-  const [, a, b] = m;
-  if (a === "" && b === "") return null;
-  const start = a === "" ? Math.max(0, size - Number(b)) : Number(a);
-  const end = a !== "" && b !== "" ? Math.min(Number(b), size - 1) : size - 1;
-  if (start > end || start >= size) return null;
-  return { start, end };
-}
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await ctx.params;
