@@ -84,8 +84,8 @@ export function DiffBody({ before, after }: { before: string; after: string }) {
   if (cursor < rows.length) segments.push({ gap: true, from: cursor, to: rows.length });
 
   return (
-    <div className="font-mono text-xs leading-5 text-neutral-800 dark:text-neutral-200">
-      <div className="grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem_minmax(0,1fr)]">
+    <div className="p-3 font-mono text-xs leading-5 text-neutral-800 dark:text-neutral-200">
+      <div className="grid grid-cols-[3rem_minmax(0,1fr)_3rem_minmax(0,1fr)]">
         {segments.map((seg) =>
           seg.gap && !expanded.has(seg.from) ? (
             <button

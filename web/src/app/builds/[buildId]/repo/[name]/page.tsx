@@ -163,11 +163,13 @@ export default async function RepoPage({
         &larr; {resolved.name}
       </Link>
 
-      {/* Links back to the viewer's root state (HEAD, commit log). */}
+      {/* Resets to the viewer's root state (HEAD, commit log). A plain anchor,
+          not <Link>: the viewer rewrites the URL with pushState, which Next's
+          router never sees, so a Link to the "current" route would no-op. */}
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-        <Link href={repoHref} className="hover:underline">
+        <a href={repoHref} className="hover:underline">
           {name} <span className="text-base font-normal text-neutral-400">source repository</span>
-        </Link>
+        </a>
       </h1>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
