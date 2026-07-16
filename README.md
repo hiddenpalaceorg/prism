@@ -14,9 +14,10 @@ Curator can:
 * Submit builds to a web library with search, in-browser asset viewing,
   and similar-build discovery.
 
-![Curator on macOS](docs/screenshot-macos.png)
-
-![Curator on Windows](docs/screenshot-windows.png)
+<p>
+  <img src="docs/screenshot-macos.png" width="49%" alt="Curator on macOS">
+  <img src="docs/screenshot-windows.png" width="49%" alt="Curator on Windows">
+</p>
 
 # Dev
 
