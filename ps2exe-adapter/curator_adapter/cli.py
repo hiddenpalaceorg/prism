@@ -744,27 +744,41 @@ def _extract_assets(reader, out_dir, manager):
         if size == 0:
             continue
         classified = viewable.classify(path)
-        if classified is not None and size is not None and size > viewable.MAX_ASSET_SIZE:
+        if classified is not None and size is not None and size > viewable.max_size(classified[0]):
             classified = None  # too big to serve whole — keep the head snippet only
-        entries.append((f, path, classified))
+        entries.append((f, path, size, classified))
 
     out = []
     with manager.counter(total=len(entries), desc="Extracting assets", unit="files") as pbar:
-        for f, path, classified in entries:
+        for f, path, size, classified in entries:
             if classified is None:
                 head = _read_head(reader, f, viewable.SNIPPET_BYTES)
                 asset = (head, viewable.SNIPPET_MIME, viewable.SNIPPET_KIND) if head else None
             else:
                 kind, mime = classified
-                data = _read_capped(reader, f, viewable.MAX_ASSET_SIZE)
-                if data and viewable.sniff(data[: viewable.SNIFF_BYTES], mime):
-                    asset = (data, mime, kind)
-                elif data:
-                    # Extension claimed a viewable type but the bytes disagree —
-                    # keep the head snippet, same as any unidentified file.
-                    asset = (data[: viewable.SNIPPET_BYTES], viewable.SNIPPET_MIME, viewable.SNIPPET_KIND)
+                if size is not None and size > viewable.MAX_ASSET_SIZE:
+                    # Too big to buffer (a large video — max_size() demoted every
+                    # other kind above): stream it into the store while hashing.
+                    streamed = _stream_to_store(reader, f, out_dir, mime, viewable.max_size(kind))
+                    if streamed is not None and streamed[0] == "stored":
+                        _, sha, n = streamed
+                        out.append({"path": path, "sha256": sha, "size": n, "mime": mime, "kind": kind})
+                        pbar.update()
+                        continue
+                    if streamed is not None:  # ("mismatch", head)
+                        asset = (streamed[1][: viewable.SNIPPET_BYTES], viewable.SNIPPET_MIME, viewable.SNIPPET_KIND)
+                    else:
+                        asset = None
                 else:
-                    asset = None
+                    data = _read_capped(reader, f, viewable.MAX_ASSET_SIZE)
+                    if data and viewable.sniff(data[: viewable.SNIFF_BYTES], mime):
+                        asset = (data, mime, kind)
+                    elif data:
+                        # Extension claimed a viewable type but the bytes disagree —
+                        # keep the head snippet, same as any unidentified file.
+                        asset = (data[: viewable.SNIPPET_BYTES], viewable.SNIPPET_MIME, viewable.SNIPPET_KIND)
+                    else:
+                        asset = None
             pbar.update()
             if asset is None:
                 continue
@@ -796,6 +810,56 @@ def _read_capped(reader, f, cap):
         logging.getLogger("curator-adapter").debug("asset read failed: %s", e)
         return None
     return bytes(buf)
+
+
+def _stream_to_store(reader, f, out_dir, mime, cap):
+    """Stream a large classified file into the store without buffering it:
+    sniff the head, then hash while spooling to a temp file renamed into its
+    content address. Returns ("stored", sha256, size); ("mismatch", head) when
+    the leading bytes disagree with the claimed mime; or None when the file is
+    unreadable or overruns `cap` (a size the directory record understated must
+    not smuggle an oversized asset in)."""
+    from . import viewable
+
+    tmp = os.path.join(out_dir, f".stream{os.getpid()}.part")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        fh = reader.open_file(f)
+        is_ctx = hasattr(fh, "__enter__")
+        if is_ctx:
+            fh.__enter__()
+        try:
+            head = fh.read(viewable.SNIFF_BYTES)
+            if not head:
+                return None
+            if not viewable.sniff(head, mime):
+                return ("mismatch", head)
+            os.makedirs(out_dir, exist_ok=True)
+            with open(tmp, "wb") as spool:
+                chunk = head
+                while chunk:
+                    size += len(chunk)
+                    if size > cap:
+                        return None
+                    digest.update(chunk)
+                    spool.write(chunk)
+                    chunk = fh.read(1 << 20)
+        finally:
+            with contextlib.suppress(Exception):
+                fh.__exit__(None, None, None) if is_ctx else fh.close()
+        sha = digest.hexdigest()
+        final = os.path.join(out_dir, sha[:2], sha)
+        if not os.path.exists(final):
+            os.makedirs(os.path.dirname(final), exist_ok=True)
+            os.replace(tmp, final)
+        return ("stored", sha, size)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("curator-adapter").debug("asset stream failed: %s", e)
+        return None
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
 
 
 def _read_head(reader, f, n):
