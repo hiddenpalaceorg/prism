@@ -62,12 +62,10 @@ pub fn hash_image(path: &str, observer: &Arc<dyn ProgressObserver>) -> Result<Im
 /// cue edit or a scan file doesn't change identity), concatenated in natural
 /// name order ("Track 2" before "Track 10", i.e. disc order) and hashed as one
 /// stream. Depends only on the member files' names and bytes, not the folder's
-/// own name or location.
+/// own name or location. The display name comes from the dump's own naming
+/// where possible (see [`crate::folder_build_name`]).
 fn hash_dir(root: &std::path::Path, observer: &Arc<dyn ProgressObserver>) -> Result<ImageInfo> {
-    let name = root
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| root.to_string_lossy().into_owned());
+    let name = crate::folder_build_name(root);
     let files = crate::dir_image_files(root);
     if files.is_empty() {
         return Err(crate::error::Error::Unsupported(root.to_string_lossy().into_owned()));
