@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { getPool } from "@/lib/db";
 import { listBuildsPage, type BuildSortKey } from "@/lib/queries";
+import { getModeratorFromHeaders } from "@/lib/auth";
 import BuildsBrowser from "./BuildsBrowser";
 
 export const runtime = "nodejs";
@@ -31,6 +33,9 @@ export default async function BuildsPage({
   const dir = str(sp.dir) === "desc" ? "desc" : "asc";
   const page = Math.max(parseInt(str(sp.page), 10) || 1, 1);
 
+  // This page is already per-request (it reads searchParams), so a viewer
+  // check is free: moderators also see private builds, badged in the list.
+  const moderator = !!(await getModeratorFromHeaders(await headers()));
   const { rows, total, systems } = await listBuildsPage(getPool(), {
     q,
     system,
@@ -39,6 +44,7 @@ export default async function BuildsPage({
     dir,
     offset: (page - 1) * PER_PAGE,
     limit: PER_PAGE,
+    includePrivate: moderator,
   });
 
   return (

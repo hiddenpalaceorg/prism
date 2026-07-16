@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
-import { getBuild, findSimilar, findByEmbeddingOf, getLotBuilds, updateBuildMeta } from "@/lib/queries";
+import { getBuild, findSimilar, findByEmbeddingOf, getLotBuilds, updateBuildMeta, setLotPrivate } from "@/lib/queries";
 import { getModerator, moderationEnabled } from "@/lib/auth";
 import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
@@ -14,8 +14,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // GET /api/build/<sha256> — the stored build plus its similar neighbors
-// (same fusion as /api/similarity, computed from the stored record).
-export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
+// (same fusion as /api/similarity, computed from the stored record). The
+// build itself resolves for anyone holding its sha (private = unlisted, not
+// blocked); the neighbor lists hide private builds from non-moderators.
+export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
   const pool = getPool();
@@ -23,19 +25,22 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
   const build = await getBuild(pool, sha256);
   if (!build) return Response.json({ error: "not found" }, { status: 404 });
 
+  const includePrivate = !!(await getModerator(request));
   const q = deriveQueryFeatures(build.record);
-  const similar = await findSimilar(pool, q);
+  const similar = await findSimilar(pool, q, 20, includePrivate);
 
   // Use the build's STORED embedding (pgvector) rather than re-running the
   // transformers model on its text_doc at request time — same neighbors, no
   // model load/inference on the hot path (the GUIs hit this endpoint).
-  const text_neighbors = await findByEmbeddingOf(pool, sha256);
+  const text_neighbors = await findByEmbeddingOf(pool, sha256, 20, includePrivate);
 
   return Response.json({ build, similar: { ...similar, text_neighbors } });
 }
 
-// PATCH /api/build/<sha256> { name?, lot? } — moderator metadata edit.
-// `name` renames the build; `lot` assigns it to a display group ("" or null clears).
+// PATCH /api/build/<sha256> { name?, lot?, private?, lotPrivate? } — moderator
+// metadata edit. `name` renames the build; `lot` assigns it to a display group
+// ("" or null clears); `private` hides the build from public list/search/similar;
+// `lotPrivate` hides/unhides the build's whole lot (current and future members).
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   if (!(await getModerator(request))) {
     return moderationEnabled()
@@ -52,7 +57,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const fields: { name?: string; lot?: string | null } = {};
+  const fields: { name?: string; lot?: string | null; private?: boolean } = {};
   if (body.name !== undefined) {
     if (typeof body.name !== "string" || !body.name.trim()) {
       return Response.json({ error: "name must be a non-empty string" }, { status: 400 });
@@ -71,34 +76,72 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
     }
     fields.lot = (body.lot ?? "").trim() || null;
   }
-  if (fields.name === undefined && fields.lot === undefined) {
-    return Response.json({ error: "nothing to update (name and/or lot required)" }, { status: 400 });
+  if (body.private !== undefined) {
+    if (typeof body.private !== "boolean") {
+      return Response.json({ error: "private must be a boolean" }, { status: 400 });
+    }
+    fields.private = body.private;
+  }
+  const lotPrivate = body.lotPrivate;
+  if (lotPrivate !== undefined && typeof lotPrivate !== "boolean") {
+    return Response.json({ error: "lotPrivate must be a boolean" }, { status: 400 });
+  }
+  const hasFields = fields.name !== undefined || fields.lot !== undefined || fields.private !== undefined;
+  if (!hasFields && lotPrivate === undefined) {
+    return Response.json({ error: "nothing to update (name, lot, private and/or lotPrivate required)" }, { status: 400 });
   }
 
   const pool = getPool();
-  const prev = await updateBuildMeta(pool, sha256, fields);
+  // Validate lotPrivate against the lot the build will be in BEFORE writing
+  // anything, so a rejected request never leaves a partial update behind.
+  const r = await pool.query("SELECT name, lot FROM builds WHERE sha256=$1", [sha256]);
+  const prev = (r.rows[0] as { name: string; lot: string | null }) ?? null;
   if (!prev) return Response.json({ error: "not found" }, { status: 404 });
+  const effectiveLot = fields.lot !== undefined ? fields.lot : prev.lot;
+  if (lotPrivate !== undefined && !effectiveLot) {
+    return Response.json({ error: "lotPrivate requires the build to have a lot" }, { status: 400 });
+  }
+
+  if (hasFields) {
+    const updated = await updateBuildMeta(pool, sha256, fields);
+    if (!updated) return Response.json({ error: "not found" }, { status: 404 });
+  }
+  if (lotPrivate !== undefined && effectiveLot) {
+    await setLotPrivate(pool, effectiveLot, lotPrivate);
+  }
 
   // Build pages are ISR-cached (revalidate = 3600); surface the edit now. A
   // rename changes the canonical slug path, so refresh the old one (it now
   // serves a redirect) and the new one, plus their assets subpages and the
-  // bare-sha redirect. A lot change also alters the lot section on every
-  // sibling page, in the lot the build joined and the one it left.
+  // bare-sha redirect. Lot moves and privacy toggles also alter the lot
+  // section on every sibling page (in the lot joined and the one left), so
+  // refresh those too — including private siblings, whose pages stay
+  // reachable by direct URL.
   revalidatePath("/builds");
   const touched = new Set([
     buildHref(sha256, prev.name),
     buildHref(sha256, fields.name ?? prev.name),
     `/builds/${sha256}`,
   ]);
+  const lotsTouched = new Set<string>();
   if (fields.lot !== undefined && fields.lot !== prev.lot) {
-    const lots = [fields.lot, prev.lot].filter((l): l is string => l != null);
-    for (const lot of lots) {
-      for (const b of await getLotBuilds(pool, lot)) touched.add(buildHref(b.sha256, b.name));
-    }
+    for (const lot of [fields.lot, prev.lot]) if (lot != null) lotsTouched.add(lot);
+  }
+  if ((lotPrivate !== undefined || fields.private !== undefined) && effectiveLot) {
+    lotsTouched.add(effectiveLot);
+  }
+  for (const lot of lotsTouched) {
+    for (const b of await getLotBuilds(pool, lot, true)) touched.add(buildHref(b.sha256, b.name));
   }
   for (const path of touched) {
     revalidatePath(path);
     revalidatePath(`${path}/assets`);
   }
-  return Response.json({ sha256, name: fields.name ?? prev.name, lot: fields.lot !== undefined ? fields.lot : prev.lot });
+  return Response.json({
+    sha256,
+    name: fields.name ?? prev.name,
+    lot: effectiveLot,
+    ...(fields.private !== undefined ? { private: fields.private } : {}),
+    ...(lotPrivate !== undefined ? { lotPrivate } : {}),
+  });
 }

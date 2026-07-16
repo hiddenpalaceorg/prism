@@ -37,15 +37,21 @@ export interface Moderator {
  * cross-site pages cannot attach custom headers.
  */
 export async function getModerator(request: NextRequest): Promise<Moderator | null> {
+  return getModeratorFromHeaders(request.headers, request.method);
+}
+
+/** Header-based variant for server components (via next/headers), where no
+ *  NextRequest exists. Pages render on GET, so the CSRF gate never bites there. */
+export async function getModeratorFromHeaders(h: Headers, method = "GET"): Promise<Moderator | null> {
   const tok = moderationToken();
-  if (tok && safeEqual(request.headers.get("x-moderation-token"), tok)) {
+  if (tok && safeEqual(h.get("x-moderation-token"), tok)) {
     return { name: "token", via: "token" };
   }
-  const user = await wikiUserFromCookies(request.headers.get("cookie"));
+  const user = await wikiUserFromCookies(h.get("cookie"));
   if (!user) return null;
   if (!moderatorGroups().some((g) => user.groups.includes(g))) return null;
-  const method = request.method.toUpperCase();
-  if (method !== "GET" && method !== "HEAD" && request.headers.get("sec-fetch-site") !== "same-origin") {
+  const m = method.toUpperCase();
+  if (m !== "GET" && m !== "HEAD" && h.get("sec-fetch-site") !== "same-origin") {
     return null;
   }
   return { name: user.name, via: "wiki" };

@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures, semanticDoc } from "@/lib/fingerprint";
 import { findSimilar, findByEmbedding, logCheck } from "@/lib/queries";
+import { getModerator } from "@/lib/auth";
 import { embed, toPgVector } from "@/lib/embed";
 import { MAX_BODY_BYTES, validateBuildRecord } from "@/lib/validate";
 import { rateLimit, clientKey } from "@/lib/ratelimit";
@@ -34,9 +35,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const pool = getPool();
+    const includePrivate = !!(await getModerator(request));
     const q = deriveQueryFeatures(record);
     await logCheck(pool, q.sha256);
-    const result = await findSimilar(pool, q);
+    const result = await findSimilar(pool, q, 20, includePrivate);
 
     // Text: semantic neighbors via the text embedding (build identity, not the
     // filename-heavy text_doc — must match what the ingester embedded).
@@ -44,7 +46,7 @@ export async function POST(request: NextRequest) {
     const sdoc = semanticDoc(record);
     if (sdoc) {
       const vec = toPgVector(await embed(sdoc));
-      text_neighbors = await findByEmbedding(pool, vec, q.sha256 ?? "");
+      text_neighbors = await findByEmbedding(pool, vec, q.sha256 ?? "", 20, includePrivate);
     }
 
     return Response.json({ query: { sha256: q.sha256, name: q.name }, ...result, text_neighbors });
