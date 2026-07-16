@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 
 // The token never changes while the page is mounted (it's set on /moderate),
@@ -18,19 +18,33 @@ interface Props {
   lots: string[];
 }
 
-// Rename + lot assignment, shown only when a moderation token is saved (the
-// /moderate page keeps it in sessionStorage). Purely cosmetic gating — the
-// PATCH route re-checks the token server-side. The parent keys this component
-// on name+lot, so a router.refresh() after a save remounts it with fresh values.
+// Rename + lot assignment, shown when a moderation token is saved (the
+// /moderate page keeps it in sessionStorage) or the visitor's wiki session
+// belongs to a moderator group. Purely cosmetic gating — the PATCH route
+// re-checks credentials server-side. The parent keys this component on
+// name+lot, so a router.refresh() after a save remounts it with fresh values.
 export default function ModeratorTools({ sha256, name, lot, lots }: Props) {
   const router = useRouter();
   const token = useSyncExternalStore(noSubscribe, clientToken, serverToken);
+  const [wikiModerator, setWikiModerator] = useState(false);
   const [nameInput, setNameInput] = useState(name);
   const [lotInput, setLotInput] = useState(lot ?? "");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
-  if (!token) return null;
+  useEffect(() => {
+    if (token) return;
+    let cancelled = false;
+    fetch("/api/whoami", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((w) => !cancelled && setWikiModerator(!!w.moderator))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  if (!token && !wikiModerator) return null;
 
   async function save(patch: { name?: string; lot?: string | null }) {
     setBusy(true);
@@ -38,7 +52,10 @@ export default function ModeratorTools({ sha256, name, lot, lots }: Props) {
     try {
       const res = await fetch(`/api/build/${sha256}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", "x-moderation-token": token },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "x-moderation-token": token } : {}),
+        },
         body: JSON.stringify(patch),
       });
       const data = await res.json();

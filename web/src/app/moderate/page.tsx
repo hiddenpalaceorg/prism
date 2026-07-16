@@ -17,6 +17,12 @@ interface Submission {
 
 const FILTERS = ["queued", "accepted", "rejected", ""] as const;
 
+interface Whoami {
+  moderator: boolean;
+  name?: string;
+  via?: "token" | "wiki";
+}
+
 export default function Moderate() {
   const [status, setStatus] = useState<string>("queued");
   const [items, setItems] = useState<Submission[]>([]);
@@ -24,6 +30,7 @@ export default function Moderate() {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string>("");
   const [token, setToken] = useState<string>("");
+  const [whoami, setWhoami] = useState<Whoami | null>(null);
 
   // Remember the moderation token locally so it isn't retyped each visit.
   useEffect(() => {
@@ -38,13 +45,26 @@ export default function Moderate() {
     [token],
   );
 
+  // Who does the server think we are? Wiki session cookies ride along
+  // automatically; the token header is attached when one is saved.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/whoami", { headers: authHeaders(), cache: "no-store" })
+      .then((r) => r.json())
+      .then((w: Whoami) => !cancelled && setWhoami(w))
+      .catch(() => !cancelled && setWhoami({ moderator: false }));
+    return () => {
+      cancelled = true;
+    };
+  }, [authHeaders]);
+
   const load = useCallback(async (s: string) => {
     setLoading(true);
     try {
       const res = await fetch(`/api/submissions${s ? `?status=${s}` : ""}`, { headers: authHeaders() });
       if (res.status === 401) {
         setItems([]);
-        setNote("Unauthorized — enter a valid moderation token.");
+        setNote("Unauthorized — log in with your wiki account or enter a moderation token.");
         return;
       }
       const data = await res.json();
@@ -85,17 +105,36 @@ export default function Moderate() {
       </div>
       <p className="mt-1 text-sm text-neutral-500">
         Review contributor submissions. Accepting ingests the build into the library.
-        While a token is saved here, build pages also show moderator tools (rename, lot).
+        While you are signed in, build pages also show moderator tools (rename, lot).
       </p>
 
-      <input
-        type="password"
-        value={token}
-        onChange={(e) => saveToken(e.target.value)}
-        onBlur={() => load(status)}
-        placeholder="moderation token (x-moderation-token)"
-        className="mt-5 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900"
-      />
+      {whoami?.moderator && whoami.via === "wiki" ? (
+        <p className="mt-5 text-sm text-neutral-600 dark:text-neutral-300">
+          Signed in as <span className="font-medium">{whoami.name}</span> via your wiki account.
+        </p>
+      ) : (
+        <>
+          {whoami && !whoami.moderator && whoami.name && (
+            <p className="mt-5 text-sm text-amber-600">
+              Signed in to the wiki as {whoami.name}, but that account is not in a moderator group.
+            </p>
+          )}
+          {whoami && !whoami.moderator && !whoami.name && (
+            <p className="mt-5 text-sm text-neutral-500">
+              <a href="/wiki/Special:UserLogin" className="underline">Log in with your wiki account</a>
+              {" "}or enter a moderation token below.
+            </p>
+          )}
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => saveToken(e.target.value)}
+            onBlur={() => load(status)}
+            placeholder="moderation token (x-moderation-token)"
+            className="mt-3 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-900"
+          />
+        </>
+      )}
 
       <div className="mt-4 flex gap-2">
         {FILTERS.map((f) => (

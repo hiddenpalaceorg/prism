@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { submissionStatus, setSubmissionStatus } from "@/lib/queries";
 import { ingestRecord, refreshAudioIdf } from "@/lib/ingest";
-import { isModerator, moderationToken } from "@/lib/auth";
+import { getModerator, moderationEnabled } from "@/lib/auth";
 import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
 import type { BuildRecord } from "@/lib/types";
@@ -23,10 +23,10 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
 // POST /api/submissions/<sha256> { action: "accept" | "reject" } — moderate.
 // Accept ingests the stored record into the library, then marks it accepted.
 export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
-  if (!isModerator(request)) {
-    return moderationToken()
+  if (!(await getModerator(request))) {
+    return moderationEnabled()
       ? Response.json({ error: "unauthorized" }, { status: 401 })
-      : Response.json({ error: "moderation disabled (set MODERATION_TOKEN)" }, { status: 403 });
+      : Response.json({ error: "moderation disabled (set MODERATION_TOKEN or WIKI_API_URL)" }, { status: 403 });
   }
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
