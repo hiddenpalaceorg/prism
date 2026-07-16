@@ -47,7 +47,7 @@ function TextBody({ url, path }: { url: string; path: string }) {
   if (state === "loading") return <p className="p-6 text-sm text-neutral-400">Loading…</p>;
   if (state === "error") return <p className="p-6 text-sm text-red-500">Failed to load file.</p>;
   return (
-    <div className="max-h-[75vh] overflow-auto p-4">
+    <div className="p-4">
       <pre className="whitespace-pre-wrap break-words font-mono text-xs text-neutral-800 dark:text-neutral-200">
         <SourceCode path={path} text={state.text} />
       </pre>
@@ -78,7 +78,8 @@ export default function RepoFileView({
 
   return (
     <div className="rounded border border-neutral-200 dark:border-neutral-800">
-      <div className="flex items-center gap-3 border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900/60">
+      {/* Sticks to the top of the scrolling main column. */}
+      <div className="sticky top-0 z-10 flex items-center gap-3 rounded-t border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900">
         <span className="min-w-0 flex-1 truncate font-mono" title={path}>
           {path}
         </span>

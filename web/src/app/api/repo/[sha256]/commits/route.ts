@@ -21,7 +21,9 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   const rev = resolveRev(idx, params.get("rev") ?? "");
   if (!rev) return Response.json({ error: "unknown revision" }, { status: 404 });
   const offset = Math.max(0, Number(params.get("offset")) || 0);
-  const limit = Math.min(200, Math.max(1, Number(params.get("limit")) || 100));
+  // The viewer fetches the whole log in one request (compact rows, no
+  // pagination); the cap only guards against absurd asks.
+  const limit = Math.min(50_000, Math.max(1, Number(params.get("limit")) || 100));
 
   const page = commitsPage(idx, rev, offset, limit);
   return Response.json(

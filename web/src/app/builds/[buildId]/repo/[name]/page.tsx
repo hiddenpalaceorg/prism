@@ -7,6 +7,7 @@ import { getBuildRepo, resolveBuild } from "@/lib/queries";
 import { loadRepo } from "@/lib/repo";
 import {
   commitsPage,
+  commitSubject,
   entryAt,
   fileLog,
   resolveRev,
@@ -27,6 +28,7 @@ const COMMIT_PAGE = 50;
 interface Search {
   rev?: string | string[];
   path?: string | string[];
+  diff?: string | string[];
 }
 
 const one = (v: string | string[] | undefined): string => (typeof v === "string" ? v : "");
@@ -55,10 +57,30 @@ export async function generateMetadata({
 
   const href = repoHrefOf(canonicalBuildId(resolved.sha256, resolved.name), name);
   const file = normalizeAssetPath(one(sp.path));
-  const title = `${file ? `${file.split("/").pop()} · ` : ""}${name} · ${resolved.name}`;
+
+  // Diff links unfurl with the commit subject in the title (the loadRepo LRU
+  // makes the manifest lookup cheap).
+  const rawDiff = one(sp.diff).toLowerCase();
+  let diffSubject: string | null = null;
+  if (/^[0-9a-f]{4,40}$/.test(rawDiff)) {
+    const idx = await loadRepo(repo.manifest_sha256);
+    const oid = idx ? resolveRev(idx, rawDiff) : null;
+    const commit = oid ? idx!.commitByOid.get(oid) : undefined;
+    if (commit) diffSubject = commitSubject(commit.message) || shortOid(commit.oid);
+  }
+
+  const title = diffSubject
+    ? `${file ? `${file.split("/").pop()} · ` : ""}${diffSubject} · ${name}`
+    : `${file ? `${file.split("/").pop()} · ` : ""}${name} · ${resolved.name}`;
   const description = `Source repository · ${repo.commit_count} commits · ${repo.head_ref ?? shortOid(repo.head_oid)}`;
-  // The build's generated card; the file convention doesn't cascade here.
-  const card = `/builds/${canonicalBuildId(resolved.sha256, resolved.name)}/opengraph-image`;
+
+  // State-aware card: diff links unfurl as a side-by-side snippet, file links
+  // as their opening lines (see api/repo/[sha256]/og).
+  const qs = new URLSearchParams();
+  if (one(sp.rev)) qs.set("rev", one(sp.rev));
+  if (file) qs.set("path", file);
+  if (diffSubject) qs.set("diff", rawDiff);
+  const card = `/api/repo/${repo.manifest_sha256}/og${qs.size ? `?${qs}` : ""}`;
   return {
     title,
     description,
@@ -92,6 +114,7 @@ export default async function RepoPage({
     const qs = new URLSearchParams();
     if (one(sp.rev)) qs.set("rev", one(sp.rev));
     if (one(sp.path)) qs.set("path", one(sp.path));
+    if (one(sp.diff)) qs.set("diff", one(sp.diff));
     permanentRedirect(`${repoHrefOf(canonical, name)}${qs.size ? `?${qs}` : ""}`);
   }
 
@@ -122,6 +145,11 @@ export default async function RepoPage({
   let path = normalizeAssetPath(one(sp.path)) || null;
   // A deep-linked directory just opens the tree; only files get a view.
   if (path && entryAt(idx, revOid, path)?.type === "tree") path = null;
+  // A deep-linked diff: with a path, one file-history change; without, a
+  // whole commit's change set. Resolved client-side, so only the shape is
+  // validated here.
+  const rawDiff = one(sp.diff).toLowerCase();
+  const diff = /^[0-9a-f]{4,40}$/.test(rawDiff) ? rawDiff : null;
 
   // Initial payload, server-rendered: pruned tree (the build page's
   // RSC-payload discipline), first log page, and — when a file is deep-linked
@@ -148,13 +176,21 @@ export default async function RepoPage({
   }
 
   return (
-    <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
+    // Full-viewport at lg+: the page never scrolls or resizes with content —
+    // each viewer panel scrolls internally instead (below lg it stacks and
+    // the page scrolls normally).
+    <main className="flex flex-col px-4 py-6 sm:px-8 lg:h-dvh lg:overflow-hidden">
       <Link href={buildHref} className="text-sm text-neutral-500 hover:underline">
         &larr; {resolved.name}
       </Link>
 
+      {/* Resets to the viewer's root state (HEAD, commit log). A plain anchor,
+          not <Link>: the viewer rewrites the URL with pushState, which Next's
+          router never sees, so a Link to the "current" route would no-op. */}
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-        {name} <span className="text-base font-normal text-neutral-400">source repository</span>
+        <a href={repoHref} className="hover:underline">
+          {name} <span className="text-base font-normal text-neutral-400">source repository</span>
+        </a>
       </h1>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
@@ -177,6 +213,7 @@ export default async function RepoPage({
         initialRev={revParam}
         initialRevOid={revOid}
         initialPath={path}
+        initialDiff={diff}
         initialRoots={pruneToExpanded(tree, expanded)}
         initialExpandedPaths={[...expanded]}
         initialTotal={commits.total}

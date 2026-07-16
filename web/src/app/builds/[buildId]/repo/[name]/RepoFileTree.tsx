@@ -1,10 +1,10 @@
 "use client";
 
 // The repo file tree at one revision — FileTree.tsx adapted: rows open files
-// in the repo viewer instead of the asset lightbox, and there's no Modified
-// column (git trees carry no dates). The parent remounts this per revision
-// (key={revOid}) with that snapshot's roots; collapsed stubs lazy-load their
-// children from /api/repo/<sha>/tree.
+// in the repo viewer instead of the asset lightbox, and it's a compact
+// name-only tree (git trees carry no dates, and sizes live in the file view).
+// The parent remounts this per revision (key={revOid}) with that snapshot's
+// roots; collapsed stubs lazy-load their children from /api/repo/<sha>/tree.
 
 import { useCallback, useState } from "react";
 import {
@@ -16,22 +16,9 @@ import {
 } from "@/lib/filetree";
 import { normalizeAssetPath } from "@/lib/slug";
 
-function humanSize(bytes?: number): string {
-  if (bytes == null) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = bytes;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return i === 0 ? `${bytes} B` : `${v.toFixed(1)} ${units[i]}`;
-}
-
 // Fixed row height so a folder's sticky `top` can be offset by its depth (the
 // ancestor chain stacks at the top of the scroll container).
-const ROW_H = 28;
-const HEADER_H = 28;
+const ROW_H = 24;
 
 interface Row {
   node: TreeNode;
@@ -133,7 +120,7 @@ export default function RepoFileTree({
 
   return (
     <>
-      <div className="flex gap-3 px-3 pt-2 text-xs text-neutral-500">
+      <div className="flex gap-3 px-2 py-1.5 text-xs text-neutral-500">
         <button className="hover:underline disabled:opacity-50" onClick={() => void expandAll()} disabled={expandingAll}>
           {expandingAll ? "Expanding…" : "Expand all"}
         </button>
@@ -142,14 +129,7 @@ export default function RepoFileTree({
         </button>
         {error && <span className="text-red-500">{error}</span>}
       </div>
-      <div className="mt-1">
-        <div
-          className="sticky top-0 z-[70] flex items-center border-b border-neutral-200 bg-white text-xs uppercase tracking-wide text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950"
-          style={{ height: HEADER_H }}
-        >
-          <span className="min-w-0 flex-1 px-3 font-medium">Name</span>
-          <span className="w-24 shrink-0 px-3 text-right font-medium">Size</span>
-        </div>
+      <div>
         {rows.map(({ node, depth }) => {
           const open = expanded.has(node.path);
           const busy = loading.has(node.path);
@@ -157,16 +137,16 @@ export default function RepoFileTree({
           return (
             <div
               key={node.path}
-              className={`flex items-center border-b border-neutral-100 text-sm hover:bg-neutral-50 dark:border-neutral-900 dark:hover:bg-neutral-900/40 ${
+              className={`flex items-center border-b border-neutral-100 text-xs hover:bg-neutral-50 dark:border-neutral-900 dark:hover:bg-neutral-900/40 ${
                 node.dir ? "bg-white dark:bg-neutral-950" : selected ? "bg-sky-50 dark:bg-sky-950/40" : ""
               }`}
               style={
                 node.dir
-                  ? { height: ROW_H, position: "sticky", top: HEADER_H + depth * ROW_H, zIndex: 60 - depth }
+                  ? { height: ROW_H, position: "sticky", top: depth * ROW_H, zIndex: 60 - depth }
                   : { height: ROW_H }
               }
             >
-              <div className="min-w-0 flex-1 font-mono" style={{ paddingLeft: depth * 16 + 12, paddingRight: 12 }}>
+              <div className="min-w-0 flex-1 font-mono" style={{ paddingLeft: depth * 12 + 8, paddingRight: 8 }}>
                 {node.dir ? (
                   <button
                     onClick={() => void toggle(node.path)}
@@ -174,7 +154,7 @@ export default function RepoFileTree({
                   >
                     <span className="w-3 shrink-0 text-[10px]">{busy ? "⋯" : open ? "▾" : "▸"}</span>
                     <span className="truncate">{node.name}/</span>
-                    <span className="shrink-0 text-xs text-neutral-400">({node.fileCount})</span>
+                    <span className="shrink-0 text-[10px] text-neutral-400">({node.fileCount})</span>
                   </button>
                 ) : (
                   <button
@@ -188,9 +168,6 @@ export default function RepoFileTree({
                   </button>
                 )}
               </div>
-              <span className="w-24 shrink-0 px-3 text-right tabular-nums text-neutral-500">
-                {humanSize(node.dir ? node.totalSize : node.size)}
-              </span>
             </div>
           );
         })}

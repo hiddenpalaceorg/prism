@@ -1,14 +1,16 @@
 "use client";
 
 // The global commit log reachable from the current revision, newest-first,
-// paginated. The parent remounts this per revision (key={revOid}) and passes
-// the server-rendered first page for the initial one; later revisions fetch
-// their own. Clicking a commit rewinds the whole viewer to that snapshot.
+// one compact line per commit — the full history, no pagination (11k rows
+// render fine; the server page ships only the first slice for fast paint and
+// the rest arrives with one fetch). The parent remounts this per revision
+// (key={revOid}). Clicking a commit opens its change set.
 
-import { useEffect, useState } from "react";
-import { commitSubject, formatCommitDate, shortOid, type RepoCommit } from "@/lib/repo-manifest";
+import { useEffect, useMemo, useState } from "react";
+import { commitSubject, formatCommitDate, type RepoCommit } from "@/lib/repo-manifest";
 
-const PAGE = 50;
+// One request for everything; far above any real repo (Fallout is 11,432).
+const ALL = 50_000;
 
 export default function RepoCommitList({
   apiBase,
@@ -18,91 +20,96 @@ export default function RepoCommitList({
 }: {
   apiBase: string;
   revOid: string;
+  /** Server-rendered first slice, when this revision was the SSR one. */
   initial: { total: number; commits: RepoCommit[] } | null;
   onSelectCommit: (oid: string) => void;
 }) {
   const [commits, setCommits] = useState<RepoCommit[]>(initial?.commits ?? []);
   const [total, setTotal] = useState<number | null>(initial?.total ?? null);
-  // Callers flip busy on before fetching, so no state is ever set
-  // synchronously inside the effect (the initial fetch starts busy).
-  const [busy, setBusy] = useState(initial === null);
   const [error, setError] = useState(false);
+  const [query, setQuery] = useState("");
 
-  const loadPage = (offset: number) =>
-    fetch(`${apiBase}/commits?rev=${revOid}&offset=${offset}&limit=${PAGE}`)
+  // Case-insensitive substring filter over the full message (subject + body);
+  // the whole log is client-side, so this is a per-keystroke array scan.
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return commits;
+    return commits.filter((c) => c.message.toLowerCase().includes(q));
+  }, [commits, query]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${apiBase}/commits?rev=${revOid}&limit=${ALL}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<{ total: number; commits: RepoCommit[] }>;
       })
       .then(
         (data) => {
-          setCommits((prev) => (offset === 0 ? data.commits : [...prev, ...data.commits]));
-          setTotal(data.total);
-          setError(false);
-          setBusy(false);
+          if (!cancelled) {
+            setCommits(data.commits);
+            setTotal(data.total);
+            setError(false);
+          }
         },
         () => {
-          setError(true);
-          setBusy(false);
+          if (!cancelled) setError(true);
         }
       );
-
-  // No server-rendered page for this revision — fetch the first one.
-  useEffect(() => {
-    if (initial === null) void loadPage(0);
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div>
-      <h2 className="text-lg font-medium">
-        History{" "}
-        {total !== null && <span className="text-sm font-normal text-neutral-400">({total} commits)</span>}
-      </h2>
-      {error && <p className="mt-3 text-sm text-red-500">Failed to load commits — try again.</p>}
-      <ul className="mt-3 divide-y divide-neutral-100 dark:divide-neutral-900/60">
-        {commits.map((c) => (
+      <div className="flex items-center gap-3">
+        <h2 className="shrink-0 text-sm font-medium">
+          History{" "}
+          {total !== null && (
+            <span className="font-normal text-neutral-400">
+              {query.trim() ? `(${shown.length} of ${total} commits)` : `(${total} commits)`}
+            </span>
+          )}
+        </h2>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter commit messages"
+          aria-label="Filter commit messages"
+          className="min-w-0 flex-1 max-w-sm rounded border border-neutral-200 bg-white px-2 py-1 text-xs placeholder:text-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        />
+      </div>
+      {error && <p className="mt-3 text-xs text-red-500">Failed to load the full history.</p>}
+      {query.trim() && shown.length === 0 && !error && (
+        <p className="mt-3 text-xs text-neutral-500">No commit messages match.</p>
+      )}
+      <ul className="mt-2 divide-y divide-neutral-100 dark:divide-neutral-900/60">
+        {shown.map((c) => (
           <li key={c.oid}>
             <button
               onClick={() => onSelectCommit(c.oid)}
-              className="flex w-full items-baseline gap-3 py-2 text-left text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900/40"
-              title={`Browse the tree at ${shortOid(c.oid)}`}
+              className="flex w-full items-baseline gap-2 px-1 py-0.5 text-left text-xs hover:bg-neutral-50 dark:hover:bg-neutral-900/40"
+              title="Show this commit's changes"
             >
-              <span
-                className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-xs ${
-                  c.oid === revOid
-                    ? "bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-200"
-                    : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-                }`}
-              >
-                {shortOid(c.oid)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{commitSubject(c.message) || "(no message)"}</span>
-                <span className="mt-0.5 block text-xs text-neutral-500">
-                  {c.author.name} · {formatCommitDate(c.author)}
-                  {c.parents.length > 1 && (
-                    <span className="ml-2 rounded bg-neutral-100 px-1 uppercase tracking-wide text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-                      merge
-                    </span>
-                  )}
+              <span className="shrink-0 font-mono text-neutral-500">{formatCommitDate(c.author)}</span>
+              {c.parents.length > 1 && (
+                <span className="shrink-0 rounded bg-neutral-100 px-1 text-[10px] uppercase tracking-wide text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+                  merge
                 </span>
+              )}
+              <span className="min-w-0 flex-1 truncate">
+                {commitSubject(c.message) || "(no message)"}
+                <span className="ml-1 text-neutral-400">{c.author.name}</span>
               </span>
             </button>
           </li>
         ))}
       </ul>
-      {busy && <p className="mt-3 text-sm text-neutral-400">Loading…</p>}
-      {!busy && total !== null && commits.length < total && (
-        <button
-          onClick={() => {
-            setBusy(true);
-            void loadPage(commits.length);
-          }}
-          className="mt-3 text-sm text-neutral-500 hover:underline"
-        >
-          Load more ({total - commits.length} older)
-        </button>
+      {total !== null && commits.length < total && (
+        <p className="mt-2 text-xs text-neutral-400">Loading {total - commits.length} older commits…</p>
       )}
     </div>
   );
