@@ -7,6 +7,7 @@ import { getBuildRepo, resolveBuild } from "@/lib/queries";
 import { loadRepo } from "@/lib/repo";
 import {
   commitsPage,
+  commitSubject,
   entryAt,
   fileLog,
   resolveRev,
@@ -56,10 +57,30 @@ export async function generateMetadata({
 
   const href = repoHrefOf(canonicalBuildId(resolved.sha256, resolved.name), name);
   const file = normalizeAssetPath(one(sp.path));
-  const title = `${file ? `${file.split("/").pop()} · ` : ""}${name} · ${resolved.name}`;
+
+  // Diff links unfurl with the commit subject in the title (the loadRepo LRU
+  // makes the manifest lookup cheap).
+  const rawDiff = one(sp.diff).toLowerCase();
+  let diffSubject: string | null = null;
+  if (/^[0-9a-f]{4,40}$/.test(rawDiff)) {
+    const idx = await loadRepo(repo.manifest_sha256);
+    const oid = idx ? resolveRev(idx, rawDiff) : null;
+    const commit = oid ? idx!.commitByOid.get(oid) : undefined;
+    if (commit) diffSubject = commitSubject(commit.message) || shortOid(commit.oid);
+  }
+
+  const title = diffSubject
+    ? `${file ? `${file.split("/").pop()} · ` : ""}${diffSubject} · ${name}`
+    : `${file ? `${file.split("/").pop()} · ` : ""}${name} · ${resolved.name}`;
   const description = `Source repository · ${repo.commit_count} commits · ${repo.head_ref ?? shortOid(repo.head_oid)}`;
-  // The build's generated card; the file convention doesn't cascade here.
-  const card = `/builds/${canonicalBuildId(resolved.sha256, resolved.name)}/opengraph-image`;
+
+  // State-aware card: diff links unfurl as a side-by-side snippet, file links
+  // as their opening lines (see api/repo/[sha256]/og).
+  const qs = new URLSearchParams();
+  if (one(sp.rev)) qs.set("rev", one(sp.rev));
+  if (file) qs.set("path", file);
+  if (diffSubject) qs.set("diff", rawDiff);
+  const card = `/api/repo/${repo.manifest_sha256}/og${qs.size ? `?${qs}` : ""}`;
   return {
     title,
     description,
