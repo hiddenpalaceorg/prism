@@ -157,11 +157,16 @@ struct CuratorService {
     private static let uploadChunkBytes = 4 * 1024 * 1024
 
     /// One chunk response: `partial` carries the next offset; `stored`/`exists`
-    /// end the upload. A 409 body carries only `offset` (the staged size).
+    /// end the upload. A 409 body carries only `offset` (the staged size); a
+    /// 429 body carries `retryAfter` (seconds until the rate window resets).
     private struct ChunkResult: Decodable {
         let status: String?
         let offset: UInt64?
+        let retryAfter: Double?
     }
+
+    /// Give up after this many consecutive rate-limit waits on one chunk.
+    private static let maxThrottleRetries = 30
 
     /// PUT one asset blob under its build in resumable chunks: each request
     /// appends at `offset`, a 409 answers with the server's staged offset to
@@ -171,6 +176,7 @@ struct CuratorService {
         defer { try? fh.close() }
         var offset: UInt64 = 0
         var lastStaged: UInt64?
+        var throttled = 0
         while true {
             try fh.seek(toOffset: offset)
             let chunk = try fh.read(upToCount: Self.uploadChunkBytes) ?? Data()
@@ -188,6 +194,7 @@ struct CuratorService {
                 if r.status == "stored" || r.status == "exists" { return }
                 offset = r.offset ?? offset + UInt64(chunk.count)
                 lastStaged = nil
+                throttled = 0
             } catch let ServiceError.http(code, body) where code == 409 {
                 // Resume where the server actually is; the same answer twice
                 // means we're not making progress — give up.
@@ -195,6 +202,14 @@ struct CuratorService {
                 if lastStaged == staged { throw ServiceError.http(code, body) }
                 lastStaged = staged
                 offset = staged
+            } catch let ServiceError.http(code, body) where code == 429 {
+                // Rate limited — wait out the window (the server's retryAfter
+                // when present) and retry the same offset.
+                throttled += 1
+                if throttled > Self.maxThrottleRetries { throw ServiceError.http(code, body) }
+                let hint = (try? JSONDecoder().decode(ChunkResult.self, from: Data(body.utf8)))?.retryAfter
+                let seconds = min(max(hint ?? 5, 1), 120)
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             }
         }
     }

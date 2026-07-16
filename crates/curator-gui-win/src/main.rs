@@ -2202,6 +2202,9 @@ mod app {
     /// How many asset blobs to upload at once.
     const PARALLEL_UPLOADS: usize = 4;
 
+    /// Give up after this many consecutive rate-limit waits on one chunk.
+    const MAX_THROTTLE_RETRIES: u32 = 30;
+
     /// PUT one asset blob in resumable chunks: each request appends at `offset`,
     /// a 409 answers with the server's staged offset to resume from, and the
     /// final chunk returns `stored` (or `exists`).
@@ -2209,6 +2212,7 @@ mod app {
         let Ok(bytes) = std::fs::read(path) else { return false };
         let mut offset: usize = 0;
         let mut last_staged: Option<usize> = None;
+        let mut throttled = 0u32;
         while offset < bytes.len() {
             let end = (offset + UPLOAD_CHUNK).min(bytes.len());
             let url = format!("{assets_url}/{sha}?offset={offset}");
@@ -2225,8 +2229,23 @@ mod app {
                                 .map(|o| o as usize)
                                 .unwrap_or(end);
                             last_staged = None;
+                            throttled = 0;
                         }
                     }
+                }
+                Ok((429, body)) => {
+                    // Rate limited — wait out the window (the server's retryAfter
+                    // when present) and retry the same offset.
+                    throttled += 1;
+                    if throttled > MAX_THROTTLE_RETRIES {
+                        return false;
+                    }
+                    let secs = serde_json::from_str::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|v| v.get("retryAfter").and_then(|r| r.as_f64()))
+                        .unwrap_or(5.0)
+                        .clamp(1.0, 120.0);
+                    std::thread::sleep(std::time::Duration::from_secs_f64(secs));
                 }
                 Ok((409, body)) => {
                     // Resume where the server actually is; the same answer twice
