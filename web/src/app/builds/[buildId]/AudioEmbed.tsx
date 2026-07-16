@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { assetUrl, humanSize, type ViewableAsset } from "./AssetViewer";
+import { useOpenAsset } from "./AssetViewerHost";
 
 const BARS = 160;
 // Auto-decode on scroll-into-view only below this size, so a page of embeds
@@ -51,6 +52,7 @@ function fmtTime(s: number): string {
 
 export default function AudioEmbed({ asset }: { asset: ViewableAsset }) {
   const url = assetUrl(asset);
+  const openAsset = useOpenAsset();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -209,9 +211,15 @@ export default function AudioEmbed({ asset }: { asset: ViewableAsset }) {
       </button>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2 text-[11px]">
-          <span className="truncate font-mono text-neutral-600 dark:text-neutral-300" title={asset.path}>
+          {/* The name deep-links the asset in the viewer; the embed itself
+              stays play/seek only. */}
+          <button
+            onClick={() => openAsset(asset.path)}
+            title={asset.path}
+            className="truncate font-mono text-neutral-600 hover:text-sky-700 hover:underline dark:text-neutral-300 dark:hover:text-sky-400"
+          >
             {name}
-          </span>
+          </button>
           <span className="shrink-0 tabular-nums text-neutral-400">
             {failed
               ? "playback failed"
