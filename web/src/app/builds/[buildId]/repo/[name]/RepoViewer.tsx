@@ -1,9 +1,10 @@
 "use client";
 
 // State owner of the repo viewer: a file tree at a revision, a main panel
-// showing the commit log, one file, or one change's side-by-side diff, and a
-// per-file history panel. ?rev=, ?path= and ?diff= mirror the state — every
-// view is deep-linkable, and back/forward replay navigation. pushState /
+// showing the commit log, one file (plain or blame), or one change's
+// side-by-side diff, and a per-file history panel. ?rev=, ?path=, ?diff= and
+// ?blame= mirror the state — every view is deep-linkable, and back/forward
+// replay navigation. pushState /
 // replaceState are shallow (Next keeps the page mounted), the AssetViewerHost
 // pattern adapted to query params. Data comes from /api/repo/<manifest sha>/
 // whose responses are immutable per URL, so the browser cache makes revisits
@@ -29,6 +30,8 @@ interface View {
   path: string | null;
   /** Short oid of the file-history change open as a diff. */
   diff: string | null;
+  /** File view shows the blame gutter. Only meaningful with a path. */
+  blame: boolean;
 }
 
 export type LogState = RepoLogEntryDto[] | "loading" | "error";
@@ -43,6 +46,7 @@ export default function RepoViewer({
   initialRevOid,
   initialPath,
   initialDiff,
+  initialBlame,
   initialRoots,
   initialExpandedPaths,
   initialTotal,
@@ -58,13 +62,19 @@ export default function RepoViewer({
   initialRevOid: string;
   initialPath: string | null;
   initialDiff: string | null;
+  initialBlame: boolean;
   initialRoots: TreeNode[];
   initialExpandedPaths: string[];
   initialTotal: number;
   initialCommits: RepoCommit[];
   initialLog: RepoLogEntryDto[] | null;
 }) {
-  const [view, setView] = useState<View>({ rev: initialRev, path: initialPath, diff: initialDiff });
+  const [view, setView] = useState<View>({
+    rev: initialRev,
+    path: initialPath,
+    diff: initialDiff,
+    blame: initialBlame,
+  });
   // The resolved commit oid of view.rev. Known instantly when navigation
   // originates from a commit row or the ref selector; a deep-linked prefix
   // resolves through the tree fetch's `rev` echo.
@@ -89,6 +99,7 @@ export default function RepoViewer({
       if (next.rev) qs.set("rev", next.rev);
       if (next.path) qs.set("path", next.path);
       if (next.diff) qs.set("diff", next.diff);
+      if (next.path && next.blame) qs.set("blame", "1");
       window.history.pushState(null, "", `${repoHref}${qs.size ? `?${qs}` : ""}`);
       if (oid) setRevOid(oid);
       setView(next);
@@ -100,7 +111,12 @@ export default function RepoViewer({
   useEffect(() => {
     const onPop = () => {
       const qs = new URLSearchParams(window.location.search);
-      setView({ rev: qs.get("rev") ?? "", path: qs.get("path"), diff: qs.get("diff") });
+      setView({
+        rev: qs.get("rev") ?? "",
+        path: qs.get("path"),
+        diff: qs.get("diff"),
+        blame: qs.get("blame") === "1",
+      });
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -159,37 +175,44 @@ export default function RepoViewer({
   }, [view.path, revOid, apiBase]);
 
   const openFile = useCallback(
-    (path: string) => navigate({ rev: view.rev, path, diff: null }),
+    (path: string) => navigate({ rev: view.rev, path, diff: null, blame: false }),
     [navigate, view.rev]
   );
   const closeFile = useCallback(
-    () => navigate({ rev: view.rev, path: null, diff: null }),
+    () => navigate({ rev: view.rev, path: null, diff: null, blame: false }),
     [navigate, view.rev]
   );
   // A commit row opens that commit's change set; "browse tree" inside the
   // overview is what rewinds the whole viewer to the snapshot.
   const selectCommit = useCallback(
-    (oid: string) => navigate({ rev: view.rev, path: null, diff: shortOid(oid) }),
+    (oid: string) => navigate({ rev: view.rev, path: null, diff: shortOid(oid), blame: false }),
     [navigate, view.rev]
   );
   const browseCommit = useCallback(
-    (oid: string) => navigate({ rev: shortOid(oid), path: null, diff: null }, oid),
+    (oid: string) => navigate({ rev: shortOid(oid), path: null, diff: null, blame: false }, oid),
     [navigate]
   );
+  // Rev and diff changes keep blame mode: rewinding a blamed file re-blames
+  // it there, and closing a diff opened from the gutter lands back on blame.
   const selectRef = useCallback(
     (name: string) => {
       const oid = name === "" ? head : refs.find((r) => r.name === name)?.oid;
-      navigate({ rev: name, path: view.path, diff: null }, oid);
+      navigate({ rev: name, path: view.path, diff: null, blame: view.blame }, oid);
     },
-    [navigate, view.path, head, refs]
+    [navigate, view.path, view.blame, head, refs]
   );
   const selectDiff = useCallback(
-    (oid: string) => navigate({ rev: view.rev, path: view.path, diff: shortOid(oid) }),
-    [navigate, view.rev, view.path]
+    (oid: string) =>
+      navigate({ rev: view.rev, path: view.path, diff: shortOid(oid), blame: view.blame }),
+    [navigate, view.rev, view.path, view.blame]
   );
   const closeDiff = useCallback(
-    () => navigate({ rev: view.rev, path: view.path, diff: null }),
-    [navigate, view.rev, view.path]
+    () => navigate({ rev: view.rev, path: view.path, diff: null, blame: view.blame }),
+    [navigate, view.rev, view.path, view.blame]
+  );
+  const toggleBlame = useCallback(
+    () => navigate({ rev: view.rev, path: view.path, diff: null, blame: !view.blame }),
+    [navigate, view.rev, view.path, view.blame]
   );
 
   return (
@@ -226,7 +249,14 @@ export default function RepoViewer({
           view.diff !== null ? (
             <RepoDiffView apiBase={apiBase} path={view.path} log={log} diffOid={view.diff} onClose={closeDiff} />
           ) : (
-            <RepoFileView apiBase={apiBase} path={view.path} log={log} />
+            <RepoFileView
+              apiBase={apiBase}
+              path={view.path}
+              log={log}
+              blame={view.blame}
+              onToggleBlame={toggleBlame}
+              onSelectDiff={selectDiff}
+            />
           )
         ) : view.diff !== null ? (
           <RepoCommitDiff apiBase={apiBase} diffOid={view.diff} onBrowse={browseCommit} onClose={closeDiff} />
