@@ -1,9 +1,24 @@
 # Curator
 
-Disc-image analysis and cataloguing for game preservation. A Rust core drives the
-Python **ps2exe** engine to parse disc images and containers, produces a checksummed
-DAT + JSON per disc, keeps a local build library, and feeds a web service with
-searchable listings and "similar builds" discovery.
+Curator analyzes disc images and ROMs for game preservation. 
+
+Curator can:
+* Analyze disc images from 15+ systems (PS1-PS3, PSP, Saturn, Dreamcast,
+  Sega CD, GameCube, Wii, Xbox, Xbox 360, CD-i, 3DO, CD32, PC), including
+  archives, multi-track folder dumps, and nested containers
+* Extract build dates, executables, serials, and per-file hashes into
+  Redump-style DAT and JSON
+* Keep a searchable local build library, cached by content hash
+* Find similar builds via data, audio, and executable fingerprints
+* Extract audio, video, image, document, text, and source-code assets
+* Submit builds to a web library with search, in-browser asset viewing,
+  and similar-build discovery.
+
+![Curator on macOS](docs/screenshot-macos.png)
+
+![Curator on Windows](docs/screenshot-windows.png)
+
+# Dev
 
 ## Layout
 
@@ -16,7 +31,6 @@ macos/                   macOS GUI (SwiftUI)
 ps2exe-adapter/          Python adapter: runs ps2exe, emits canonical JSON + progress
 web/                     Next.js + Postgres listing and similarity service
 lib/ps2exe/              ps2exe engine (submodule)
-old/                     previous implementation, archived
 ```
 
 ## CLI
@@ -72,6 +86,6 @@ scripts/curator-build-set.sh export --bin target/release/curator \
   --lib ~/curator-lib/main --out feed.jsonl
 ```
 
-## Notes
-
-- The adapter pins Python 3.10 (`pathlab`) and pycdlib 1.14 (ps2exe's patches).
+## Authors
+* [Hidden Palace](https://hiddenpalace.org/) (Sazpaimon, ehw, drx)
+* Contributors: [travistyoj](https://github.com/travistyoj)
