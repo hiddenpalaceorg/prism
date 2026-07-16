@@ -6,8 +6,9 @@
 // for unidentified files' head snippets. The server page passes an
 // already-capped subset plus the full per-kind totals; when a kind is
 // truncated, a "view all" affordance links to <buildHref>/assets.
-// Images and text open the page's AssetViewerHost lightbox (shared with the
-// file tree), which also deep-links the asset in the URL.
+// Cards open the page's AssetViewerHost lightbox (shared with the file tree),
+// which deep-links the asset in the URL; audio and video play inline, so for
+// those it's the filename that opens the viewer.
 
 import Link from "next/link";
 import { assetUrl, humanSize, imageSrc, videoSrc, type ViewableAsset } from "./AssetViewer";
@@ -98,14 +99,21 @@ export default function AssetGallery({
             {kind === "video" && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {group.map((a) => (
-                  <video
+                  <div
                     key={a.path}
-                    controls
-                    preload="none"
-                    src={videoSrc(a)}
-                    title={a.path}
-                    className="h-36 rounded border border-neutral-200 dark:border-neutral-800"
-                  />
+                    className="flex flex-col overflow-hidden rounded border border-neutral-200 dark:border-neutral-800"
+                  >
+                    <video controls preload="none" src={videoSrc(a)} title={a.path} className="h-36" />
+                    {/* w-0 min-w-full: the caption follows the player's width
+                        instead of stretching the card to the filename's. */}
+                    <button
+                      onClick={() => open(a)}
+                      title={a.path}
+                      className="w-0 min-w-full truncate px-2 py-1 text-left font-mono text-[11px] text-sky-700 hover:underline dark:text-sky-400"
+                    >
+                      {baseName(a.path)}
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
