@@ -7,6 +7,7 @@ import {
   treeNodesAt,
   ancestorSet,
   commitsPage,
+  commitChanges,
   fileLog,
   formatCommitDate,
   commitSubject,
@@ -181,6 +182,33 @@ test("fileLog: side-branch changes attribute to the merge (first-parent)", () =>
 test("fileLog from an old rev sees only its past", () => {
   assert.deepEqual(fileLog(idx, C2, "src/util.h"), [{ oid: C2, change: "add", blob: O("b4") }]);
   assert.deepEqual(fileLog(idx, C1, "src/util.h"), []);
+});
+
+test("commitChanges: root commit adds everything, path-sorted", () => {
+  assert.deepEqual(commitChanges(idx, C1), [
+    { path: "README", change: "add", from: null, to: O("b1") },
+    { path: "src/main.c", change: "add", from: null, to: O("b2") },
+  ]);
+});
+
+test("commitChanges: modify and add across a shared subtree", () => {
+  assert.deepEqual(commitChanges(idx, C2), [
+    { path: "src/main.c", change: "modify", from: O("b2"), to: O("b3") },
+    { path: "src/util.h", change: "add", from: null, to: O("b4") },
+  ]);
+});
+
+test("commitChanges: delete plus binary add", () => {
+  assert.deepEqual(commitChanges(idx, C3), [
+    { path: "README", change: "delete", from: O("b1"), to: null },
+    { path: "bin.dat", change: "add", from: null, to: O("b5") },
+  ]);
+});
+
+test("commitChanges: merge diffs against the first parent only", () => {
+  assert.deepEqual(commitChanges(idx, C5), [
+    { path: "side.txt", change: "add", from: null, to: O("b6") },
+  ]);
 });
 
 test("formatCommitDate renders in the identity's timezone", () => {

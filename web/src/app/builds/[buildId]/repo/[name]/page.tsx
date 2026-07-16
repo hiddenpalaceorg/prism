@@ -124,10 +124,11 @@ export default async function RepoPage({
   let path = normalizeAssetPath(one(sp.path)) || null;
   // A deep-linked directory just opens the tree; only files get a view.
   if (path && entryAt(idx, revOid, path)?.type === "tree") path = null;
-  // A deep-linked diff (a change from the file's history); resolved client-side
-  // against the log, so only the shape is validated here.
+  // A deep-linked diff: with a path, one file-history change; without, a
+  // whole commit's change set. Resolved client-side, so only the shape is
+  // validated here.
   const rawDiff = one(sp.diff).toLowerCase();
-  const diff = path && /^[0-9a-f]{4,40}$/.test(rawDiff) ? rawDiff : null;
+  const diff = /^[0-9a-f]{4,40}$/.test(rawDiff) ? rawDiff : null;
 
   // Initial payload, server-rendered: pruned tree (the build page's
   // RSC-payload discipline), first log page, and — when a file is deep-linked
@@ -162,8 +163,11 @@ export default async function RepoPage({
         &larr; {resolved.name}
       </Link>
 
+      {/* Links back to the viewer's root state (HEAD, commit log). */}
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-        {name} <span className="text-base font-normal text-neutral-400">source repository</span>
+        <Link href={repoHref} className="hover:underline">
+          {name} <span className="text-base font-normal text-neutral-400">source repository</span>
+        </Link>
       </h1>
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">

@@ -13,11 +13,13 @@ import { commitSubject, formatCommitDate, type RepoLogEntryDto } from "@/lib/rep
 import type { LogState } from "./RepoViewer";
 
 // Same cap as the file view: don't diff what we wouldn't display.
-const TEXT_DISPLAY_CAP = 1_000_000;
+export const TEXT_DISPLAY_CAP = 1_000_000;
 
-type Fetched = { from: string; to: string } | "loading" | "error";
+export type Fetched = { from: string; to: string } | "loading" | "error";
 
-function useBlobPair(apiBase: string, fromOid: string | null, toOid: string | null): Fetched {
+/** Both versions of a file, fetched from the blob route (null oid = empty
+ *  side). Shared with the commit overview's per-file diffs. */
+export function useBlobPair(apiBase: string, fromOid: string | null, toOid: string | null): Fetched {
   // Results are stored with the pair they belong to; a stale pair reads as
   // "loading" so the effect never has to reset state synchronously.
   const key = `${fromOid}\0${toOid}`;
@@ -62,7 +64,7 @@ function Cell({ cell, changed, side }: { cell: DiffRow["l"]; changed: boolean; s
   );
 }
 
-function DiffBody({ before, after }: { before: string; after: string }) {
+export function DiffBody({ before, after }: { before: string; after: string }) {
   const rows = useMemo(() => diffRows(before, after), [before, after]);
   const spans = useMemo(() => visibleSpans(rows), [rows]);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());

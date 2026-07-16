@@ -188,6 +188,69 @@ export function fileLog(idx: RepoIndex, fromOid: string, path: string, limit = 1
   return out;
 }
 
+/** One file changed by a commit (vs its first parent). */
+export interface TreeChange {
+  path: string;
+  change: "add" | "modify" | "delete";
+  from: string | null; // blob oid before
+  to: string | null; // blob oid after
+}
+
+function diffTrees(
+  idx: RepoIndex,
+  fromOid: string | null,
+  toOid: string | null,
+  prefix: string,
+  out: TreeChange[]
+): void {
+  if (fromOid === toOid) return; // identical subtree — skip wholesale
+  const a = fromOid ? (idx.trees.get(fromOid) ?? []) : [];
+  const b = toOid ? (idx.trees.get(toOid) ?? []) : [];
+  const bByName = new Map(b.map((e) => [e[0], e]));
+  const aNames = new Set(a.map((e) => e[0]));
+  for (const [name, type, oid] of a) {
+    const path = prefix + name;
+    const other = bByName.get(name);
+    if (!other) {
+      if (type === "blob") out.push({ path, change: "delete", from: oid, to: null });
+      else diffTrees(idx, oid, null, path + "/", out);
+    } else {
+      const [, btype, boid] = other;
+      if (type === "blob" && btype === "blob") {
+        if (oid !== boid) out.push({ path, change: "modify", from: oid, to: boid });
+      } else if (type === "tree" && btype === "tree") {
+        diffTrees(idx, oid, boid, path + "/", out);
+      } else if (type === "blob") {
+        // blob replaced by a directory of the same name
+        out.push({ path, change: "delete", from: oid, to: null });
+        diffTrees(idx, null, boid, path + "/", out);
+      } else {
+        // directory replaced by a blob
+        diffTrees(idx, oid, null, path + "/", out);
+        out.push({ path, change: "add", from: null, to: boid });
+      }
+    }
+  }
+  for (const [name, btype, boid] of b) {
+    if (aNames.has(name)) continue;
+    const path = prefix + name;
+    if (btype === "blob") out.push({ path, change: "add", from: null, to: boid });
+    else diffTrees(idx, null, boid, path + "/", out);
+  }
+}
+
+/** Every file a commit changed relative to its first parent (a root commit
+ *  adds everything). Merge commits compare against the first parent, matching
+ *  fileLog's attribution. Path-sorted. */
+export function commitChanges(idx: RepoIndex, commitOid: string): TreeChange[] {
+  const commit = idx.commitByOid.get(commitOid);
+  if (!commit) return [];
+  const parent = commit.parents.length ? idx.commitByOid.get(commit.parents[0]) : undefined;
+  const out: TreeChange[] = [];
+  diffTrees(idx, parent?.tree ?? null, commit.tree, "", out);
+  return out.sort((x, y) => (x.path < y.path ? -1 : 1));
+}
+
 /** What /api/repo/.../log serves per entry: a FileLogEntry joined with its
  *  commit's identity/message and its blob's size/binary flag. The first entry
  *  is the path's version at the queried rev (or its deletion). */

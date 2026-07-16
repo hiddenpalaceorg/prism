@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { initialExpanded, type TreeNode } from "@/lib/filetree";
 import { shortOid, type RepoCommit, type RepoLogEntryDto } from "@/lib/repo-manifest";
+import RepoCommitDiff from "./RepoCommitDiff";
 import RepoCommitList from "./RepoCommitList";
 import RepoDiffView from "./RepoDiffView";
 import RepoFileHistory from "./RepoFileHistory";
@@ -155,9 +156,15 @@ export default function RepoViewer({
     () => navigate({ rev: view.rev, path: null, diff: null }),
     [navigate, view.rev]
   );
+  // A commit row opens that commit's change set; "browse tree" inside the
+  // overview is what rewinds the whole viewer to the snapshot.
   const selectCommit = useCallback(
-    (oid: string) => navigate({ rev: shortOid(oid), path: view.path, diff: null }, oid),
-    [navigate, view.path]
+    (oid: string) => navigate({ rev: view.rev, path: null, diff: shortOid(oid) }),
+    [navigate, view.rev]
+  );
+  const browseCommit = useCallback(
+    (oid: string) => navigate({ rev: shortOid(oid), path: null, diff: null }, oid),
+    [navigate]
   );
   const selectRef = useCallback(
     (name: string) => {
@@ -211,6 +218,8 @@ export default function RepoViewer({
           ) : (
             <RepoFileView apiBase={apiBase} path={view.path} log={log} />
           )
+        ) : view.diff !== null ? (
+          <RepoCommitDiff apiBase={apiBase} diffOid={view.diff} onBrowse={browseCommit} onClose={closeDiff} />
         ) : (
           <RepoCommitList
             key={revOid}

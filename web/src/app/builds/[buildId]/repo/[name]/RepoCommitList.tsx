@@ -66,7 +66,7 @@ export default function RepoCommitList({
             <button
               onClick={() => onSelectCommit(c.oid)}
               className="flex w-full items-baseline gap-3 py-2 text-left text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900/40"
-              title={`Browse the tree at ${shortOid(c.oid)}`}
+              title={`Show the changes in ${shortOid(c.oid)}`}
             >
               <span
                 className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-xs ${
