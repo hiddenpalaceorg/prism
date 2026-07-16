@@ -31,9 +31,9 @@ export function imageSrc(a: ViewableAsset): string {
 }
 
 /** Where <video> should point: MP4/WebM play natively, while MPEG-1/2 program
- *  streams (.mpg, DVD .vob) go through the server's MP4 transcode. */
+ *  streams (.mpg, DVD .vob) go through the server's transcode. */
 export function videoSrc(a: ViewableAsset): string {
-  return a.mime === "video/mpeg" ? `${assetUrl(a)}/mp4` : assetUrl(a);
+  return a.mime === "video/mpeg" ? `${assetUrl(a)}/video` : assetUrl(a);
 }
 
 export function humanSize(bytes: number): string {
