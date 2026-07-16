@@ -17,6 +17,8 @@ struct CuratorApp: App {
                     .disabled(model.isWorking)
                 Button("Open Folder as Build…") { model.openFolderAsBuildDialog() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button("Re-analyze Image (fresh)…") { model.reanalyzeDialog() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(model.isWorking)
                 Divider()
                 Button("Export Library for Upload…") { model.exportLibrary() }

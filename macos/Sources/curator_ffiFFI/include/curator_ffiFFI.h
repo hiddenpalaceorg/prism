@@ -367,6 +367,11 @@ RustBuffer uniffi_curator_ffi_fn_method_engine_list_files(uint64_t ptr, RustBuff
 RustBuffer uniffi_curator_ffi_fn_method_engine_load_build(uint64_t ptr, RustBuffer sha256, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_REANALYZE
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_REANALYZE
+RustBuffer uniffi_curator_ffi_fn_method_engine_reanalyze(uint64_t ptr, RustBuffer path, uint64_t listener, RustBuffer cancel, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_RECENT_BUILDS
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_FN_METHOD_ENGINE_RECENT_BUILDS
 RustBuffer uniffi_curator_ffi_fn_method_engine_recent_builds(uint64_t ptr, uint32_t limit, RustCallStatus *_Nonnull out_status
@@ -704,6 +709,12 @@ uint16_t uniffi_curator_ffi_checksum_method_engine_list_files(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LOAD_BUILD
 #define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_LOAD_BUILD
 uint16_t uniffi_curator_ffi_checksum_method_engine_load_build(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_REANALYZE
+#define UNIFFI_FFIDEF_UNIFFI_CURATOR_FFI_CHECKSUM_METHOD_ENGINE_REANALYZE
+uint16_t uniffi_curator_ffi_checksum_method_engine_reanalyze(void
 
 );
 #endif

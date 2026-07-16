@@ -200,12 +200,12 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func analyze(url: URL) {
+    func analyze(url: URL, force: Bool = false) {
         guard !isWorking else { return }
         isWorking = true
         errorMessage = nil
         counters = []
-        status = "Analyzing \(url.lastPathComponent)…"
+        status = "\(force ? "Re-analyzing" : "Analyzing") \(url.lastPathComponent)…"
         let cancel = CancelHandle()
         cancelHandle = cancel
 
@@ -223,7 +223,9 @@ final class AppModel: ObservableObject {
                 let summary: AnalysisSummary = try await withCheckedThrowingContinuation { continuation in
                     self.analysisQueue.async {
                         do {
-                            let summary = try engine.analyze(path: path, listener: forwarder, cancel: cancel)
+                            let summary = force
+                                ? try engine.reanalyze(path: path, listener: forwarder, cancel: cancel)
+                                : try engine.analyze(path: path, listener: forwarder, cancel: cancel)
                             continuation.resume(returning: summary)
                         } catch {
                             continuation.resume(throwing: error)
@@ -473,6 +475,21 @@ final class AppModel: ObservableObject {
         panel.prompt = "Open"
         if panel.runModal() == .OK, let url = panel.url {
             open(url: url)
+        }
+    }
+
+    /// Full re-parse and re-hash, replacing the library record — for dumps whose
+    /// earlier parse is known bad (plain re-analyze is a cache hit that only tops
+    /// up assets).
+    func reanalyzeDialog() {
+        guard !isWorking else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Re-analyze"
+        if panel.runModal() == .OK, let url = panel.url {
+            analyze(url: url, force: true)
         }
     }
 

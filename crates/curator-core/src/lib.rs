@@ -85,6 +85,27 @@ impl Analyzer {
         path: &str,
         observer: Arc<dyn ProgressObserver>,
     ) -> Result<Analysis> {
+        self.analyze_impl(path, observer, false)
+    }
+
+    /// Analyze ignoring any cached record: full re-parse and re-hash, replacing
+    /// the stored record and library row. For builds whose earlier parse is
+    /// known bad (e.g. a since-fixed reader bug) — a plain re-analyze is a
+    /// cache hit that only tops up assets and never re-hashes files.
+    pub fn reanalyze(
+        &self,
+        path: &str,
+        observer: Arc<dyn ProgressObserver>,
+    ) -> Result<Analysis> {
+        self.analyze_impl(path, observer, true)
+    }
+
+    fn analyze_impl(
+        &self,
+        path: &str,
+        observer: Arc<dyn ProgressObserver>,
+        force: bool,
+    ) -> Result<Analysis> {
         // 1. Image identity (single streaming read in Rust).
         let image = fingerprint::hash_image(path, &observer)?;
 
@@ -92,19 +113,21 @@ impl Analyzer {
         // ASSET_PROFILE (or never ran, assets == None) get topped up here —
         // extraction alone, no re-hash — so re-running analyze over an existing
         // collection backfills its asset store.
-        if let Some(mut record) = self.cache.load(&image.sha256)? {
-            observer.on_event(Event::Message(format!("cache hit {}", image.sha256)));
-            if record.assets.is_none() || record.asset_profile < schema::ASSET_PROFILE {
-                if let Some(assets) = self.extract_assets(path, &observer)? {
-                    record.assets = Some(assets);
-                    record.asset_profile = schema::ASSET_PROFILE;
-                    let xml = render::to_dat_xml(&record);
-                    let jp = self.cache.store(&record, &xml)?;
-                    self.db.upsert_build(&record, &jp.to_string_lossy())?;
+        if !force {
+            if let Some(mut record) = self.cache.load(&image.sha256)? {
+                observer.on_event(Event::Message(format!("cache hit {}", image.sha256)));
+                if record.assets.is_none() || record.asset_profile < schema::ASSET_PROFILE {
+                    if let Some(assets) = self.extract_assets(path, &observer)? {
+                        record.assets = Some(assets);
+                        record.asset_profile = schema::ASSET_PROFILE;
+                        let xml = render::to_dat_xml(&record);
+                        let jp = self.cache.store(&record, &xml)?;
+                        self.db.upsert_build(&record, &jp.to_string_lossy())?;
+                    }
                 }
+                let json_path = self.cache.json_path(&image.sha256);
+                return Ok(Analysis { record, from_cache: true, json_path });
             }
-            let json_path = self.cache.json_path(&image.sha256);
-            return Ok(Analysis { record, from_cache: true, json_path });
         }
 
         // 3. Parse + extract via the adapter (Python/ps2exe).

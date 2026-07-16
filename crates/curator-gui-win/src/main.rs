@@ -83,6 +83,7 @@ mod app {
     const IDM_BROWSE: usize = 11;
     const IDM_VIEW_ASSETS: usize = 12;
     const IDM_OPEN_DIR_BUILD: usize = 13;
+    const IDM_REANALYZE: usize = 14;
     const IDM_RECENT_BASE: usize = 2000;
     const MAX_RECENT: u32 = 15;
 
@@ -591,6 +592,7 @@ mod app {
         let recent = CreatePopupMenu().unwrap_or_default();
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN, w!("&Open Image…\tCtrl+O"));
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_DIR_BUILD, w!("Open Folder as &Build…"));
+        let _ = AppendMenuW(file, MF_STRING, IDM_REANALYZE, w!("&Re-analyze Image (fresh)…"));
         let _ = AppendMenuW(file, MF_STRING, IDM_OPEN_FOLDER, w!("&Import Folder (recursive)…"));
         let _ = AppendMenuW(file, MF_POPUP, recent.0 as usize, w!("Open &Recent"));
         let _ = AppendMenuW(file, MF_STRING, IDM_BROWSE, w!("&Browse Library…\tCtrl+B"));
@@ -654,6 +656,14 @@ mod app {
             IDM_OPEN => {
                 if let Some(path) = pick_file(hwnd) {
                     start_analysis(hwnd, path);
+                }
+            }
+            IDM_REANALYZE => {
+                // Full re-parse and re-hash, replacing the library record — for
+                // dumps whose earlier parse is known bad (plain re-analyze is a
+                // cache hit that only tops up assets).
+                if let Some(path) = pick_file(hwnd) {
+                    start_analysis_with(hwnd, path, true);
                 }
             }
             IDM_OPEN_DIR_BUILD => {
@@ -766,6 +776,10 @@ mod app {
     }
 
     unsafe fn start_analysis(hwnd: HWND, path: String) {
+        start_analysis_with(hwnd, path, false);
+    }
+
+    unsafe fn start_analysis_with(hwnd: HWND, path: String, force: bool) {
         let Some(st) = state(hwnd) else { return };
         if st.working {
             return;
@@ -794,11 +808,13 @@ mod app {
                 }
                 let obs: Arc<dyn ProgressObserver> =
                     Arc::new(WinObserver { hwnd: hwnd_i, events, cancel });
-                let analysis = guard
-                    .as_ref()
-                    .unwrap()
-                    .analyze(&path, obs)
-                    .map_err(|e| e.to_string())?;
+                let analyzer = guard.as_ref().unwrap();
+                let analysis = if force {
+                    analyzer.reanalyze(&path, obs)
+                } else {
+                    analyzer.analyze(&path, obs)
+                }
+                .map_err(|e| e.to_string())?;
                 let xml = render::to_dat_xml(&analysis.record);
                 let json = render::to_json(&analysis.record).map_err(|e| e.to_string())?;
                 Ok(AnalysisDone { record: analysis.record, xml, json, from_cache: analysis.from_cache })
