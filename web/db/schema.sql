@@ -35,7 +35,8 @@ CREATE TABLE builds (
     record                JSONB NOT NULL,           -- full canonical record
     ingested_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     build_date            TEXT,                     -- volume creation date, else header release date (sortable copy)
-    lot                   TEXT                      -- moderator-assigned display group, e.g. "Sonic Month 2026"
+    lot                   TEXT,                     -- moderator-assigned display group, e.g. "Sonic Month 2026"
+    private               BOOLEAN NOT NULL DEFAULT FALSE -- hidden from public list/search/similar (direct URL stays reachable)
 );
 CREATE INDEX idx_builds_content      ON builds(content_hash);
 CREATE INDEX idx_builds_filtered     ON builds(filtered_content_hash);
@@ -45,6 +46,11 @@ CREATE INDEX idx_builds_name_trgm    ON builds USING gin (name gin_trgm_ops);
 CREATE INDEX idx_builds_textdoc_fts  ON builds USING gin (to_tsvector('simple', text_doc));
 CREATE INDEX idx_builds_embedding    ON builds USING hnsw (text_embedding vector_cosine_ops);
 CREATE INDEX idx_builds_lot          ON builds(lot) WHERE lot IS NOT NULL;
+
+-- Lots hidden from non-moderators; a build in a listed lot is hidden with it.
+CREATE TABLE private_lots (
+    lot TEXT PRIMARY KEY
+);
 
 -- ── files (per-build) — filename FTS/fuzzy + exact hash lookup ────────────────
 CREATE TABLE files (

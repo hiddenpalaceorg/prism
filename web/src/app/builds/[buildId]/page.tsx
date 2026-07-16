@@ -5,7 +5,7 @@ import { notFound, permanentRedirect } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
-import { getBuild, getBuildAssets, getBuildMeta, getBuildRepos, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, listLots, resolveBuild } from "@/lib/queries";
+import { getBuild, getBuildAssets, getBuildMeta, getBuildRepos, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, listLots, isLotPrivate, resolveBuild } from "@/lib/queries";
 import { shortOid } from "@/lib/repo-manifest";
 import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
 import { buildDescription, displayTitle } from "@/lib/meta";
@@ -139,12 +139,13 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
   const q = deriveQueryFeatures(build.record);
   // Pull a wide candidate set per tier so the fused top-50 is well-populated.
   // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const [similar, textNeighbors, assets, lots, repos] = await Promise.all([
+  const [similar, textNeighbors, assets, lots, repos, lotPrivate] = await Promise.all([
     findSimilar(pool, q, 100),
     findByEmbeddingOf(pool, sha256, 100),
     getBuildAssets(pool, sha256),
     listLots(pool),
     getBuildRepos(pool, sha256),
+    build.lot ? isLotPrivate(pool, build.lot) : Promise.resolve(false),
   ]);
   const fused = fuseSimilar(similar, textNeighbors);
 
@@ -207,11 +208,13 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
       </dl>
 
       <ModeratorTools
-        key={`${build.name}\0${build.lot ?? ""}`}
+        key={`${build.name}\0${build.lot ?? ""}\0${build.private}\0${lotPrivate}`}
         sha256={build.sha256}
         name={build.name}
         lot={build.lot}
         lots={lots}
+        privateFlag={build.private}
+        lotPrivate={lotPrivate}
       />
 
       {meta.length > 0 && (

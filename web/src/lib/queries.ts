@@ -14,6 +14,12 @@ import type { FusedBuild, TierKey } from "./tiers";
 const AUDIO_MATCH_THRESHOLD = 0.55;
 const TLSH_MAX_DISTANCE = 120; // below this ≈ similar executable
 
+// Predicate hiding private builds (their own flag or a private lot) from the
+// public list/search/similar surfaces. `alias` names the builds relation in
+// the calling query; pass includePrivate=true (moderators) to skip it.
+const visibleSql = (alias: string) =>
+  `NOT (${alias}.private OR EXISTS (SELECT 1 FROM private_lots _pl WHERE _pl.lot = ${alias}.lot))`;
+
 // A fingerprint present in more than this fraction of the audio corpus is too
 // common to discriminate (idf≈0): it can't push a match over AUDIO_MATCH_THRESHOLD.
 // We restrict both the candidate probe and the scoring to fingerprints with
@@ -29,7 +35,7 @@ const AUDIO_DF_CAP_FRACTION = 0.05;
 // fps (df≤cap=$4); per (query track, candidate track) sum idf over the
 // distinctive intersection/union; a build "matches" a query track when its best
 // candidate track scores ≥ threshold $5. Returns matched_tracks + best per build.
-const AUDIO_SIM_SQL = `
+const audioSimSql = (vis: string) => `
 WITH qf AS (
   SELECT u.qt, u.h, ln(($3::float + 1) / (i.doc_count + 1)) AS w
   FROM unnest($1::int[], $2::bigint[]) AS u(qt, h)
@@ -70,6 +76,7 @@ SELECT pqb.build_sha256 AS sha256, b.name, b.system,
        count(*) FILTER (WHERE pqb.bj >= $5::float) AS matched_tracks,
        max(pqb.bj) AS best
 FROM per_qt_build pqb JOIN builds b ON b.sha256 = pqb.build_sha256
+WHERE ${vis}
 GROUP BY pqb.build_sha256, b.name, b.system
 HAVING count(*) FILTER (WHERE pqb.bj >= $5::float) > 0
 ORDER BY matched_tracks DESC, best DESC
@@ -80,7 +87,8 @@ export async function findAudioSimilar(
   pool: Pool,
   tracks: AudioTrack[],
   exclude: string,
-  limit = 20
+  limit = 20,
+  includePrivate = false
 ) {
   const { rows: nr } = await pool.query(
     "SELECT count(DISTINCT build_sha256)::int AS n FROM audio_fp"
@@ -98,7 +106,7 @@ export async function findAudioSimilar(
     }
   });
   if (!fps.length) return [];
-  const r = await pool.query(AUDIO_SIM_SQL, [
+  const r = await pool.query(audioSimSql(includePrivate ? "TRUE" : visibleSql("b")), [
     arrayLit(qtIdx),
     arrayLit(fps),
     n,
@@ -199,8 +207,14 @@ export async function logCheck(pool: Pool, sha256: string | null): Promise<void>
 
 /** Fuse all-tier neighbors for a query build's derived features. The tiers are
  *  independent queries, so they run concurrently (bounded by the pool size). */
-export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Promise<SimilarityResult> {
+export async function findSimilar(
+  pool: Pool,
+  q: QueryFeatures,
+  limit = 20,
+  includePrivate = false
+): Promise<SimilarityResult> {
   const exclude = q.sha256 || "";
+  const vis = includePrivate ? "TRUE" : visibleSql("b");
   const out: SimilarityResult = {
     identical_content: [], shared_files: [], similar_chunks: [], resemblance: [], exe_imports: [], exe_similar: [], audio_neighbors: [],
   };
@@ -208,7 +222,8 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
 
   if (q.content_hash) {
     tiers.push(pool.query(
-      "SELECT sha256, name, system FROM builds WHERE content_hash=$1 AND sha256<>$2",
+      `SELECT b.sha256, b.name, b.system FROM builds b
+       WHERE b.content_hash=$1 AND b.sha256<>$2 AND ${vis}`,
       [q.content_hash, exclude]
     ).then((r) => { out.identical_content = r.rows; }));
   }
@@ -234,6 +249,7 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
        CROSS JOIN qn
        JOIN build_fileset f ON f.build_sha256 = i.build_sha256
        JOIN builds b ON b.sha256 = i.build_sha256
+       WHERE ${vis}
        ORDER BY jaccard DESC LIMIT $3`,
       [arrayLit(q.fileset), exclude, limit]
     ).then((r) => {
@@ -246,7 +262,7 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
     tiers.push(pool.query(
       `SELECT s.build_sha256 AS sha256, b.name, b.system, s.minhash
        FROM build_chunk_signature s JOIN builds b ON b.sha256=s.build_sha256
-       WHERE s.build_sha256<>$2 AND s.lsh_bands && $1::bigint[]`,
+       WHERE s.build_sha256<>$2 AND s.lsh_bands && $1::bigint[] AND ${vis}`,
       [arrayLit(q.bands), exclude]
     ).then((cand) => {
       out.similar_chunks = cand.rows
@@ -269,7 +285,7 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
     tiers.push(pool.query(
       `SELECT s.build_sha256 AS sha256, b.name, b.system, s.minhash
        FROM build_resemblance s JOIN builds b ON b.sha256=s.build_sha256
-       WHERE s.build_sha256<>$2 AND s.lsh_bands && $1::bigint[]`,
+       WHERE s.build_sha256<>$2 AND s.lsh_bands && $1::bigint[] AND ${vis}`,
       [arrayLit(q.resemblanceBands), exclude]
     ).then((cand) => {
       out.resemblance = cand.rows
@@ -290,7 +306,7 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
     tiers.push(pool.query(
       `SELECT e.build_sha256 AS sha256, b.name, b.system
        FROM exe_fp e JOIN builds b ON b.sha256=e.build_sha256
-       WHERE e.imphash=$1 AND e.build_sha256<>$2`,
+       WHERE e.imphash=$1 AND e.build_sha256<>$2 AND ${vis}`,
       [q.imphash, exclude]
     ).then((r) => { out.exe_imports = r.rows; }));
   }
@@ -302,7 +318,7 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
       // Cap the linear TLSH scan to bound work on large corpora.
       `SELECT e.build_sha256 AS sha256, b.name, b.system, e.tlsh
        FROM exe_fp e JOIN builds b ON b.sha256=e.build_sha256
-       WHERE e.tlsh IS NOT NULL AND e.build_sha256<>$1
+       WHERE e.tlsh IS NOT NULL AND e.build_sha256<>$1 AND ${vis}
        LIMIT 5000`,
       [exclude]
     ).then((r) => {
@@ -315,7 +331,7 @@ export async function findSimilar(pool: Pool, q: QueryFeatures, limit = 20): Pro
   }
 
   if (q.audioTracks.length) {
-    tiers.push(findAudioSimilar(pool, q.audioTracks, exclude, limit).then((r) => {
+    tiers.push(findAudioSimilar(pool, q.audioTracks, exclude, limit, includePrivate).then((r) => {
       out.audio_neighbors = r;
     }));
   }
@@ -340,14 +356,19 @@ export interface EmbeddingHit {
  * (`ORDER BY b.emb <=> me.emb`) forces a full seq scan + sort over every
  * embedding in the corpus (~1.9s at 16k builds vs ~40ms indexed).
  */
-export async function findByEmbeddingOf(pool: Pool, sha256: string, limit = 20): Promise<EmbeddingHit[]> {
+export async function findByEmbeddingOf(
+  pool: Pool,
+  sha256: string,
+  limit = 20,
+  includePrivate = false
+): Promise<EmbeddingHit[]> {
   const r = await pool.query(
     "SELECT text_embedding::text AS v FROM builds WHERE sha256=$1 AND text_embedding IS NOT NULL",
     [sha256]
   );
   const v = r.rows[0]?.v as string | undefined;
   if (!v) return [];
-  return findByEmbedding(pool, v, sha256, limit);
+  return findByEmbedding(pool, v, sha256, limit, includePrivate);
 }
 
 /** Text: nearest builds by text-embedding cosine (pgvector). For a query vector
@@ -356,7 +377,8 @@ export async function findByEmbedding(
   pool: Pool,
   vectorLiteral: string,
   exclude: string,
-  limit = 20
+  limit = 20,
+  includePrivate = false
 ): Promise<EmbeddingHit[]> {
   const c = await pool.connect();
   try {
@@ -371,6 +393,7 @@ export async function findByEmbedding(
       `SELECT sha256, name, system, 1 - (text_embedding <=> $1::vector) AS cosine
        FROM builds
        WHERE sha256<>$2 AND text_embedding IS NOT NULL
+         AND ${includePrivate ? "TRUE" : visibleSql("builds")}
        ORDER BY text_embedding <=> $1::vector
        LIMIT $3`,
       [vectorLiteral, exclude, limit]
@@ -391,15 +414,27 @@ export interface SearchResult {
 }
 
 /** Filename FTS/fuzzy search, or exact hash lookup when the term looks like a hash. */
-export async function search(pool: Pool, term: string, limit = 50): Promise<SearchResult> {
+export async function search(
+  pool: Pool,
+  term: string,
+  limit = 50,
+  includePrivate = false
+): Promise<SearchResult> {
   const t = term.trim();
   if (/^[0-9a-fA-F]{8,}$/.test(t)) {
     const h = t.toLowerCase();
+    // Two UNION arms instead of one OR across the builds×files join: the
+    // joined form made the planner walk the whole files table (15s+ at 9M
+    // rows); separately, each arm is index-served and the union stays in
+    // the low milliseconds. UNION (not ALL) dedups like the old DISTINCT.
+    const vis = includePrivate ? "TRUE" : visibleSql("b");
     const r = await pool.query(
-      `SELECT DISTINCT b.sha256, b.name, b.system
-       FROM builds b LEFT JOIN files f ON f.build_sha256=b.sha256
-       WHERE b.sha256=$1 OR b.md5=$1 OR b.sha1=$1 OR b.content_hash=$1
-          OR f.md5=$1 OR f.sha1=$1 OR f.sha256=$1
+      `SELECT b.sha256, b.name, b.system FROM builds b
+       WHERE (b.sha256=$1 OR b.md5=$1 OR b.sha1=$1 OR b.content_hash=$1) AND ${vis}
+       UNION
+       SELECT b.sha256, b.name, b.system FROM builds b
+       WHERE b.sha256 IN (SELECT f.build_sha256 FROM files f WHERE f.md5=$1 OR f.sha1=$1 OR f.sha256=$1)
+         AND ${vis}
        LIMIT $2`,
       [h, limit]
     );
@@ -408,7 +443,8 @@ export async function search(pool: Pool, term: string, limit = 50): Promise<Sear
   const r = await pool.query(
     `SELECT sha256, name, system, similarity(name,$1) AS sim
      FROM builds
-     WHERE name % $1 OR to_tsvector('simple', text_doc) @@ plainto_tsquery('simple',$1)
+     WHERE (name % $1 OR to_tsvector('simple', text_doc) @@ plainto_tsquery('simple',$1))
+       AND ${includePrivate ? "TRUE" : visibleSql("builds")}
      ORDER BY sim DESC NULLS LAST LIMIT $2`,
     [t, limit]
   );
@@ -444,6 +480,9 @@ export interface BuildRow {
   record: BuildRecord;
   /** Moderator-assigned display group, e.g. "Sonic Month 2026". */
   lot: string | null;
+  /** Hidden from public list/search/similar (the build's own flag; a private
+   *  lot hides its builds without setting this). */
+  private: boolean;
 }
 
 export interface BuildListItem {
@@ -457,6 +496,9 @@ export interface BuildListItem {
   build_date: string | null;
   /** Moderator-assigned display group, e.g. "Sonic Month 2026". */
   lot: string | null;
+  /** Hidden from non-moderators (own flag or private lot). Only meaningful
+   *  when the list was fetched with includePrivate. */
+  private?: boolean;
 }
 
 export type BuildSortKey = "name" | "system" | "build_date" | "file_count" | "total_size";
@@ -469,6 +511,8 @@ export interface BuildsPageOpts {
   dir?: "asc" | "desc";
   offset?: number;
   limit?: number;
+  /** Moderator view: include private builds (marked via the `private` field). */
+  includePrivate?: boolean;
 }
 
 export interface BuildsPageResult {
@@ -508,6 +552,7 @@ export async function listBuildsPage(pool: Pool, opts: BuildsPageOpts = {}): Pro
     params.push(opts.lot);
     conds.push(`lot = $${params.length}`);
   }
+  if (!opts.includePrivate) conds.push(visibleSql("builds"));
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
   const key = opts.sort && BUILD_SORT[opts.sort] ? opts.sort : "name";
@@ -523,13 +568,17 @@ export async function listBuildsPage(pool: Pool, opts: BuildsPageOpts = {}): Pro
 
   const [rows, count, systems] = await Promise.all([
     pool.query(
-      `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot
+      `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot,
+              (private OR EXISTS (SELECT 1 FROM private_lots _pl WHERE _pl.lot = builds.lot)) AS private
        FROM builds ${where} ORDER BY ${order}
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]
     ),
     pool.query(`SELECT count(*)::int AS n FROM builds ${where}`, params),
-    pool.query("SELECT DISTINCT system FROM builds ORDER BY system"),
+    pool.query(
+      `SELECT DISTINCT system FROM builds
+       ${opts.includePrivate ? "" : `WHERE ${visibleSql("builds")}`} ORDER BY system`
+    ),
   ]);
   return {
     rows: rows.rows as BuildListItem[],
@@ -643,20 +692,21 @@ export async function getBuildMeta(pool: Pool, sha256: string): Promise<BuildMet
 export async function getBuild(pool: Pool, sha256: string): Promise<BuildRow | null> {
   const r = await pool.query(
     `SELECT sha256, name, system, size, md5, sha1, content_hash, file_count,
-            total_size, fingerprint_profile, ingested_at, record, lot
+            total_size, fingerprint_profile, ingested_at, record, lot, private
      FROM builds WHERE sha256=$1`,
     [sha256]
   );
   return (r.rows[0] as BuildRow) ?? null;
 }
 
-/// Moderator metadata edit: rename and/or move between lots. Omitted fields are
-/// untouched; lot=null clears it. Returns the previous name/lot (so the caller
-/// can revalidate pages of the lot the build left), or null when not found.
+/// Moderator metadata edit: rename, move between lots, and/or toggle privacy.
+/// Omitted fields are untouched; lot=null clears it. Returns the previous
+/// name/lot (so the caller can revalidate pages of the lot the build left),
+/// or null when not found.
 export async function updateBuildMeta(
   pool: Pool,
   sha256: string,
-  fields: { name?: string; lot?: string | null }
+  fields: { name?: string; lot?: string | null; private?: boolean }
 ): Promise<{ name: string; lot: string | null } | null> {
   const sets: string[] = [];
   const params: unknown[] = [sha256];
@@ -667,6 +717,10 @@ export async function updateBuildMeta(
   if (fields.lot !== undefined) {
     params.push(fields.lot);
     sets.push(`lot=$${params.length}`);
+  }
+  if (fields.private !== undefined) {
+    params.push(fields.private);
+    sets.push(`private=$${params.length}`);
   }
   if (!sets.length) throw new Error("updateBuildMeta: no fields to update");
   const r = await pool.query(
@@ -680,19 +734,42 @@ export async function updateBuildMeta(
 }
 
 /// All builds in a lot, for the build page's lot section and revalidation.
-export async function getLotBuilds(pool: Pool, lot: string): Promise<BuildListItem[]> {
+/// The lot section is ISR-cached (one copy for every viewer), so it must stay
+/// public-only; revalidation passes includePrivate to reach every sibling page.
+export async function getLotBuilds(pool: Pool, lot: string, includePrivate = false): Promise<BuildListItem[]> {
   const r = await pool.query(
     `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot
-     FROM builds WHERE lot=$1 ORDER BY lower(name)`,
+     FROM builds WHERE lot=$1 AND ${includePrivate ? "TRUE" : visibleSql("builds")}
+     ORDER BY lower(name)`,
     [lot]
   );
   return r.rows as BuildListItem[];
 }
 
-/** Distinct lot names, for the moderator edit box's suggestions. */
+/** Distinct lot names, for the moderator edit box's suggestions. Private lots
+ *  are excluded — the list is embedded in ISR-cached build pages. */
 export async function listLots(pool: Pool): Promise<string[]> {
-  const r = await pool.query("SELECT DISTINCT lot FROM builds WHERE lot IS NOT NULL ORDER BY lot");
+  const r = await pool.query(
+    `SELECT DISTINCT lot FROM builds
+     WHERE lot IS NOT NULL AND NOT EXISTS (SELECT 1 FROM private_lots _pl WHERE _pl.lot = builds.lot)
+     ORDER BY lot`
+  );
   return r.rows.map((row) => row.lot as string);
+}
+
+/** Whether a lot is hidden from non-moderators. */
+export async function isLotPrivate(pool: Pool, lot: string): Promise<boolean> {
+  const r = await pool.query("SELECT 1 FROM private_lots WHERE lot=$1", [lot]);
+  return r.rows.length > 0;
+}
+
+/** Hide/unhide a whole lot (every build in it, now and later). */
+export async function setLotPrivate(pool: Pool, lot: string, priv: boolean): Promise<void> {
+  if (priv) {
+    await pool.query("INSERT INTO private_lots (lot) VALUES ($1) ON CONFLICT DO NOTHING", [lot]);
+  } else {
+    await pool.query("DELETE FROM private_lots WHERE lot=$1", [lot]);
+  }
 }
 
 export async function submissionStatus(pool: Pool, sha256: string) {

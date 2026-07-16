@@ -144,6 +144,11 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
                         {b.lot}
                       </span>
                     )}
+                    {b.private && (
+                      <span className="ml-2 rounded border border-red-300 px-1.5 py-0.5 text-xs font-normal text-red-600 dark:border-red-800 dark:text-red-400">
+                        private
+                      </span>
+                    )}
                   </RowLink>
                 </td>
                 <td className="h-full p-0">
