@@ -421,9 +421,12 @@ struct NodeDetail: View {
         if let node {
             let f = node.node
             Form {
+                // A dir node with hashes is an archive listed as a directory:
+                // it has bytes (and hashes) of its own.
+                let isArchive = f.isDir && (f.sha1 != nil || f.sha256 != nil || f.md5 != nil)
                 LabeledContent("Name", value: f.name)
-                LabeledContent("Type", value: f.isDir ? "Directory" : "File")
-                if !f.isDir { LabeledContent("Size", value: humanSize(f.size)) }
+                LabeledContent("Type", value: f.isDir ? (isArchive ? "Archive" : "Directory") : "File")
+                if !f.isDir || isArchive { LabeledContent("Size", value: humanSize(f.size)) }
                 if let d = f.date { LabeledContent("Date", value: d) }
                 if f.unreadable { LabeledContent("Status", value: "Unreadable (bad dump)") }
                 if let h = f.md5 { HashRow(label: "MD5", value: h) }
