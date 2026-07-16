@@ -10,7 +10,7 @@
 // file tree), which also deep-links the asset in the URL.
 
 import Link from "next/link";
-import { assetUrl, humanSize, imageSrc, type ViewableAsset } from "./AssetViewer";
+import { assetUrl, humanSize, imageSrc, videoSrc, type ViewableAsset } from "./AssetViewer";
 import { useOpenAsset } from "./AssetViewerHost";
 import AudioEmbed from "./AudioEmbed";
 import SourceCode from "./SourceCode";
@@ -102,7 +102,7 @@ export default function AssetGallery({
                     key={a.path}
                     controls
                     preload="none"
-                    src={assetUrl(a)}
+                    src={videoSrc(a)}
                     title={a.path}
                     className="h-36 rounded border border-neutral-200 dark:border-neutral-800"
                   />

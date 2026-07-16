@@ -69,6 +69,23 @@ def test_sniff_tiff_magic_and_case_insensitive_extension():
     assert not viewable.sniff(b"Not a TIFF at all, honest.", "image/tiff")
 
 
+def test_classify_mpeg_video():
+    assert viewable.classify("/MOVIE/OPENING.MPG") == ("video", "video/mpeg")
+    assert viewable.classify("/movie/intro.mpeg") == ("video", "video/mpeg")
+    assert viewable.classify("/VIDEO_TS/VTS_01_1.VOB") == ("video", "video/mpeg")
+    assert viewable.classify("/FMV/DEMO.M2V") == ("video", "video/mpeg")
+
+
+def test_sniff_mpeg_video():
+    # Program stream pack header (.mpg, DVD .vob), MPEG-2 flavor bits vary.
+    assert viewable.sniff(b"\x00\x00\x01\xba\x44\x00\x04\x00", "video/mpeg")
+    # Elementary video stream sequence header (.m1v/.m2v).
+    assert viewable.sniff(b"\x00\x00\x01\xb3\x16\x00\xf0\xc4", "video/mpeg")
+    # Renamed junk must not ship as video.
+    assert not viewable.sniff(b"RIFF\x24\x08\x00\x00CDXA", "video/mpeg")
+    assert not viewable.sniff(b"MZ\x90\x00", "video/mpeg")
+
+
 def test_classify_documents():
     assert viewable.classify("/COMIC/BOOK.PDF") == ("document", "application/pdf")
     assert viewable.classify("/ART/LOGO.EPS") == ("document", "application/postscript")

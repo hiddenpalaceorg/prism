@@ -46,6 +46,14 @@ _VIDEO = {
     "mp4": "video/mp4",
     "m4v": "video/mp4",
     "webm": "video/webm",
+    # MPEG-1/2 program streams (and bare video elementary streams). No browser
+    # plays these natively. The web viewer streams them through a server-side
+    # MP4 transcode and degrades to a download card without it.
+    "mpg": "video/mpeg",
+    "mpeg": "video/mpeg",
+    "m1v": "video/mpeg",
+    "m2v": "video/mpeg",
+    "vob": "video/mpeg",
 }
 
 # Print-format documents. Browsers render PDF natively; PostScript (.eps, .ps,
@@ -152,6 +160,9 @@ _MAGIC = {
     "audio/mp4": lambda h: h[4:8] == b"ftyp",
     "video/mp4": lambda h: h[4:8] == b"ftyp",
     "video/webm": lambda h: h.startswith(b"\x1aE\xdf\xa3"),
+    # Program streams (.mpg, DVD .vob) open on a pack start code, elementary
+    # video streams (.m1v/.m2v) on a sequence header.
+    "video/mpeg": lambda h: h.startswith((b"\x00\x00\x01\xba", b"\x00\x00\x01\xb3")),
     "application/pdf": lambda h: h.startswith(b"%PDF-"),
     # ASCII PostScript/EPS, or the DOS EPS binary wrapper around one.
     "application/postscript": lambda h: h.startswith((b"%!PS", b"\xc5\xd0\xd3\xc6")),

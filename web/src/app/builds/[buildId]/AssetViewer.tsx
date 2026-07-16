@@ -30,6 +30,12 @@ export function imageSrc(a: ViewableAsset): string {
   return a.mime === "image/x-tga" || a.mime === "image/tiff" ? `${assetUrl(a)}/png` : assetUrl(a);
 }
 
+/** Where <video> should point: MP4/WebM play natively, while MPEG-1/2 program
+ *  streams (.mpg, DVD .vob) go through the server's transcode. */
+export function videoSrc(a: ViewableAsset): string {
+  return a.mime === "video/mpeg" ? `${assetUrl(a)}/video` : assetUrl(a);
+}
+
 export function humanSize(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let v = bytes;
@@ -125,6 +131,40 @@ function HexBody({ asset }: { asset: ViewableAsset }) {
   );
 }
 
+// The "can't show this inline" downgrade shared by the bodies whose rendering
+// depends on an optional server-side converter.
+function DownloadCard({ asset }: { asset: ViewableAsset }) {
+  const name = asset.path.split("/").pop() || asset.path;
+  return (
+    <div className="flex flex-col items-center gap-3 rounded bg-neutral-900 p-10 text-sm text-neutral-300">
+      <p>No inline preview for this file.</p>
+      <a
+        href={assetUrl(asset)}
+        download={name}
+        className="rounded bg-neutral-700 px-3 py-1.5 text-neutral-100 hover:bg-neutral-600"
+      >
+        Download {name}
+      </a>
+    </div>
+  );
+}
+
+// MP4/WebM play natively. MPEG program streams go through the server's ffmpeg
+// transcode, which can be unavailable (no ffmpeg on the server) or fail on a
+// damaged stream, so fall back to a download card rather than an error.
+function VideoBody({ asset }: { asset: ViewableAsset }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <DownloadCard asset={asset} />;
+  return (
+    <video
+      controls
+      src={videoSrc(asset)}
+      className="max-h-[75vh] max-w-[90vw] rounded"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 // PDFs embed the browser's own viewer; PostScript/EPS goes through the
 // server's Ghostscript rasterization. Either can be unavailable (mobile
 // browsers won't embed PDFs; the server may lack Ghostscript), so both
@@ -132,15 +172,7 @@ function HexBody({ asset }: { asset: ViewableAsset }) {
 function DocumentBody({ asset }: { asset: ViewableAsset }) {
   const [failed, setFailed] = useState(false);
   const url = assetUrl(asset);
-  const name = asset.path.split("/").pop() || asset.path;
-  const fallback = (
-    <div className="flex flex-col items-center gap-3 rounded bg-neutral-900 p-10 text-sm text-neutral-300">
-      <p>No inline preview for this file.</p>
-      <a href={url} download={name} className="rounded bg-neutral-700 px-3 py-1.5 text-neutral-100 hover:bg-neutral-600">
-        Download {name}
-      </a>
-    </div>
-  );
+  const fallback = <DownloadCard asset={asset} />;
   if (asset.mime === "application/pdf") {
     return (
       <object data={url} type="application/pdf" className="h-[75vh] w-[min(70rem,90vw)] rounded" aria-label={asset.path}>
@@ -182,14 +214,7 @@ function Body({ asset }: { asset: ViewableAsset }) {
     case "audio":
       return <audio controls src={url} className="w-[min(40rem,85vw)]" onError={() => setFailed(true)} />;
     case "video":
-      return (
-        <video
-          controls
-          src={url}
-          className="max-h-[75vh] max-w-[90vw] rounded"
-          onError={() => setFailed(true)}
-        />
-      );
+      return <VideoBody asset={asset} />;
     case "document":
       return <DocumentBody asset={asset} />;
     case "binary":
