@@ -14,9 +14,9 @@ export function humanSize(bytes?: number | null): string {
   return i === 0 ? `${bytes} B` : `${v.toFixed(1)} ${units[i]}`;
 }
 
-/** The heading users see: the extractor's title when present, else the dump name. */
+/** The heading users see: the curated build name (renameable by moderators). */
 export function displayTitle(m: BuildMetaRow): string {
-  return m.title || m.name;
+  return m.name;
 }
 
 /** "system · date" and "N files · SIZE" facts, used as chips on the OG card. */

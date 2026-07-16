@@ -26,6 +26,7 @@ export default async function BuildsPage({
   const str = (v: string | string[] | undefined) => (typeof v === "string" ? v : "");
   const q = str(sp.q);
   const system = str(sp.system);
+  const lot = str(sp.lot);
   const sort = (SORT_KEYS as string[]).includes(str(sp.sort)) ? (str(sp.sort) as BuildSortKey) : "name";
   const dir = str(sp.dir) === "desc" ? "desc" : "asc";
   const page = Math.max(parseInt(str(sp.page), 10) || 1, 1);
@@ -33,6 +34,7 @@ export default async function BuildsPage({
   const { rows, total, systems } = await listBuildsPage(getPool(), {
     q,
     system,
+    lot,
     sort,
     dir,
     offset: (page - 1) * PER_PAGE,
@@ -55,6 +57,7 @@ export default async function BuildsPage({
         perPage={PER_PAGE}
         q={q}
         system={system}
+        lot={lot}
         sort={sort}
         dir={dir}
       />

@@ -33,13 +33,14 @@ interface Props {
   perPage: number;
   q: string;
   system: string;
+  lot: string;
   sort: BuildSortKey;
   dir: "asc" | "desc";
 }
 
 // Thin URL-driven control: every filter/sort/page change updates the search
 // params and the server re-queries — the client only ever holds one page.
-export default function BuildsBrowser({ rows, total, systems, page, perPage, q, system, sort, dir }: Props) {
+export default function BuildsBrowser({ rows, total, systems, page, perPage, q, system, lot, sort, dir }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
@@ -47,13 +48,14 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const navigate = (
-    next: Partial<{ q: string; system: string; sort: BuildSortKey; dir: "asc" | "desc"; page: number }>,
+    next: Partial<{ q: string; system: string; lot: string; sort: BuildSortKey; dir: "asc" | "desc"; page: number }>,
     replace = false
   ) => {
-    const state = { q, system, sort, dir, page, ...next };
+    const state = { q, system, lot, sort, dir, page, ...next };
     const params = new URLSearchParams();
     if (state.q) params.set("q", state.q);
     if (state.system) params.set("system", state.system);
+    if (state.lot) params.set("lot", state.lot);
     if (state.sort !== "name") params.set("sort", state.sort);
     if (state.dir !== "asc") params.set("dir", state.dir);
     if (state.page > 1) params.set("page", String(state.page));
@@ -101,6 +103,15 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
             </option>
           ))}
         </select>
+        {lot && (
+          <button
+            onClick={() => navigate({ lot: "", page: 1 })}
+            title="Clear lot filter"
+            className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:opacity-80 dark:bg-amber-900/40 dark:text-amber-200"
+          >
+            lot: {lot} ✕
+          </button>
+        )}
         <span className="text-xs text-neutral-400">
           {total} match{total === 1 ? "" : "es"}
         </span>
@@ -126,7 +137,14 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
               return (
               <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
                 <td className="h-full p-0 font-medium first:[&>a]:pl-0">
-                  <RowLink href={href} focusable className="px-3 hover:underline">{b.name}</RowLink>
+                  <RowLink href={href} focusable className="px-3 hover:underline">
+                    {b.name}
+                    {b.lot && (
+                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">
+                        {b.lot}
+                      </span>
+                    )}
+                  </RowLink>
                 </td>
                 <td className="h-full p-0">
                   <RowLink href={href} className="px-3 font-mono text-xs text-neutral-400">{b.sha256.slice(0, 16)}…</RowLink>
