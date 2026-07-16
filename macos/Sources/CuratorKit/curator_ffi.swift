@@ -743,6 +743,13 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func loadBuild(sha256: String) throws  -> AnalysisSummary?
     
     /**
+     * Analyze ignoring any cached record: full re-parse and re-hash, replacing
+     * the stored record and library row. For builds whose earlier parse is
+     * known bad — plain analyze is a cache hit that never re-hashes files.
+     */
+    func reanalyze(path: String, listener: ProgressListener, cancel: CancelHandle?) throws  -> AnalysisSummary
+    
+    /**
      * The most recently analyzed builds, newest first.
      */
     func recentBuilds(limit: UInt32) throws  -> [LibraryEntry]
@@ -913,6 +920,22 @@ open func loadBuild(sha256: String)throws  -> AnalysisSummary?  {
     uniffi_curator_ffi_fn_method_engine_load_build(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(sha256),$0
+    )
+})
+}
+    
+    /**
+     * Analyze ignoring any cached record: full re-parse and re-hash, replacing
+     * the stored record and library row. For builds whose earlier parse is
+     * known bad — plain analyze is a cache hit that never re-hashes files.
+     */
+open func reanalyze(path: String, listener: ProgressListener, cancel: CancelHandle?)throws  -> AnalysisSummary  {
+    return try  FfiConverterTypeAnalysisSummary_lift(try rustCallWithError(FfiConverterTypeCuratorError_lift) {
+    uniffi_curator_ffi_fn_method_engine_reanalyze(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),
+        FfiConverterCallbackInterfaceProgressListener_lower(listener),
+        FfiConverterOptionTypeCancelHandle.lower(cancel),$0
     )
 })
 }
@@ -2093,6 +2116,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_load_build() != 49667) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_curator_ffi_checksum_method_engine_reanalyze() != 14905) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_curator_ffi_checksum_method_engine_recent_builds() != 34130) {

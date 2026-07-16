@@ -44,6 +44,10 @@ enum Command {
         /// Write to this file instead of stdout (per-file: appends `.<n>` for multiple).
         #[arg(long, short)]
         out: Option<PathBuf>,
+        /// Ignore the cached record: full re-parse and re-hash, replacing the
+        /// stored record and library row.
+        #[arg(long)]
+        force: bool,
     },
     /// Export the local library as the bulk web-contribute feed.
     ///
@@ -97,15 +101,18 @@ fn main() -> Result<()> {
                 eprintln!("exported {n} builds");
             }
         },
-        Command::Analyze { files, format, out } => {
+        Command::Analyze { files, format, out, force } => {
             let total = files.len() as u64;
             for (i, path) in files.iter().enumerate() {
                 let observer = Arc::new(IndicatifObserver::new());
                 observer.batch(i as u64, total, path);
 
-                let analysis = analyzer
-                    .analyze(path, observer.clone())
-                    .with_context(|| format!("analyzing {path}"))?;
+                let analysis = if force {
+                    analyzer.reanalyze(path, observer.clone())
+                } else {
+                    analyzer.analyze(path, observer.clone())
+                }
+                .with_context(|| format!("analyzing {path}"))?;
                 observer.finish();
 
                 let rendered = match format {

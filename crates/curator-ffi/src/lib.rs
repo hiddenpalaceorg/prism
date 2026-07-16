@@ -315,6 +315,21 @@ impl Engine {
         build_summary(&analysis, |sha| analyzer.asset_blob_path(sha))
     }
 
+    /// Analyze ignoring any cached record: full re-parse and re-hash, replacing
+    /// the stored record and library row. For builds whose earlier parse is
+    /// known bad — plain analyze is a cache hit that never re-hashes files.
+    pub fn reanalyze(
+        &self,
+        path: String,
+        listener: Box<dyn ProgressListener>,
+        cancel: Option<Arc<CancelHandle>>,
+    ) -> Result<AnalysisSummary, CuratorError> {
+        let observer = Arc::new(ListenerObserver { listener, cancel });
+        let analyzer = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let analysis = analyzer.reanalyze(&path, observer)?;
+        build_summary(&analysis, |sha| analyzer.asset_blob_path(sha))
+    }
+
     /// Number of builds in the local library.
     pub fn library_size(&self) -> Result<u64, CuratorError> {
         Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).library_size()?)
