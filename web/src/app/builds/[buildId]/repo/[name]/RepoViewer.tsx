@@ -176,9 +176,13 @@ export default function RepoViewer({
   );
 
   return (
-    <div className="mt-6 grid items-start gap-6 lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_22rem]">
-      <aside>
-        <div className="flex items-center gap-2">
+    // Fixed-width columns filling the rest of the viewport at lg+ (the page
+    // wrapper is h-dvh overflow-hidden); every panel scrolls internally with
+    // a stable scrollbar gutter, so nothing shifts as content loads or the
+    // view changes. Below lg the panels stack and the page scrolls.
+    <div className="mt-4 grid min-h-0 items-stretch gap-x-6 gap-y-4 lg:flex-1 lg:grid-cols-[15rem_minmax(0,1fr)_18rem] xl:grid-cols-[16rem_minmax(0,1fr)_22rem]">
+      <aside className="flex min-h-0 flex-col">
+        <div className="flex shrink-0 items-center gap-2">
           <RevSelector refs={refs} headRef={headRef} value={view.rev} revOid={revOid} onSelect={selectRef} />
           {view.path !== null && (
             <button onClick={closeFile} className="text-xs text-neutral-500 hover:underline">
@@ -186,8 +190,8 @@ export default function RepoViewer({
             </button>
           )}
         </div>
-        {treeError && <p className="mt-2 text-xs text-red-500">Failed to load this revision.</p>}
-        <div className="mt-3 h-[75vh] overflow-auto rounded border border-neutral-200 dark:border-neutral-800">
+        {treeError && <p className="mt-2 shrink-0 text-xs text-red-500">Failed to load this revision.</p>}
+        <div className="mt-3 h-[60vh] overflow-auto rounded border border-neutral-200 [scrollbar-gutter:stable] dark:border-neutral-800 lg:h-auto lg:flex-1 lg:min-h-0">
           <RepoFileTree
             key={revOid}
             apiBase={apiBase}
@@ -200,7 +204,7 @@ export default function RepoViewer({
         </div>
       </aside>
 
-      <section className="min-w-0 lg:min-h-[75vh]">
+      <section className="min-w-0 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable]">
         {view.path !== null ? (
           view.diff !== null ? (
             <RepoDiffView apiBase={apiBase} path={view.path} log={log} diffOid={view.diff} onClose={closeDiff} />
@@ -219,7 +223,7 @@ export default function RepoViewer({
       </section>
 
       {/* Always present so the main panel's width never changes with the view. */}
-      <aside className="lg:col-start-2 xl:col-start-3 xl:row-start-1">
+      <aside className="lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable]">
         {view.path !== null && (
           <RepoFileHistory path={view.path} log={log} selectedDiff={view.diff} onSelectDiff={selectDiff} />
         )}

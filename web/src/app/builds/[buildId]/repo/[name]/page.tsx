@@ -154,7 +154,10 @@ export default async function RepoPage({
   }
 
   return (
-    <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
+    // Full-viewport at lg+: the page never scrolls or resizes with content —
+    // each viewer panel scrolls internally instead (below lg it stacks and
+    // the page scrolls normally).
+    <main className="flex flex-col px-4 py-6 sm:px-8 lg:h-dvh lg:overflow-hidden">
       <Link href={buildHref} className="text-sm text-neutral-500 hover:underline">
         &larr; {resolved.name}
       </Link>

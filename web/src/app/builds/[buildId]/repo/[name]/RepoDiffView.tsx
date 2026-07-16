@@ -82,7 +82,7 @@ function DiffBody({ before, after }: { before: string; after: string }) {
   if (cursor < rows.length) segments.push({ gap: true, from: cursor, to: rows.length });
 
   return (
-    <div className="max-h-[75vh] overflow-auto font-mono text-xs leading-5 text-neutral-800 dark:text-neutral-200">
+    <div className="font-mono text-xs leading-5 text-neutral-800 dark:text-neutral-200">
       <div className="grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem_minmax(0,1fr)]">
         {segments.map((seg) =>
           seg.gap && !expanded.has(seg.from) ? (
@@ -137,7 +137,8 @@ export default function RepoDiffView({
   const name = path.split("/").pop() || path;
   const header = (children: React.ReactNode) => (
     <div className="rounded border border-neutral-200 dark:border-neutral-800">
-      <div className="flex items-center gap-3 border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900/60">
+      {/* Sticks to the top of the scrolling main column. */}
+      <div className="sticky top-0 z-10 flex items-center gap-3 rounded-t border-b border-neutral-200 bg-neutral-50 px-4 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900">
         <span className="min-w-0 flex-1 truncate">
           <span className="font-mono">{name}</span>
           {entry && (
