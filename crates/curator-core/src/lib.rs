@@ -116,14 +116,25 @@ impl Analyzer {
         if !force {
             if let Some(mut record) = self.cache.load(&image.sha256)? {
                 observer.on_event(Event::Message(format!("cache hit {}", image.sha256)));
+                let mut dirty = false;
+                // Same bytes under a new source name (naming rules improved, or
+                // the dump was renamed): refresh the display name, so a plain
+                // re-import fixes stale names. Last import wins.
+                if record.image.name != image.name {
+                    record.image.name = image.name.clone();
+                    dirty = true;
+                }
                 if record.assets.is_none() || record.asset_profile < schema::ASSET_PROFILE {
                     if let Some(assets) = self.extract_assets(path, &observer)? {
                         record.assets = Some(assets);
                         record.asset_profile = schema::ASSET_PROFILE;
-                        let xml = render::to_dat_xml(&record);
-                        let jp = self.cache.store(&record, &xml)?;
-                        self.db.upsert_build(&record, &jp.to_string_lossy())?;
+                        dirty = true;
                     }
+                }
+                if dirty {
+                    let xml = render::to_dat_xml(&record);
+                    let jp = self.cache.store(&record, &xml)?;
+                    self.db.upsert_build(&record, &jp.to_string_lossy())?;
                 }
                 let json_path = self.cache.json_path(&image.sha256);
                 return Ok(Analysis { record, from_cache: true, json_path });
@@ -624,6 +635,73 @@ fn strip_track_suffix(stem: &str) -> Option<&str> {
     Some(s.trim_end_matches(['(', ' ', '-', '_', '.']))
 }
 
+/// Display name for a folder opened as one build. Prefers the dump's own naming
+/// over the folder's: the descriptor stem when every track file corroborates it
+/// (`Build Name.cue` + `Build Name (Track 1).bin` → "Build Name"), else the
+/// tracks' shared prefix (`Game (Track 1).bin` + `Game (Track 2).bin` →
+/// "Game"), else the folder name. Corroboration keeps generic descriptors out:
+/// a GDI dump's `disc.gdi` + `track01.bin` would otherwise name the build
+/// "disc". Display only: identity never depends on names (see
+/// [`fingerprint::hash_image`]).
+pub fn folder_build_name(root: &Path) -> String {
+    let fallback = || {
+        root.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned())
+    };
+
+    // Top-level descriptors, original case.
+    let mut descriptor_stems: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_descriptor = entry.file_type().is_ok_and(|ft| ft.is_file())
+                && path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| {
+                        DISC_DESCRIPTOR_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str())
+                    });
+            if is_descriptor {
+                descriptor_stems
+                    .push(path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    // Stems of the files that make up the image (same set identity hashes),
+    // original case.
+    let stems: Vec<String> = list_importable_files(root)
+        .iter()
+        .map(|p| p.file_stem().unwrap_or_default().to_string_lossy().into_owned())
+        .collect();
+    if stems.is_empty() {
+        return fallback();
+    }
+
+    // Exactly one descriptor whose stem every track name starts with.
+    if let [stem] = descriptor_stems.as_slice() {
+        let lower = stem.to_ascii_lowercase();
+        if !lower.is_empty() && stems.iter().all(|s| s.to_ascii_lowercase().starts_with(&lower)) {
+            return stem.clone();
+        }
+    }
+
+    // A track set with a shared non-empty prefix names itself. ASCII lowercasing
+    // is byte-for-byte, so the prefix length maps straight back onto the
+    // original-case stem.
+    let lower_stems: Vec<String> = stems.iter().map(|s| s.to_ascii_lowercase()).collect();
+    if is_track_set(&lower_stems) {
+        if let Some(prefix) = strip_track_suffix(&lower_stems[0]) {
+            if !prefix.is_empty() {
+                return stems[0][..prefix.len()].to_string();
+            }
+        }
+    }
+
+    fallback()
+}
+
 /// The files that constitute a folder-as-one-build's disc image: its importable
 /// files in natural name order ("Track 2" before "Track 10"), so identity hashing
 /// concatenates the tracks in disc order.
@@ -765,7 +843,9 @@ mod walk_tests {
 
 #[cfg(test)]
 mod folder_build_tests {
-    use super::{dir_image_files, folder_is_single_build, list_import_units, natural_cmp};
+    use super::{
+        dir_image_files, folder_build_name, folder_is_single_build, list_import_units, natural_cmp,
+    };
     use std::path::{Path, PathBuf};
 
     fn scratch(name: &str) -> PathBuf {
@@ -875,12 +955,135 @@ mod folder_build_tests {
     }
 
     #[test]
+    fn folder_build_name_prefers_corroborated_descriptor_stem() {
+        let root = scratch("name-cue");
+        touch(&root, "Build Name.cue");
+        touch(&root, "Build Name (Track 1).bin");
+        touch(&root, "Build Name (Track 2).bin");
+        assert_eq!(folder_build_name(&root), "Build Name");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn folder_build_name_rejects_uncorroborated_descriptor() {
+        // GDI convention: generic disc.gdi + track01.bin, where the tracks don't
+        // start with "disc" and their shared prefix is empty, so the folder names it.
+        let root = scratch("name-gdi");
+        touch(&root, "disc.gdi");
+        touch(&root, "track01.bin");
+        touch(&root, "track02.bin");
+        assert_eq!(folder_build_name(&root), root.file_name().unwrap().to_string_lossy());
+
+        // Cue stem the files don't share, and no track naming: folder again.
+        let root2 = scratch("name-mismatch");
+        touch(&root2, "game_final.cue");
+        touch(&root2, "data.bin");
+        touch(&root2, "audio.bin");
+        assert_eq!(folder_build_name(&root2), root2.file_name().unwrap().to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
+    }
+
+    #[test]
+    fn folder_build_name_uses_shared_track_prefix() {
+        // No descriptor, and the prefix keeps the files' original case.
+        let root = scratch("name-prefix");
+        touch(&root, "Jet Set Radio (Track 1).bin");
+        touch(&root, "Jet Set Radio (Track 2).bin");
+        assert_eq!(folder_build_name(&root), "Jet Set Radio");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn folder_build_name_falls_back_to_folder() {
+        // Bare numbered tracks: descriptor uncorroborated, prefix empty.
+        let root = scratch("name-bare");
+        touch(&root, "disc.cue");
+        touch(&root, "Track 1.bin");
+        touch(&root, "Track 2.bin");
+        assert_eq!(folder_build_name(&root), root.file_name().unwrap().to_string_lossy());
+
+        // No importable files at all.
+        let root2 = scratch("name-empty");
+        touch(&root2, "readme.txt");
+        assert_eq!(folder_build_name(&root2), root2.file_name().unwrap().to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
+    }
+
+    #[test]
     fn natural_cmp_orders_numbers_by_value() {
         use std::cmp::Ordering;
         assert_eq!(natural_cmp("track 2", "track 10"), Ordering::Less);
         assert_eq!(natural_cmp("Track 02", "track 2"), Ordering::Less); // total order tiebreak
         assert_eq!(natural_cmp("a", "ab"), Ordering::Less);
         assert_eq!(natural_cmp("b1", "a2"), Ordering::Greater);
+    }
+}
+
+#[cfg(test)]
+mod cache_hit_tests {
+    use super::*;
+
+    #[test]
+    fn cache_hit_refreshes_stale_display_name() {
+        let base = std::env::temp_dir().join(format!("curator-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let data_dir = base.join("data");
+        let folder = base.join("Dump 1");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("Build Name.cue"), b"cue").unwrap();
+        std::fs::write(folder.join("Build Name (Track 1).bin"), b"aaa").unwrap();
+        std::fs::write(folder.join("Build Name (Track 2).bin"), b"bbb").unwrap();
+
+        let observer: Arc<dyn ProgressObserver> = Arc::new(NoopObserver);
+        let image = fingerprint::hash_image(folder.to_str().unwrap(), &observer).unwrap();
+        assert_eq!(image.name, "Build Name");
+
+        // Seed the cache with the same identity under a stale name, with assets
+        // current so the cache-hit path never spawns the adapter.
+        let analyzer = Analyzer::new(Config {
+            adapter: AdapterCommand { program: "false".into(), args: vec![] },
+            data_dir: Some(data_dir),
+        })
+        .unwrap();
+        let stale = BuildRecord {
+            record_schema_version: schema::RECORD_SCHEMA_VERSION,
+            fingerprint_profile: schema::FINGERPRINT_PROFILE.into(),
+            image: ImageInfo { name: "Dump 1".into(), ..image.clone() },
+            info: DiscInfo::default(),
+            composites: Composites::default(),
+            structural: Structural {
+                system: "PSX".into(),
+                file_count: 2,
+                total_size: 6,
+                max_depth: 1,
+                ext_histogram: Default::default(),
+            },
+            text_doc: String::new(),
+            contents: vec![],
+            media: vec![],
+            exe_fp: None,
+            chunk_signature: None,
+            resemblance: None,
+            assets: Some(vec![]),
+            asset_profile: schema::ASSET_PROFILE,
+        };
+        let xml = render::to_dat_xml(&stale);
+        let jp = analyzer.cache.store(&stale, &xml).unwrap();
+        analyzer.db.upsert_build(&stale, &jp.to_string_lossy()).unwrap();
+
+        let analysis = analyzer.analyze(folder.to_str().unwrap(), observer).unwrap();
+        assert!(analysis.from_cache);
+        assert_eq!(analysis.record.image.name, "Build Name");
+
+        // The refresh is persisted, not just returned.
+        let reloaded = analyzer.cache.load(&image.sha256).unwrap().unwrap();
+        assert_eq!(reloaded.image.name, "Build Name");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 
