@@ -38,7 +38,10 @@ mod app {
     use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::Graphics::Gdi::{GetStockObject, HBRUSH, DEFAULT_GUI_FONT};
     use windows::Win32::Networking::WinHttp::*;
-    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+    };
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
@@ -63,9 +66,9 @@ mod app {
         TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
     };
     use windows::Win32::UI::Shell::{
-        DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, SetWindowSubclass,
-        ShellExecuteW, SHBrowseForFolderW, SHGetPathFromIDListW, BIF_RETURNONLYFSDIRS,
-        BROWSEINFOW, HDROP,
+        DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, FileOpenDialog,
+        IFileOpenDialog, SetWindowSubclass, ShellExecuteW, FOS_FORCEFILESYSTEM,
+        FOS_PICKFOLDERS, HDROP, SIGDN_FILESYSPATH,
     };
     use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -266,6 +269,9 @@ mod app {
 
     pub fn run() -> Result<()> {
         unsafe {
+            // Apartment-threaded COM for the IFileDialog folder picker.
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
             let _ = InitCommonControlsEx(&INITCOMMONCONTROLSEX {
                 dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
                 dwICC: ICC_TREEVIEW_CLASSES | ICC_BAR_CLASSES | ICC_PROGRESS_CLASS
@@ -727,27 +733,20 @@ mod app {
         }
     }
 
+    /// IFileDialog in folder mode: the regular Explorer Open dialog, which (unlike
+    /// SHBrowseForFolder) remembers the last-visited location across invocations.
     unsafe fn pick_folder(hwnd: HWND) -> Option<String> {
-        let mut display = [0u16; 260];
-        let mut bi = BROWSEINFOW {
-            hwndOwner: hwnd,
-            pszDisplayName: PWSTR(display.as_mut_ptr()),
-            lpszTitle: w!("Select a folder to analyze"),
-            ulFlags: BIF_RETURNONLYFSDIRS as u32,
-            ..Default::default()
-        };
-        let pidl = SHBrowseForFolderW(&mut bi);
-        if pidl.is_null() {
-            return None;
-        }
-        let mut path = [0u16; 260];
-        let ok = SHGetPathFromIDListW(pidl, &mut path).as_bool();
-        CoTaskMemFree(Some(pidl as *const core::ffi::c_void));
-        if ok {
-            Some(String::from_utf16_lossy(&path).trim_end_matches('\0').to_string())
-        } else {
-            None
-        }
+        let dialog: IFileOpenDialog =
+            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let opts = dialog.GetOptions().ok()?;
+        let _ = dialog.SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        let _ = dialog.SetTitle(w!("Select a folder to analyze"));
+        dialog.Show(hwnd).ok()?; // Err == cancelled
+        let item = dialog.GetResult().ok()?;
+        let pw = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let path = pw.to_string().ok();
+        CoTaskMemFree(Some(pw.0 as *const core::ffi::c_void));
+        path
     }
 
     /// Save-As dialog for the export bundle. Defaults to `collection.curator.zip`
