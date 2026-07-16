@@ -60,6 +60,11 @@ export function flattenFiles(nodes: Node[] | undefined, prefix = ""): FileRow[] 
   for (const n of nodes ?? []) {
     const path = prefix + "/" + n.name;
     if (n.type === "dir") {
+      // An archive listed as a directory carries its own hashes: it is still a
+      // file of the build, so it keeps its row alongside its members'.
+      if (n.md5 || n.sha1 || n.sha256) {
+        out.push({ path, name: n.name, size: n.size ?? null, md5: n.md5, sha1: n.sha1, sha256: n.sha256 });
+      }
       out.push(...flattenFiles(n.children, path));
     } else {
       out.push({ path, name: n.name, size: n.size ?? null, md5: n.md5, sha1: n.sha1, sha256: n.sha256 });

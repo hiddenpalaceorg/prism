@@ -24,7 +24,17 @@ export interface Structural {
 }
 
 export type Node =
-  | { type: "dir"; name: string; date?: string; size?: number; children: Node[] }
+  | {
+      type: "dir";
+      name: string;
+      date?: string;
+      size?: number;
+      /** Present on archives listed as directories — the archive file's own hashes. */
+      md5?: string;
+      sha1?: string;
+      sha256?: string;
+      children: Node[];
+    }
   | {
       type: "file";
       name: string;

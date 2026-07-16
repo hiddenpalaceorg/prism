@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tlshDiff } from "../src/lib/tlsh";
-import { hexToId63, toSigned64, lshBands, setJaccard, minhashJaccard } from "../src/lib/fingerprint";
+import { hexToId63, toSigned64, lshBands, setJaccard, minhashJaccard, flattenFiles } from "../src/lib/fingerprint";
+import type { Node } from "../src/lib/types";
 import { TIERS, fusedScore, applicableTiers, type TierKey } from "../src/lib/tiers";
 
 // Real fixtures generated with py-tlsh (the reference implementation) — this pins the
@@ -45,6 +46,33 @@ test("lshBands folds a 128-slot signature into 16 deterministic bands", () => {
   const sig2 = sig.slice();
   sig2[0] = 999999n;
   assert.notDeepEqual(lshBands(sig2), a);
+});
+
+test("flattenFiles keeps an archive-dir's own row alongside its members", () => {
+  const tree: Node[] = [
+    {
+      type: "dir",
+      name: "DATA",
+      children: [
+        {
+          // An archive listed as a directory: carries the archive file's hashes.
+          type: "dir",
+          name: "PROTO.ZIP",
+          size: 100,
+          sha1: "aa".repeat(20),
+          children: [{ type: "file", name: "main.c", size: 5, sha1: "bb".repeat(20) }],
+        },
+        { type: "file", name: "GAME.BIN", size: 7, sha1: "cc".repeat(20) },
+      ],
+    },
+  ];
+  const rows = flattenFiles(tree);
+  assert.deepEqual(
+    rows.map((r) => r.path),
+    ["/DATA/PROTO.ZIP", "/DATA/PROTO.ZIP/main.c", "/DATA/GAME.BIN"]
+  );
+  // A plain directory (no hashes) still contributes no row of its own.
+  assert.equal(rows.some((r) => r.path === "/DATA"), false);
 });
 
 test("setJaccard = intersection / union", () => {

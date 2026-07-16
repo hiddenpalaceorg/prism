@@ -125,13 +125,23 @@ pub fn to_dat_xml(record: &BuildRecord) -> String {
 
 fn write_node(s: &mut String, indent: usize, node: &Node) {
     match node {
-        Node::Dir { name, date, size, children } => {
+        Node::Dir { name, date, size, md5, sha1, sha256, children } => {
             let mut a = vec![("name", name.clone())];
             if let Some(d) = date {
                 a.push(("date", d.clone()));
             }
             if let Some(sz) = size {
                 a.push(("size", sz.to_string()));
+            }
+            // Present on archives listed as directories — the archive file's own hashes.
+            if let Some(x) = md5 {
+                a.push(("md5", x.clone()));
+            }
+            if let Some(x) = sha1 {
+                a.push(("sha1", x.clone()));
+            }
+            if let Some(x) = sha256 {
+                a.push(("sha256", x.clone()));
             }
             if children.is_empty() {
                 write_empty(s, indent, "directory", &a);
