@@ -8,6 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { commitSubject, formatCommitDate, type RepoCommit } from "@/lib/repo-manifest";
+import RepoCommitHeatmap from "./RepoCommitHeatmap";
 
 // One request for everything; far above any real repo (Fallout is 11,432).
 const ALL = 50_000;
@@ -83,6 +84,11 @@ export default function RepoCommitList({
         />
       </div>
       {error && <p className="mt-3 text-xs text-red-500">Failed to load the full history.</p>}
+      {/* Only once the whole log is here — a partial slice would draw a
+          misleadingly sparse calendar. */}
+      {total !== null && commits.length >= total && commits.length > 0 && (
+        <RepoCommitHeatmap commits={commits} shown={shown} />
+      )}
       {query.trim() && shown.length === 0 && !error && (
         <p className="mt-3 text-xs text-neutral-500">No commit messages match.</p>
       )}
