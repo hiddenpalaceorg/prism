@@ -423,12 +423,18 @@ export async function search(
   const t = term.trim();
   if (/^[0-9a-fA-F]{8,}$/.test(t)) {
     const h = t.toLowerCase();
+    // Two UNION arms instead of one OR across the builds×files join: the
+    // joined form made the planner walk the whole files table (15s+ at 9M
+    // rows); separately, each arm is index-served and the union stays in
+    // the low milliseconds. UNION (not ALL) dedups like the old DISTINCT.
+    const vis = includePrivate ? "TRUE" : visibleSql("b");
     const r = await pool.query(
-      `SELECT DISTINCT b.sha256, b.name, b.system
-       FROM builds b LEFT JOIN files f ON f.build_sha256=b.sha256
-       WHERE (b.sha256=$1 OR b.md5=$1 OR b.sha1=$1 OR b.content_hash=$1
-          OR f.md5=$1 OR f.sha1=$1 OR f.sha256=$1)
-         AND ${includePrivate ? "TRUE" : visibleSql("b")}
+      `SELECT b.sha256, b.name, b.system FROM builds b
+       WHERE (b.sha256=$1 OR b.md5=$1 OR b.sha1=$1 OR b.content_hash=$1) AND ${vis}
+       UNION
+       SELECT b.sha256, b.name, b.system FROM builds b
+       WHERE b.sha256 IN (SELECT f.build_sha256 FROM files f WHERE f.md5=$1 OR f.sha1=$1 OR f.sha256=$1)
+         AND ${vis}
        LIMIT $2`,
       [h, limit]
     );
