@@ -25,7 +25,7 @@ fn main() -> windows::core::Result<()> {
 mod app {
     use std::collections::{HashMap, VecDeque};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use curator_core::adapter::AdapterCommand;
@@ -2150,15 +2150,27 @@ mod app {
         }
         let todo: Vec<&String> = missing.iter().filter(|sha| local.contains_key(*sha)).collect();
         let unavailable = missing.len() - todo.len();
-        let (mut uploaded, mut failed) = (0usize, 0usize);
-        for (i, sha) in todo.iter().enumerate() {
-            post_service_result(hwnd_i, format!("Uploading asset {} of {}…", i + 1, todo.len()));
-            if upload_asset_chunked(&assets_url, sha, &local[*sha]) {
-                uploaded += 1;
-            } else {
-                failed += 1;
+        // Upload a few blobs at once — each is its own resumable PUT (chunks of
+        // one blob never interleave) and http_request builds a fresh WinHTTP
+        // session per call. Workers pull the next index off a shared counter.
+        let total = todo.len();
+        let next = AtomicUsize::new(0);
+        let completed = AtomicUsize::new(0);
+        let ok_count = AtomicUsize::new(0);
+        std::thread::scope(|s| {
+            for _ in 0..PARALLEL_UPLOADS.min(total) {
+                s.spawn(|| loop {
+                    let Some(sha) = todo.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
+                    if upload_asset_chunked(&assets_url, sha, &local[*sha]) {
+                        ok_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    post_service_result(hwnd_i, format!("Uploading assets {n}/{total}…"));
+                });
             }
-        }
+        });
+        let uploaded = ok_count.into_inner();
+        let failed = total - uploaded;
         let mut note = format!(" Uploaded {uploaded} asset blob{}", if uploaded == 1 { "" } else { "s" });
         if failed > 0 {
             note.push_str(&format!(", {failed} failed"));
@@ -2186,6 +2198,9 @@ mod app {
 
     /// Upload chunk size — small enough to clear typical proxy body-size limits.
     const UPLOAD_CHUNK: usize = 4 * 1024 * 1024;
+
+    /// How many asset blobs to upload at once.
+    const PARALLEL_UPLOADS: usize = 4;
 
     /// PUT one asset blob in resumable chunks: each request appends at `offset`,
     /// a 409 answers with the server's staged offset to resume from, and the

@@ -299,9 +299,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Upload the build's asset blobs that the server lacks and we hold locally.
-    /// Returns a status suffix for the submit message ("" when moot). Upload
-    /// failures degrade to a note — the record submission already succeeded.
+    /// How many asset blobs to upload at once.
+    private static let parallelUploads = 4
+
+    /// Upload the build's asset blobs that the server lacks and we hold locally,
+    /// a few at a time — each is its own resumable PUT, so chunks of one blob
+    /// never interleave. Returns a status suffix for the submit message (""
+    /// when moot). Upload failures degrade to a note — the record submission
+    /// already succeeded.
     private func uploadMissingAssets(for summary: AnalysisSummary) async -> String {
         guard let assets = summary.assets, !assets.isEmpty else { return "" }
         var local: [String: String] = [:] // asset sha256 → blob path
@@ -309,20 +314,51 @@ final class AppModel: ObservableObject {
         do {
             let missing = try await service.missingAssets(buildSha: summary.sha256)
             if missing.isEmpty { return " Assets already on server." }
-            let todo = missing.filter { local[$0] != nil }
+            let todo: [(sha: String, blob: String)] = missing.compactMap { sha in
+                local[sha].map { (sha, $0) }
+            }
+            let buildSha = summary.sha256
+            let service = self.service
             var done = 0
-            for sha in todo {
-                serviceMessage = "Uploading assets \(done + 1)/\(todo.count)…"
-                guard let blob = local[sha] else { continue }
-                try await service.uploadAsset(
-                    buildSha: summary.sha256,
-                    assetSha: sha,
-                    fileURL: URL(fileURLWithPath: blob)
-                )
-                done += 1
+            var failed = 0
+            var firstError: String?
+            await withTaskGroup(of: Result<Void, Error>.self) { group in
+                var next = 0
+                func startNext() {
+                    guard next < todo.count else { return }
+                    let (sha, blob) = todo[next]
+                    next += 1
+                    group.addTask {
+                        do {
+                            try await service.uploadAsset(
+                                buildSha: buildSha,
+                                assetSha: sha,
+                                fileURL: URL(fileURLWithPath: blob)
+                            )
+                            return .success(())
+                        } catch {
+                            return .failure(error)
+                        }
+                    }
+                }
+                for _ in 0..<Self.parallelUploads { startNext() }
+                while let result = await group.next() {
+                    switch result {
+                    case .success:
+                        done += 1
+                    case .failure(let error):
+                        failed += 1
+                        if firstError == nil {
+                            firstError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                        }
+                    }
+                    serviceMessage = "Uploading assets \(done + failed)/\(todo.count)…"
+                    startNext()
+                }
             }
             let unavailable = missing.count - todo.count
             var note = " Uploaded \(done) asset blob\(done == 1 ? "" : "s")"
+            if failed > 0 { note += ", \(failed) failed: \(firstError ?? "unknown error")" }
             if unavailable > 0 { note += " (\(unavailable) not in the local store)" }
             return note + "."
         } catch {
