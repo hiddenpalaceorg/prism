@@ -5,10 +5,11 @@ import { notFound, permanentRedirect } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
-import { getBuild, getBuildAssets, getBuildMeta, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, getLotBuilds, listLots, resolveBuild } from "@/lib/queries";
+import { getBuild, getBuildAssets, getBuildMeta, getBuildRepos, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, listLots, resolveBuild } from "@/lib/queries";
+import { shortOid } from "@/lib/repo-manifest";
 import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
 import { buildDescription, displayTitle } from "@/lib/meta";
-import { buildHref, canonicalBuildId, parseBuildParam } from "@/lib/slug";
+import { canonicalBuildId, parseBuildParam } from "@/lib/slug";
 import type { BuildRecord } from "@/lib/types";
 import SimilarBuilds from "./SimilarBuilds";
 import FileTree from "./FileTree";
@@ -138,14 +139,13 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
   const q = deriveQueryFeatures(build.record);
   // Pull a wide candidate set per tier so the fused top-50 is well-populated.
   // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const [similar, textNeighbors, assets, lotBuilds, lots] = await Promise.all([
+  const [similar, textNeighbors, assets, lots, repos] = await Promise.all([
     findSimilar(pool, q, 100),
     findByEmbeddingOf(pool, sha256, 100),
     getBuildAssets(pool, sha256),
-    build.lot ? getLotBuilds(pool, build.lot) : Promise.resolve([]),
     listLots(pool),
+    getBuildRepos(pool, sha256),
   ]);
-  const lotMates = lotBuilds.filter((b) => b.sha256 !== sha256);
   const fused = fuseSimilar(similar, textNeighbors);
 
   // A tier only counts when both builds have its data — attach each build's capabilities
@@ -214,27 +214,6 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
         lots={lots}
       />
 
-      {build.lot && lotMates.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-lg font-medium">
-            Lot: {build.lot}{" "}
-            <span className="text-sm font-normal text-neutral-400">({lotMates.length + 1} builds)</span>
-          </h2>
-          <ul className="mt-3 divide-y divide-neutral-100 dark:divide-neutral-900/60">
-            {lotMates.map((b) => (
-              <li key={b.sha256} className="flex items-center gap-3 py-2 text-sm">
-                <Link href={buildHref(b.sha256, b.name)} className="min-w-0 truncate font-medium hover:underline">
-                  {b.name}
-                </Link>
-                <Chip>{b.system || "unknown"}</Chip>
-                <span className="text-xs text-neutral-500">{b.file_count} files</span>
-                <span className="text-xs text-neutral-500">{humanSize(b.total_size)}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
       {meta.length > 0 && (
         <section className="mt-8">
           <h2 className="text-lg font-medium">Metadata</h2>
@@ -253,6 +232,31 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
               </div>
             ))}
           </div>
+        </section>
+      )}
+
+      {repos.length > 0 && (
+        <section className="mt-8">
+          <h2 className="text-lg font-medium">
+            Source {repos.length === 1 ? "repository" : "repositories"}
+          </h2>
+          <ul className="mt-3 divide-y divide-neutral-100 dark:divide-neutral-900/60">
+            {repos.map((r) => (
+              <li key={r.name} className="flex items-center gap-3 py-2 text-sm">
+                <Link
+                  href={`${href}/repo/${encodeURIComponent(r.name)}`}
+                  className="min-w-0 truncate font-mono font-medium hover:underline"
+                >
+                  {r.name}
+                </Link>
+                <Chip>{r.commit_count} commits</Chip>
+                <Chip>
+                  <span className="font-mono">{r.head_ref ?? shortOid(r.head_oid)}</span>
+                </Chip>
+                <span className="text-xs text-neutral-500">attached {r.created_at.slice(0, 10)}</span>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 

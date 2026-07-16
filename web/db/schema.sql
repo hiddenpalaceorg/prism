@@ -78,6 +78,24 @@ CREATE TABLE build_asset (
 );
 CREATE INDEX idx_build_asset_sha256 ON build_asset(sha256);
 
+-- ── attached source repositories ──────────────────────────────────────────────
+-- VSS->git conversions attached manually by scripts/attach-repo.ts. The bytes
+-- live in the asset store: every git blob content-addressed by sha256, plus a
+-- JSON manifest blob (commits/trees/blobs — see src/lib/repo-manifest.ts)
+-- named by manifest_sha256. Re-ingest never touches this table (ingestRecord
+-- rewrites build_asset from the record; attached repos must survive).
+CREATE TABLE build_repo (
+    build_sha256    TEXT NOT NULL REFERENCES builds(sha256) ON DELETE CASCADE,
+    name            TEXT NOT NULL,             -- URL segment; [A-Za-z0-9][A-Za-z0-9._-]{0,63}
+    manifest_sha256 TEXT NOT NULL,             -- manifest blob in the asset store
+    head_oid        TEXT NOT NULL,             -- denormalized for the build page card
+    head_ref        TEXT,                      -- symbolic HEAD name, e.g. "master"
+    commit_count    INT  NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (build_sha256, name)
+);
+CREATE INDEX idx_build_repo_manifest ON build_repo(manifest_sha256);
+
 -- ── identical-file overlap (set of truncated file-content hashes) ─────
 -- bigint[] of file sha1s truncated to 63 bits; smlar (or intarray &&) for Jaccard.
 CREATE TABLE build_fileset (
