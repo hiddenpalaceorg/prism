@@ -8,13 +8,15 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --import tsx --test tests/*.test.ts",
-    "ingest": "tsx scripts/ingest.ts"
+    "ingest": "tsx scripts/ingest.ts",
+    "attach-repo": "tsx scripts/attach-repo.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@types/pngjs": "^6.0.5",
     "bmp-js": "^0.1.0",
     "highlight.js": "^11.11.1",
+    "isomorphic-git": "^1.38.7",
     "next": "16.2.6",
     "pg": "^8.21.0",
     "pngjs": "^7.0.0",

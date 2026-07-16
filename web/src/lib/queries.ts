@@ -557,6 +557,38 @@ export async function getBuildAssets(pool: Pool, sha256: string): Promise<BuildA
   return r.rows as BuildAsset[];
 }
 
+/** One attached source repository of a build (see db build_repo; the bytes —
+ *  manifest + git blobs — live in the asset store). */
+export interface BuildRepoRow {
+  build_sha256: string;
+  name: string;
+  manifest_sha256: string;
+  head_oid: string;
+  head_ref: string | null;
+  commit_count: number;
+  created_at: string;
+}
+
+/// A build's attached repos, for the build page's source-repository cards.
+export async function getBuildRepos(pool: Pool, sha256: string): Promise<BuildRepoRow[]> {
+  const r = await pool.query(
+    `SELECT build_sha256, name, manifest_sha256, head_oid, head_ref, commit_count, created_at::text
+     FROM build_repo WHERE build_sha256=$1 ORDER BY name`,
+    [sha256]
+  );
+  return r.rows as BuildRepoRow[];
+}
+
+/// One attached repo by its URL name.
+export async function getBuildRepo(pool: Pool, sha256: string, name: string): Promise<BuildRepoRow | null> {
+  const r = await pool.query(
+    `SELECT build_sha256, name, manifest_sha256, head_oid, head_ref, commit_count, created_at::text
+     FROM build_repo WHERE build_sha256=$1 AND name=$2`,
+    [sha256, name]
+  );
+  return (r.rows[0] as BuildRepoRow) ?? null;
+}
+
 /// Resolve a /builds/ URL param (hex prefix + optional slug) to a stored build.
 /// A full 64-hex sha resolves exactly; a shorter prefix must match a unique
 /// build — if two builds ever share a prefix, the slug disambiguates.
