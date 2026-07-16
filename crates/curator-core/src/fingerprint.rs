@@ -204,12 +204,10 @@ pub fn structural(system: &str, files: &[RawFile]) -> Structural {
     let mut max_depth = 0u32;
     let mut ext_histogram: BTreeMap<String, u64> = BTreeMap::new();
 
+    // Structural features describe the *listing* (what the tree shows), so
+    // archive members count here — unlike composites, where the archive is
+    // one opaque file.
     for f in files {
-        // Archive members stay out of the structural features too, so a build's
-        // counts/histogram match what composites cover.
-        if f.in_archive {
-            continue;
-        }
         let depth = f.path.trim_matches('/').split('/').count() as u32;
         max_depth = max_depth.max(depth);
         if f.is_dir {
@@ -536,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn archive_members_do_not_change_composites_or_structural() {
+    fn archive_members_do_not_change_composites_but_count_structurally() {
         let base = vec![file("/GAME.BIN", A), file("/PATCH.ZIP", B)];
         let mut bad_member = member("/PATCH.ZIP/broken.dat", C);
         bad_member.unreadable = true;
@@ -555,11 +553,12 @@ mod tests {
         );
         assert_eq!(composites(&listed).incomplete_files, 0);
 
+        // Structural features describe the listing, so members DO count there.
         let s = structural("PSX", &listed);
-        assert_eq!(s.file_count, 2);
-        assert_eq!(s.total_size, 20);
-        assert!(s.ext_histogram.get("txt").is_none());
-        assert_eq!(s.max_depth, 1); // member depth doesn't count either
+        assert_eq!(s.file_count, 4);
+        assert_eq!(s.total_size, 40);
+        assert_eq!(s.ext_histogram.get("txt"), Some(&1));
+        assert_eq!(s.max_depth, 3);
     }
 
     #[test]

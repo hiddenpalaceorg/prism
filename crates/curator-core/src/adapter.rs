@@ -166,8 +166,8 @@ pub struct RawFile {
     #[serde(default)]
     pub unreadable: bool,
     /// True for a file listed from inside an archive member (`/DIR/A.ZIP/...`).
-    /// Members appear in the contents tree and text corpus only — composites and
-    /// structural features skip them, so the archive stays one opaque file for
+    /// Members appear in the contents tree, text corpus, and structural counts,
+    /// but composites skip them — the archive stays one opaque file for
     /// identity. The adapter also never fingerprints them (no chunks/shingle).
     #[serde(default)]
     pub in_archive: bool,

@@ -459,9 +459,9 @@ def _gather_info(processor, reader, system, mods):
 # Archives found *inside* a volume are listed and asset-extracted as if they
 # were directories: members ride under "<archive path>/..." with in_archive on,
 # so they show up in the contents tree and the asset store. Identity stays
-# untouched — composite hashing sees only the archive file's own hashes, and
-# members carry no chunk/shingle fingerprints (the consumer skips in_archive
-# records everywhere but listing/search). Detection is by leading bytes (plus
+# untouched — composite hashing sees only the archive file's own hashes (the
+# consumer skips in_archive records there), and members carry no chunk/shingle
+# fingerprints. Detection is by leading bytes (plus
 # tar's magic at offset 257); anything ArchiveWrapper can't open (bare gzip of
 # a single file, InstallShield cab, passworded/corrupt archives) quietly stays
 # a plain file.
