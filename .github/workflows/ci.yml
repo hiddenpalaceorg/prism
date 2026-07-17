@@ -123,6 +123,20 @@ jobs:
             echo ""
             echo "Download: \`gh release download $tag\`"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: prune stale ci-* drafts (no push for 7 days, ci-main exempt)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Each push recreates its branch's draft, so created_at is the branch's
+          # last push time: older than the cutoff means the branch went quiet.
+          cutoff=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          gh api "repos/${GH_REPO}/releases" --paginate \
+            --jq ".[] | select(.draft and (.tag_name | startswith(\"ci-\")) and .tag_name != \"ci-main\" and .created_at < \"$cutoff\") | .id" |
+          while read -r id; do
+            gh api -X DELETE "repos/${GH_REPO}/releases/${id}"
+          done
 
   web:
     name: web (tsc + tests)
