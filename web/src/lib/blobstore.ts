@@ -29,6 +29,7 @@ import { pipeline } from "node:stream/promises";
 import {
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -141,25 +142,65 @@ export async function blobExists(sha256: string): Promise<boolean> {
   return (await blobSize(sha256)) !== null;
 }
 
-// Bounds concurrent HEADs in missingBlobs (and nothing else): high enough to
-// hide the per-request latency, low enough to be a polite S3 client.
+// Bounds concurrent requests in missingBlobs (and nothing else): high enough
+// to hide the per-request latency, low enough to be a polite S3 client.
 const EXISTS_CONCURRENCY = 16;
 
-/** The subset of `shas` missing from the store, in input order. */
+// Below this many blobs, per-blob HEADs beat shard listings.
+const LIST_THRESHOLD = 16;
+
+/** All keys under one 2-hex shard prefix (paginated past 1000). */
+async function listShard(shard: string): Promise<Set<string>> {
+  const keys = new Set<string>();
+  const prefix = `${s3Prefix()}${shard}/`;
+  let token: string | undefined;
+  do {
+    const r = await s3().send(
+      new ListObjectsV2Command({ Bucket: s3Bucket(), Prefix: prefix, ContinuationToken: token })
+    );
+    for (const o of r.Contents ?? []) keys.add(o.Key!.slice(prefix.length));
+    token = r.IsTruncated ? r.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
+}
+
+/** The subset of `shas` missing from the store, in input order.
+ *
+ *  On s3, big sets are answered by listing each referenced 2-hex shard once
+ *  (one round trip covers every blob in the shard) instead of a HEAD per
+ *  blob: a 4096-asset submission's check would otherwise take minutes of
+ *  sequential-ish round trips and blow the desktop clients' HTTP timeouts. */
 export async function missingBlobs(shas: string[]): Promise<string[]> {
   if (!s3Enabled()) return shas.filter((s) => !fs.existsSync(assetBlobPath(s)));
-  const present = new Array<boolean>(shas.length);
+
+  if (shas.length <= LIST_THRESHOLD) {
+    const present = new Array<boolean>(shas.length);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(EXISTS_CONCURRENCY, shas.length) }, async () => {
+        for (;;) {
+          const i = next++;
+          if (i >= shas.length) return;
+          present[i] = await blobExists(shas[i]);
+        }
+      })
+    );
+    return shas.filter((_, i) => !present[i]);
+  }
+
+  const shards = [...new Set(shas.map((s) => s.slice(0, 2)))];
+  const present = new Set<string>();
   let next = 0;
   await Promise.all(
-    Array.from({ length: Math.min(EXISTS_CONCURRENCY, shas.length) }, async () => {
+    Array.from({ length: Math.min(EXISTS_CONCURRENCY, shards.length) }, async () => {
       for (;;) {
         const i = next++;
-        if (i >= shas.length) return;
-        present[i] = await blobExists(shas[i]);
+        if (i >= shards.length) return;
+        for (const key of await listShard(shards[i])) present.add(key);
       }
     })
   );
-  return shas.filter((_, i) => !present[i]);
+  return shas.filter((s) => !present.has(s));
 }
 
 /** A readable stream over a blob (optionally one byte range), or null when it
