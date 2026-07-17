@@ -15,6 +15,7 @@
 // doesn't shift the page.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Select from "@/components/Select";
 import { initialExpanded, type TreeNode } from "@/lib/filetree";
 import { shortOid, type RepoCommit, type RepoLogEntryDto } from "@/lib/repo-manifest";
 import RepoCommitDiff from "./RepoCommitDiff";
@@ -281,8 +282,8 @@ export default function RepoViewer({
   );
 }
 
-// A plain select over the manifest's frozen refs; an arbitrary oid rev shows
-// as a synthetic (disabled-change) entry so the control always reflects state.
+// A select over the manifest's frozen refs; an arbitrary oid rev shows as a
+// synthetic disabled entry so the control always reflects state.
 function RevSelector({
   refs,
   headRef,
@@ -299,23 +300,19 @@ function RevSelector({
   const OID = "\0oid";
   const isNamed = value === "" || refs.some((r) => r.name === value);
   return (
-    <select
+    <Select
       value={isNamed ? value : OID}
-      onChange={(e) => {
-        if (e.target.value !== OID) onSelect(e.target.value);
+      onChange={(v) => {
+        if (v !== OID) onSelect(v);
       }}
-      className="rounded border border-neutral-200 bg-white px-2 py-1 font-mono text-xs dark:border-neutral-800 dark:bg-neutral-950"
-      aria-label="Revision"
-    >
-      <option value="">{headRef ? `${headRef} (HEAD)` : "HEAD"}</option>
-      {refs
-        .filter((r) => r.name !== headRef)
-        .map((r) => (
-          <option key={r.name} value={r.name}>
-            {r.name}
-          </option>
-        ))}
-      {!isNamed && <option value={OID}>{shortOid(revOid)}</option>}
-    </select>
+      ariaLabel="Revision"
+      className="px-2 py-1 font-mono text-xs"
+      popupClassName="font-mono text-xs"
+      options={[
+        { value: "", label: headRef ? `${headRef} (HEAD)` : "HEAD" },
+        ...refs.filter((r) => r.name !== headRef).map((r) => ({ value: r.name, label: r.name })),
+        ...(!isNamed ? [{ value: OID, label: shortOid(revOid), disabled: true }] : []),
+      ]}
+    />
   );
 }

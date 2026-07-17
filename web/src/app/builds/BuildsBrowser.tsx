@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import RowLink from "./RowLink";
+import Select from "@/components/Select";
 import { buildHref } from "@/lib/slug";
 import type { BuildListItem, BuildSortKey } from "@/lib/queries";
 
@@ -91,18 +92,13 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
           placeholder="Search builds…"
           className="h-9 w-80 rounded-md border border-neutral-300 bg-transparent px-3 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-500 dark:border-neutral-700"
         />
-        <select
+        <Select
           value={system}
-          onChange={(e) => navigate({ system: e.target.value, page: 1 })}
-          className="h-9 w-48 rounded-md border border-neutral-300 bg-transparent px-3 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700"
-        >
-          <option value="">All systems</option>
-          {systems.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => navigate({ system: v, page: 1 })}
+          ariaLabel="Filter by system"
+          className="h-9 w-48 px-3 text-sm"
+          options={[{ value: "", label: "All systems" }, ...systems.map((s) => ({ value: s, label: s }))]}
+        />
         {lot && (
           <button
             onClick={() => navigate({ lot: "", page: 1 })}

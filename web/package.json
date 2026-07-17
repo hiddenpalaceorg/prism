@@ -15,6 +15,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1089.0",
     "@aws-sdk/lib-storage": "^3.1089.0",
+    "@base-ui/react": "^1.6.0",
     "@huggingface/transformers": "^4.2.0",
     "@smithy/node-http-handler": "^4.9.7",
     "@types/pngjs": "^6.0.5",
