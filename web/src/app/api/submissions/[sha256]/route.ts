@@ -69,7 +69,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
     name = r.rows[0].record.image?.name ?? "";
     // Force: an accept must replace the live build wholesale — record, row
     // columns, and derived tables — even when the record looks unchanged.
-    await ingestRecord(c, r.rows[0].record, { force: true });
+    // New submissions start private (unlisted) until a moderator publishes
+    // them; re-accepting an existing build keeps its current visibility.
+    await ingestRecord(c, r.rows[0].record, { force: true, asPrivate: true });
     await c.query(
       "UPDATE submission_queue SET status='accepted', reviewed_at=now() WHERE sha256=$1",
       [sha256]

@@ -105,7 +105,8 @@ export default function Moderate() {
         <Link href="/" className="text-sm text-neutral-500 hover:underline">Search &rarr;</Link>
       </div>
       <p className="mt-1 text-sm text-neutral-500">
-        Review contributor submissions. Accepting ingests the build into the library.
+        Review contributor submissions. Accepting ingests the build into the library
+        as private (unlisted); publish it from the build page when it is ready.
         While you are signed in, build pages also show moderator tools (rename, lot).
       </p>
 
