@@ -93,7 +93,14 @@ function s3(): S3Client {
       ...(process.env.ASSET_S3_INSECURE_TLS === "1"
         ? {
             requestHandler: new NodeHttpHandler({
-              httpsAgent: new Agent({ rejectUnauthorized: false }),
+              // Mirror the SDK default agent's keepAlive/maxSockets — a bare
+              // Agent would open a fresh TLS connection per request, and that
+              // handshake churn both triples latency and trips the endpoint's
+              // connection defenses under load. Bounded timeouts so a wedged
+              // connection surfaces as a retryable error, not a silent hang.
+              httpsAgent: new Agent({ rejectUnauthorized: false, keepAlive: true, maxSockets: 50 }),
+              connectionTimeout: 5_000,
+              requestTimeout: 120_000,
             }),
           }
         : {}),

@@ -3,6 +3,9 @@
 // an idempotent re-sync if it's ever partially done: blobs the bucket already
 // has are skipped). Local files are left in place; delete the local store
 // only after flipping the app over and confirming it serves.
+//
+// Works in chunks (sweep for missing, then upload) with backoff retries, so
+// a transient endpoint blip mid-run costs seconds, not the whole run.
 // Usage: npm run push-assets        (env ASSET_STORE_DIR + ASSET_S3_*)
 
 import fs from "node:fs";
@@ -21,6 +24,23 @@ import { loadDotEnv } from "./dotenv";
 // bandwidth) dominates — tune PUSH_CONCURRENCY up for a far-away endpoint.
 const UPLOAD_CONCURRENCY = Math.max(1, Number(process.env.PUSH_CONCURRENCY) || 8);
 
+// One progress line (and one retry scope) per chunk.
+const CHUNK = 2000;
+
+/** Run `fn`, retrying with backoff on transient endpoint failures. */
+async function withRetry<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  const delaysMs = [5_000, 30_000, 120_000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (attempt >= delaysMs.length) throw e;
+      console.error(`${what}: ${(e as Error).message} — retrying in ${delaysMs[attempt] / 1000}s`);
+      await new Promise((r) => setTimeout(r, delaysMs[attempt]));
+    }
+  }
+}
+
 async function main() {
   loadDotEnv();
   if (!s3Enabled()) {
@@ -35,32 +55,33 @@ async function main() {
       if (/^[0-9a-f]{64}$/.test(name)) shas.push(name); // skips .tmp leftovers
     }
   }
-  console.log(`local store ${root}: ${shas.length} blob(s)`);
+  console.log(`local store ${root}: ${shas.length} blob(s) -> ${storeDescription()}`);
 
-  const missing = await missingBlobs(shas);
-  console.log(`${shas.length - missing.length} already in ${storeDescription()}, pushing ${missing.length}`);
-
-  let pushed = 0;
+  let stored = 0;
   let failed = 0;
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(UPLOAD_CONCURRENCY, missing.length) }, async () => {
-      for (;;) {
-        const i = next++;
-        if (i >= missing.length) return;
-        const sha = missing[i];
-        try {
-          await storeBlobFromFile(sha, assetBlobPath(sha), { keepSource: true });
-          pushed++;
-        } catch (e) {
-          failed++;
-          console.error(`  ${sha}: ${(e as Error).message}`);
+  for (let off = 0; off < shas.length; off += CHUNK) {
+    const chunk = shas.slice(off, off + CHUNK);
+    const missing = await withRetry("existence sweep", () => missingBlobs(chunk));
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(UPLOAD_CONCURRENCY, missing.length) }, async () => {
+        for (;;) {
+          const i = next++;
+          if (i >= missing.length) return;
+          const sha = missing[i];
+          try {
+            await withRetry(sha, () => storeBlobFromFile(sha, assetBlobPath(sha), { keepSource: true }));
+            stored++;
+          } catch (e) {
+            failed++;
+            console.error(`  giving up on ${sha}: ${(e as Error).message}`);
+          }
         }
-        if ((pushed + failed) % 200 === 0) console.log(`  ${pushed + failed}/${missing.length}`);
-      }
-    })
-  );
-  console.log(`pushed ${pushed} blob(s)${failed ? `, ${failed} FAILED` : ""}`);
+      })
+    );
+    console.log(`  ${Math.min(off + CHUNK, shas.length)}/${shas.length} scanned, ${stored} stored, ${failed} failed`);
+  }
+  console.log(`push complete: ${stored} stored, ${shas.length - stored - failed} already present, ${failed} failed`);
   if (failed) process.exitCode = 1;
 }
 
