@@ -35,9 +35,13 @@ with two backends:
   from `ASSET_S3_ACCESS_KEY_ID`/`ASSET_S3_SECRET_ACCESS_KEY` (or the SDK's
   default chain); `ASSET_S3_REGION` defaults to `us-east-1`, and
   `ASSET_S3_INSECURE_TLS=1` accepts a self-signed endpoint certificate.
-  Reads still stream through the app's routes, so the bucket needs no public
-  access. `ASSET_STORE_DIR` remains the local root for upload staging and the
-  ffmpeg caches.
+  Reads stream through the app's routes by default, so the bucket needs no
+  public access. `ASSET_STORE_DIR` remains the local root for upload staging
+  and the ffmpeg caches. When a public gateway serves the bucket's key layout
+  directly, set `ASSET_PUBLIC_BASE` to its origin: the raw asset route then
+  308-redirects image/audio/video requests there (media sniffs fine without
+  extensions), while text, PDF, and downloads keep the app's typed and
+  sandboxed responses.
 
 `npm run push-assets` uploads an existing local store to the s3 backend:
 the one-time migration when a deployment flips to `ASSET_S3_ENDPOINT`

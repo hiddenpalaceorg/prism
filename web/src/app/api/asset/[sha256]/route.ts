@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import type { NextRequest } from "next/server";
 import { unstable_cache } from "next/cache";
+import { publicAssetUrl } from "@/lib/assets";
 import { blobSize, openBlobStream } from "@/lib/blobstore";
 import { getPool } from "@/lib/db";
 import { parseRange } from "@/lib/range";
@@ -51,6 +52,13 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
 
   const meta = await getMeta(sha256);
   if (!meta) return Response.json({ error: "not found" }, { status: 404 });
+
+  // Media bytes come straight off the public bucket gateway when one is
+  // configured — the redirect itself caches as hard as the content would.
+  const pub = publicAssetUrl(sha256, meta.mime);
+  if (pub) {
+    return new Response(null, { status: 308, headers: { Location: pub, "Cache-Control": CACHE } });
+  }
 
   // The browser already holds an immutable copy — never re-send the bytes.
   if (request.headers.get("if-none-match") === `"${sha256}"`) {
