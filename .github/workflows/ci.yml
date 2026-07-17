@@ -149,8 +149,14 @@ jobs:
         working-directory: ps2exe-adapter
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ps2exe (the archive tests import its reader stack)
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
-      - name: pytest (skips the heavy ps2exe stack; pins match pyproject)
-        run: uv run --no-project --with numpy --with blake3==1.0.8 --with fastcdc==1.7.0 --with pytest pytest tests/ -q
+      - name: pytest (ps2exe deps limited to the archive stack, pins match pyproject)
+        run: >-
+          uv run --no-project --with numpy --with blake3==1.0.8 --with fastcdc==1.7.0
+          --with pycdlib==1.14.0 --with bitarray==3.8.1 --with psutil==7.2.2
+          --with rarfile==4.2 --with libarchive-c==5.3
+          --with pytest pytest tests/ -q
