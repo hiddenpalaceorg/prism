@@ -13,6 +13,7 @@ interface Submission {
   name: string;
   system: string;
   file_count: number;
+  lot: string | null;
 }
 
 const FILTERS = ["queued", "accepted", "rejected", ""] as const;
@@ -169,6 +170,14 @@ export default function Moderate() {
                   <span>{s.file_count ?? "?"} files</span>
                   <span>by {s.nickname}</span>
                   <span className="font-mono">{s.sha256.slice(0, 12)}…</span>
+                  {s.lot && (
+                    <Link
+                      href={`/builds?lot=${encodeURIComponent(s.lot)}`}
+                      className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900 hover:underline dark:bg-amber-900/40 dark:text-amber-200"
+                    >
+                      {s.lot}
+                    </Link>
+                  )}
                   <StatusBadge status={s.status} />
                 </div>
               </div>

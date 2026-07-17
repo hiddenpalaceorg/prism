@@ -789,19 +789,23 @@ export interface SubmissionListItem {
   name: string;
   system: string;
   file_count: number;
+  /** Lot of the ingested build (accepted submissions only; set by moderators after accept). */
+  lot: string | null;
 }
 
 /// List submissions (optionally filtered by status), newest first.
 export async function listSubmissions(pool: Pool, status?: string, limit = 200): Promise<SubmissionListItem[]> {
-  const where = status ? "WHERE status=$1" : "";
+  const where = status ? "WHERE q.status=$1" : "";
   const params = status ? [status, limit] : [limit];
   const r = await pool.query(
-    `SELECT sha256, nickname, status, submitted_at, reviewed_at,
-            record->'image'->>'name'         AS name,
-            record->'info'->>'system'        AS system,
-            (record->'structural'->>'file_count')::bigint AS file_count
-     FROM submission_queue ${where}
-     ORDER BY submitted_at DESC LIMIT $${status ? 2 : 1}`,
+    `SELECT q.sha256, q.nickname, q.status, q.submitted_at, q.reviewed_at,
+            q.record->'image'->>'name'         AS name,
+            q.record->'info'->>'system'        AS system,
+            (q.record->'structural'->>'file_count')::bigint AS file_count,
+            b.lot
+     FROM submission_queue q
+     LEFT JOIN builds b ON b.sha256 = q.sha256 ${where}
+     ORDER BY q.submitted_at DESC LIMIT $${status ? 2 : 1}`,
     params
   );
   return r.rows as SubmissionListItem[];
