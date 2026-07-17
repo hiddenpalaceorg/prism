@@ -206,6 +206,19 @@ test("ingest with assets [] clears build_asset (extracted, nothing viewable)", a
   assert.ok(!db.calls.some((c) => c.sql.includes("INSERT INTO build_asset")));
 });
 
+test("ingest sets private only on insert, per asPrivate", async () => {
+  for (const asPrivate of [true, false]) {
+    const db = fakeDb();
+    await ingestRecord(db, minimalRecord(), { asPrivate });
+    const insert = db.calls.find((c) => c.sql.includes("INSERT INTO builds"));
+    assert.ok(insert!.sql.includes("private"));
+    assert.equal(insert!.params![insert!.params!.length - 1], asPrivate);
+    // ON CONFLICT must not touch private: re-accepts keep moderator-set visibility.
+    const onConflict = insert!.sql.slice(insert!.sql.indexOf("ON CONFLICT"));
+    assert.ok(!onConflict.includes("private"));
+  }
+});
+
 test("ingest keeps well-formed asset rows and drops malformed ones", async () => {
   const good: AssetRef = { path: "/A.PNG", sha256: "cd".repeat(32), size: 10, mime: "image/png", kind: "image" };
   const badSha = { path: "/B.PNG", sha256: "../etc/passwd", size: 10, mime: "image/png", kind: "image" } as AssetRef;

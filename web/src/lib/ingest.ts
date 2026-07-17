@@ -68,7 +68,7 @@ function buildDate(rec: BuildRecord): string | null {
 export async function ingestRecord(
   db: Queryable,
   rec: BuildRecord,
-  opts: { force?: boolean } = {}
+  opts: { force?: boolean; asPrivate?: boolean } = {}
 ): Promise<void> {
   rec = stripNulls(rec);
   const sha = rec.image.sha256;
@@ -94,10 +94,13 @@ export async function ingestRecord(
     if (seen.rows.length > 0) return;
   }
 
+  // `private` is set only on the initial INSERT — the ON CONFLICT branch leaves
+  // it alone, so re-ingesting (or re-accepting) a build never overrides a
+  // visibility choice a moderator has since made.
   await db.query(
     `INSERT INTO builds (sha256,name,system,size,md5,sha1,content_hash,filtered_content_hash,
-        file_count,total_size,max_depth,ext_histogram,text_doc,fingerprint_profile,record,build_date)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+        file_count,total_size,max_depth,ext_histogram,text_doc,fingerprint_profile,record,build_date,private)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
      ON CONFLICT (sha256) DO UPDATE SET
         name=excluded.name, system=excluded.system, size=excluded.size,
         md5=excluded.md5, sha1=excluded.sha1,
@@ -109,7 +112,8 @@ export async function ingestRecord(
         record=excluded.record, build_date=excluded.build_date`,
     [sha, rec.image.name, rec.info?.system ?? "", rec.image.size, rec.image.md5, rec.image.sha1,
      comp.content_hash ?? null, comp.filtered_content_hash ?? null, st.file_count, st.total_size, st.max_depth,
-     JSON.stringify(st.ext_histogram ?? {}), capTextDoc(rec.text_doc ?? ""), rec.fingerprint_profile, rec, buildDate(rec)]
+     JSON.stringify(st.ext_histogram ?? {}), capTextDoc(rec.text_doc ?? ""), rec.fingerprint_profile, rec, buildDate(rec),
+     opts.asPrivate ?? false]
   );
 
   // Semantic embedding from the build's identity (see semanticDoc), not the
