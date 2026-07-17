@@ -36,6 +36,14 @@ export function videoSrc(a: ViewableAsset): string {
   return a.mime === "video/mpeg" ? `${assetUrl(a)}/video` : assetUrl(a);
 }
 
+/** Where <audio> should point: WAVs go through the server's codec sniff,
+ *  since console builds are full of ADPCM WAVs browsers won't decode. Those
+ *  come back as a PCM transcode (native ones redirect to the raw bytes).
+ *  Every other audio mime we extract plays as-is. */
+export function audioSrc(a: ViewableAsset): string {
+  return a.mime === "audio/wav" ? `${assetUrl(a)}/audio` : assetUrl(a);
+}
+
 /** Poster still for a video asset (server-side ffmpeg frame grab). */
 export function videoThumbSrc(a: ViewableAsset): string {
   return `${assetUrl(a)}/thumb`;
@@ -307,7 +315,6 @@ function DocumentBody({ asset }: { asset: ViewableAsset }) {
 
 function Body({ asset }: { asset: ViewableAsset }) {
   const [failed, setFailed] = useState(false);
-  const url = assetUrl(asset);
   if (failed) {
     return <p className="p-6 text-sm text-red-500">Failed to load media.</p>;
   }
@@ -325,7 +332,9 @@ function Body({ asset }: { asset: ViewableAsset }) {
         />
       );
     case "audio":
-      return <audio controls src={url} className="w-[min(40rem,85vw)]" onError={() => setFailed(true)} />;
+      return (
+        <audio controls src={audioSrc(asset)} className="w-[min(40rem,85vw)]" onError={() => setFailed(true)} />
+      );
     case "video":
       return <VideoBody asset={asset} />;
     case "document":

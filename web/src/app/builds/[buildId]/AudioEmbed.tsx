@@ -5,11 +5,12 @@
 // full buffers only), so the decode is lazy: when the embed scrolls into view
 // for small files, or on first play. The decode fetch warms the browser's HTTP
 // cache — blobs are immutable — so the <audio> element's own load is free.
-// Files whose codec the browser can't decode still play natively if possible;
-// the waveform just stays a flat placeholder.
+// WAVs stream via audioSrc (ADPCM variants come back as a server-side PCM
+// transcode). Anything the browser still can't decode keeps a flat
+// placeholder waveform.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { assetUrl, humanSize, type ViewableAsset } from "./AssetViewer";
+import { audioSrc, humanSize, type ViewableAsset } from "./AssetViewer";
 import { useOpenAsset } from "./AssetViewerHost";
 
 const BARS = 160;
@@ -51,7 +52,7 @@ function fmtTime(s: number): string {
 }
 
 export default function AudioEmbed({ asset }: { asset: ViewableAsset }) {
-  const url = assetUrl(asset);
+  const url = audioSrc(asset);
   const openAsset = useOpenAsset();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);

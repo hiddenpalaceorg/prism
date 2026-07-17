@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { assetBlobPath } from "../src/lib/assets";
 import {
   detectProfile,
+  ensureAudioTranscode,
   ensureThumb,
   ensureTranscode,
   thumbPath,
@@ -16,6 +17,7 @@ import {
   transcodeProfile,
   transcodeStatus,
 } from "../src/lib/ffmpeg";
+import { wavBrowserPlayable, wavFormatTag } from "../src/lib/wav";
 
 const execFileP = promisify(execFile);
 
@@ -198,6 +200,69 @@ test("ensureThumb rejects junk and a missing blob", async (t) => {
     await assert.rejects(ensureThumb(sha));
     await assert.rejects(stat(thumbPath(sha)));
     await assert.rejects(ensureThumb("cd".repeat(32)));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Audio transcodes need only pcm_s16le, which every ffmpeg encodes, so the
+// binary being present is the whole gate (no output-profile detection).
+async function ffmpegPresent(): Promise<boolean> {
+  try {
+    await execFileP(process.env.FFMPEG_BIN || "ffmpeg", ["-version"], { timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A 1s mono IMA ADPCM WAV (format tag 0x0011), undecodable in browsers. */
+async function adpcmFixture(dir: string): Promise<Buffer> {
+  const out = join(dir, "fixture-adpcm.wav");
+  await execFileP(process.env.FFMPEG_BIN || "ffmpeg", [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+    "-c:a", "adpcm_ima_wav", "-f", "wav",
+    out,
+  ]);
+  return readFile(out);
+}
+
+test("ensureAudioTranscode converts an ADPCM WAV blob to PCM and caches it", async (t) => {
+  if (!(await ffmpegPresent())) return t.skip("ffmpeg not installed");
+  const dir = await tempStore();
+  try {
+    const sha = "1a".repeat(32);
+    const adpcm = await adpcmFixture(dir);
+    assert.equal(wavFormatTag(adpcm), 0x0011);
+    assert.equal(wavBrowserPlayable(adpcm), false);
+    await putBlob(sha, adpcm);
+
+    const out = await ensureAudioTranscode(sha);
+    assert.equal(out, transcodePath(sha, ".wav"));
+    const bytes = await readFile(out);
+    assert.equal(wavFormatTag(bytes), 0x0001);
+    assert.equal(wavBrowserPlayable(bytes), true);
+
+    // Second call serves the cache, so the file must not be rewritten.
+    const before = (await stat(out)).mtimeMs;
+    assert.equal(await ensureAudioTranscode(sha), out);
+    assert.equal((await stat(out)).mtimeMs, before);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ensureAudioTranscode rejects junk and a missing blob", async (t) => {
+  if (!(await ffmpegPresent())) return t.skip("ffmpeg not installed");
+  const dir = await tempStore();
+  try {
+    const sha = "2b".repeat(32);
+    await putBlob(sha, Buffer.from("not audio at all"));
+    await assert.rejects(ensureAudioTranscode(sha));
+    // A failed transcode must leave no cached output (or stray .part files).
+    await assert.rejects(stat(transcodePath(sha, ".wav")));
+    await assert.rejects(ensureAudioTranscode("3c".repeat(32)));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
