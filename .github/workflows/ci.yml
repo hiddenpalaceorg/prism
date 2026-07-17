@@ -158,5 +158,5 @@ jobs:
         run: >-
           uv run --no-project --with numpy --with blake3==1.0.8 --with fastcdc==1.7.0
           --with pycdlib==1.14.0 --with bitarray==3.8.1 --with psutil==7.2.2
-          --with rarfile==4.2 --with libarchive-c==5.3
+          --with rarfile==4.2 --with libarchive-c==5.3 --with inflate64==1.0.4
           --with pytest pytest tests/ -q
