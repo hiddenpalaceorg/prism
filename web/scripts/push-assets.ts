@@ -17,9 +17,9 @@ import {
 } from "../src/lib/blobstore";
 import { loadDotEnv } from "./dotenv";
 
-// Parallel uploads: most blobs are small, so a few in flight hide the
-// per-request latency without swamping the endpoint when big ones line up.
-const UPLOAD_CONCURRENCY = 4;
+// Parallel uploads: most blobs are small, so per-request latency (not
+// bandwidth) dominates — tune PUSH_CONCURRENCY up for a far-away endpoint.
+const UPLOAD_CONCURRENCY = Math.max(1, Number(process.env.PUSH_CONCURRENCY) || 8);
 
 async function main() {
   loadDotEnv();
