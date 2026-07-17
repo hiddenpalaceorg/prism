@@ -8,6 +8,20 @@ import { hexPreview } from "./hexdump";
 // Path helpers re-exported for the store-layout consumers (staging, tests).
 export { assetBlobPath, assetStagingPath, assetStoreDir } from "./blobstore";
 
+/** Public gateway URL for one blob when ASSET_PUBLIC_BASE points at a host
+ *  serving the bucket's key layout directly (`<base>/<sha256[:2]>/<sha256>`),
+ *  else null (serve through the app). Only media that browsers render from a
+ *  sniffed body qualifies — the gateway has no extensions to type by, so
+ *  text/PDF display and download filenames still need the app's headers. SVG
+ *  is excluded: opened as a document on the gateway origin it could script,
+ *  and there is no CSP sandbox out there. */
+export function publicAssetUrl(sha256: string, mime: string): string | null {
+  const base = process.env.ASSET_PUBLIC_BASE;
+  if (!base) return null;
+  if (!/^(image|audio|video)\/[\w.+-]+$/.test(mime) || mime === "image/svg+xml") return null;
+  return `${base.replace(/\/+$/, "")}/${sha256.slice(0, 2)}/${sha256}`;
+}
+
 /** Display order for asset kinds on the build pages. */
 export const ASSET_KIND_ORDER = ["image", "audio", "video", "document", "source", "text", "binary"] as const;
 

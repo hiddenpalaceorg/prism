@@ -232,7 +232,26 @@ test("ingest keeps well-formed asset rows and drops malformed ones", async () =>
 
 // --- asset grouping helpers ---------------------------------------------------
 
-import { orderAssets, assetTotals } from "../src/lib/assets";
+import { orderAssets, assetTotals, publicAssetUrl } from "../src/lib/assets";
+
+test("publicAssetUrl hands off sniffable media and nothing else", () => {
+  const sha = "ab".repeat(32);
+  delete process.env.ASSET_PUBLIC_BASE;
+  assert.equal(publicAssetUrl(sha, "image/png"), null); // no gateway configured
+  process.env.ASSET_PUBLIC_BASE = "https://curator.example.org/";
+  try {
+    assert.equal(publicAssetUrl(sha, "image/png"), `https://curator.example.org/ab/${sha}`);
+    assert.ok(publicAssetUrl(sha, "audio/ogg"));
+    assert.ok(publicAssetUrl(sha, "video/mp4"));
+    // Needs the app's Content-Type/Disposition/CSP headers — no handoff.
+    assert.equal(publicAssetUrl(sha, "text/plain"), null);
+    assert.equal(publicAssetUrl(sha, "application/pdf"), null);
+    assert.equal(publicAssetUrl(sha, "application/octet-stream"), null);
+    assert.equal(publicAssetUrl(sha, "image/svg+xml"), null);
+  } finally {
+    delete process.env.ASSET_PUBLIC_BASE;
+  }
+});
 
 test("orderAssets groups by display kind and caps per kind", () => {
   const mk = (kind: string, n: number) => Array.from({ length: n }, (_, i) => ({ kind, path: `${kind}${i}` }));
