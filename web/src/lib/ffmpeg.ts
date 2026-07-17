@@ -1,5 +1,6 @@
 // ffmpeg-backed transcoding: MPEG-1/2 program streams (.mpg, DVD .vob) and
-// bare MPEG video elementary streams to a format browsers actually play.
+// bare MPEG video elementary streams to a format browsers actually play, and
+// ADPCM-family WAVs (Xbox ADPCM and friends) to plain 16-bit PCM WAV.
 // Like Ghostscript in gs.ts, ffmpeg is a soft dependency: feature-detected at
 // runtime, and callers degrade (download-only viewer) when it's missing.
 //
@@ -271,6 +272,54 @@ async function transcode(
       if ((await stat(tmp)).size === 0) throw new Error("empty transcode");
       await rename(tmp, out);
       return { path: out, mime: p.mime };
+    } catch (err) {
+      await rm(tmp, { force: true });
+      throw err;
+    }
+  });
+  if (result === null) throw new Error("blob missing from store");
+  return result;
+}
+
+// One audio transcode per blob at a time, same reason as video transcodes.
+const audioInFlight = new Map<string, Promise<string>>();
+
+/**
+ * The cached browser-playable PCM WAV for this audio blob, produced on first
+ * use. For WAVs whose codec browsers won't decode (ADPCM variants, per the
+ * wav.ts sniff). Every ffmpeg encodes pcm_s16le, so unlike video there is no
+ * output-profile detection: a missing binary just rejects.
+ * Throws when ffmpeg is missing, errors on the input, or times out.
+ */
+export async function ensureAudioTranscode(sha256: string): Promise<string> {
+  const out = transcodePath(sha256, ".wav");
+  if (await nonEmpty(out)) return out;
+  let job = audioInFlight.get(sha256);
+  if (!job) {
+    job = transcodeAudio(sha256, out).finally(() => audioInFlight.delete(sha256));
+    audioInFlight.set(sha256, job);
+  }
+  return job;
+}
+
+async function transcodeAudio(sha256: string, out: string): Promise<string> {
+  await mkdir(dirname(out), { recursive: true });
+  const result = await withBlobFile(sha256, async (input) => {
+    const size = (await stat(input)).size;
+    const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
+    const args = [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-i", input,
+      "-map", "0:a:0",
+      "-c:a", "pcm_s16le",
+      "-f", "wav",
+      tmp,
+    ];
+    try {
+      await execFileP(FFMPEG_BIN, args, { timeout: transcodeTimeoutMs(size), maxBuffer: 4_000_000 });
+      if ((await stat(tmp)).size === 0) throw new Error("empty transcode");
+      await rename(tmp, out);
+      return out;
     } catch (err) {
       await rm(tmp, { force: true });
       throw err;
