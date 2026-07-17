@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
 import type { NextRequest } from "next/server";
-import { assetBlobPath } from "@/lib/assets";
+import { readBlob } from "@/lib/blobstore";
 import { getPool } from "@/lib/db";
 import { gsAvailable, gsRenderable, gsToPng } from "@/lib/gs";
 import { pngConvertible, toPng, WEB_SAFE_IMAGE } from "@/lib/imgpng";
@@ -39,10 +38,8 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
     return Response.json({ error: `no PNG conversion for ${meta.mime}` }, { status: 415 });
   }
 
-  let bytes: Buffer;
-  try {
-    bytes = await readFile(assetBlobPath(sha256));
-  } catch {
+  const bytes = await readBlob(sha256);
+  if (bytes === null) {
     return Response.json({ error: "asset bytes not in store" }, { status: 404 });
   }
 

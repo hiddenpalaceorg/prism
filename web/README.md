@@ -20,8 +20,29 @@ Populates `builds`, `files`, `build_fileset`, `build_chunk_signature`,
 `build_resemblance`, `exe_fp`, `audio_fp`, and `build_asset`, computing the
 `text_embedding` (all-MiniLM-L6-v2) and LSH bands at ingest. A `.zip` bundle
 also carries the viewable-asset blobs (`assets/<sha256>` members), which land
-in the content-addressed store at `ASSET_STORE_DIR` (default `./asset-store`)
-for the build page's inline asset viewer.
+in the content-addressed blob store for the build page's inline asset viewer.
+
+## Blob store
+
+Asset and repo blobs live in a content-addressed store (`src/lib/blobstore.ts`)
+with two backends:
+
+- **local** (default): `<ASSET_STORE_DIR>/<sha256[:2]>/<sha256>`, rooted at
+  `./asset-store`.
+- **s3**: any S3-compatible object store, selected by setting
+  `ASSET_S3_ENDPOINT`. Keys mirror the local layout under
+  `ASSET_S3_PREFIX` in `ASSET_S3_BUCKET` (default `curator`). Credentials come
+  from `ASSET_S3_ACCESS_KEY_ID`/`ASSET_S3_SECRET_ACCESS_KEY` (or the SDK's
+  default chain); `ASSET_S3_REGION` defaults to `us-east-1`, and
+  `ASSET_S3_INSECURE_TLS=1` accepts a self-signed endpoint certificate.
+  Reads still stream through the app's routes, so the bucket needs no public
+  access. `ASSET_STORE_DIR` remains the local root for upload staging and the
+  ffmpeg caches.
+
+`npm run push-assets` uploads an existing local store to the s3 backend:
+the one-time migration when a deployment flips to `ASSET_S3_ENDPOINT`
+(idempotent, keeps local files). Scripts read `.env`/`.env.local` like the
+app, so the store settings live in one place.
 
 ## API
 

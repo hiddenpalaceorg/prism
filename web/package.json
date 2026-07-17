@@ -9,10 +9,14 @@
     "lint": "eslint",
     "test": "node --import tsx --test tests/*.test.ts",
     "ingest": "tsx scripts/ingest.ts",
-    "attach-repo": "tsx scripts/attach-repo.ts"
+    "attach-repo": "tsx scripts/attach-repo.ts",
+    "push-assets": "tsx scripts/push-assets.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1089.0",
+    "@aws-sdk/lib-storage": "^3.1089.0",
     "@huggingface/transformers": "^4.2.0",
+    "@smithy/node-http-handler": "^4.9.7",
     "@types/pngjs": "^6.0.5",
     "bmp-js": "^0.1.0",
     "diff": "^9.0.0",

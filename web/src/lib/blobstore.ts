@@ -1,0 +1,349 @@
+// The content-addressed blob store backing the asset viewer, the attached-repo
+// viewer, and the submission upload path — one facade, two backends:
+//
+// - local (default): blobs at `<ASSET_STORE_DIR>/<sha256[:2]>/<sha256>`, the
+//   layout ingest has always produced.
+// - s3: an S3-compatible object store, selected by setting ASSET_S3_ENDPOINT
+//   (in production the same versitygw service the wiki's uploads go to, with
+//   a bucket of its own). Keys mirror the local layout —
+//   `<ASSET_S3_PREFIX><sha256[:2]>/<sha256>` — so versitygw's POSIX backend
+//   lays the bucket out on disk exactly like a local store.
+//
+// Under the s3 backend ASSET_STORE_DIR still serves as the local root for
+// what must stay on disk: upload staging (.staging), ffmpeg's derivative
+// caches (.transcode, .thumb), and sources materialized for ffmpeg (.fetch).
+//
+// Config (s3 backend): ASSET_S3_ENDPOINT, ASSET_S3_BUCKET (default
+// "curator"), ASSET_S3_PREFIX (default "", for scratch/test namespaces),
+// ASSET_S3_REGION (default "us-east-1"), ASSET_S3_ACCESS_KEY_ID +
+// ASSET_S3_SECRET_ACCESS_KEY (else the SDK's default credential chain), and
+// ASSET_S3_INSECURE_TLS=1 to accept a self-signed endpoint certificate.
+
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import path from "node:path";
+import { randomBytes } from "node:crypto";
+import { Agent } from "node:https";
+import type { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
+
+/** Root of the local store (blobs on the local backend; staging and caches
+ *  always). Defaults next to the app: survives the deploy rsync, git-ignored. */
+export function assetStoreDir(): string {
+  return process.env.ASSET_STORE_DIR || path.join(process.cwd(), "asset-store");
+}
+
+/** Local path of one blob. Caller must have validated `sha256` (isSha256). */
+export function assetBlobPath(sha256: string): string {
+  return path.join(assetStoreDir(), sha256.slice(0, 2), sha256);
+}
+
+/** Staging file for a blob's chunked upload (`.staging` can't collide with the
+ *  two-hex-char blob dirs). Caller must have validated `sha256`. */
+export function assetStagingPath(sha256: string): string {
+  return path.join(assetStoreDir(), ".staging", `${sha256}.part`);
+}
+
+/** Whether blob reads/writes go to the S3 backend. */
+export function s3Enabled(): boolean {
+  return !!process.env.ASSET_S3_ENDPOINT;
+}
+
+/** Where blobs land, for operator-facing log lines. */
+export function storeDescription(): string {
+  if (!s3Enabled()) return assetStoreDir();
+  return `${process.env.ASSET_S3_ENDPOINT}/${s3Bucket()}/${s3Prefix()}`;
+}
+
+function s3Bucket(): string {
+  return process.env.ASSET_S3_BUCKET || "curator";
+}
+
+function s3Prefix(): string {
+  return process.env.ASSET_S3_PREFIX || "";
+}
+
+function s3Key(sha256: string): string {
+  return `${s3Prefix()}${sha256.slice(0, 2)}/${sha256}`;
+}
+
+// One client per process; the config is env-fixed for the process lifetime.
+let client: S3Client | null = null;
+
+function s3(): S3Client {
+  if (!client) {
+    const accessKeyId = process.env.ASSET_S3_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.ASSET_S3_SECRET_ACCESS_KEY;
+    client = new S3Client({
+      endpoint: process.env.ASSET_S3_ENDPOINT,
+      region: process.env.ASSET_S3_REGION || "us-east-1",
+      // versitygw/minio address buckets by path, not virtual host.
+      forcePathStyle: true,
+      ...(accessKeyId && secretAccessKey
+        ? { credentials: { accessKeyId, secretAccessKey } }
+        : {}),
+      ...(process.env.ASSET_S3_INSECURE_TLS === "1"
+        ? {
+            requestHandler: new NodeHttpHandler({
+              httpsAgent: new Agent({ rejectUnauthorized: false }),
+            }),
+          }
+        : {}),
+    });
+  }
+  return client;
+}
+
+/** Errors that mean "no such object", as opposed to a broken store. */
+function isMissing(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === "NoSuchKey" || e?.name === "NotFound" || e?.$metadata?.httpStatusCode === 404;
+}
+
+function httpStatus(err: unknown): number | undefined {
+  return (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+}
+
+/** Byte size of a blob, or null when it is missing from the store. */
+export async function blobSize(sha256: string): Promise<number | null> {
+  if (s3Enabled()) {
+    try {
+      const r = await s3().send(new HeadObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
+      return r.ContentLength ?? null;
+    } catch (err) {
+      if (isMissing(err)) return null;
+      throw err;
+    }
+  }
+  try {
+    return (await fsp.stat(assetBlobPath(sha256))).size;
+  } catch {
+    return null;
+  }
+}
+
+export async function blobExists(sha256: string): Promise<boolean> {
+  return (await blobSize(sha256)) !== null;
+}
+
+// Bounds concurrent HEADs in missingBlobs (and nothing else): high enough to
+// hide the per-request latency, low enough to be a polite S3 client.
+const EXISTS_CONCURRENCY = 16;
+
+/** The subset of `shas` missing from the store, in input order. */
+export async function missingBlobs(shas: string[]): Promise<string[]> {
+  if (!s3Enabled()) return shas.filter((s) => !fs.existsSync(assetBlobPath(s)));
+  const present = new Array<boolean>(shas.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(EXISTS_CONCURRENCY, shas.length) }, async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= shas.length) return;
+        present[i] = await blobExists(shas[i]);
+      }
+    })
+  );
+  return shas.filter((_, i) => !present[i]);
+}
+
+/** A readable stream over a blob (optionally one byte range), or null when it
+ *  is missing from the store. */
+export async function openBlobStream(
+  sha256: string,
+  range?: { start: number; end: number }
+): Promise<Readable | null> {
+  if (s3Enabled()) {
+    try {
+      const r = await s3().send(
+        new GetObjectCommand({
+          Bucket: s3Bucket(),
+          Key: s3Key(sha256),
+          ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+        })
+      );
+      return r.Body as Readable;
+    } catch (err) {
+      if (isMissing(err)) return null;
+      throw err;
+    }
+  }
+  // open() first so a missing blob is a null, not a later stream error event.
+  try {
+    const fh = await fsp.open(assetBlobPath(sha256), "r");
+    return fh.createReadStream(range ? { start: range.start, end: range.end } : {});
+  } catch {
+    return null;
+  }
+}
+
+/** A whole blob in memory, or null when it is missing from the store.
+ *  Callers cap sizes (convert/preview paths); don't hand this a DVD image. */
+export async function readBlob(sha256: string): Promise<Buffer | null> {
+  if (s3Enabled()) {
+    try {
+      const r = await s3().send(new GetObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
+      return Buffer.from(await r.Body!.transformToByteArray());
+    } catch (err) {
+      if (isMissing(err)) return null;
+      throw err;
+    }
+  }
+  try {
+    return await fsp.readFile(assetBlobPath(sha256));
+  } catch {
+    return null;
+  }
+}
+
+/** Leading bytes of a blob, or null when it is missing from the store. */
+export async function readBlobHead(sha256: string, maxBytes = 2048): Promise<Buffer | null> {
+  if (s3Enabled()) {
+    try {
+      const r = await s3().send(
+        new GetObjectCommand({
+          Bucket: s3Bucket(),
+          Key: s3Key(sha256),
+          Range: `bytes=0-${maxBytes - 1}`,
+        })
+      );
+      return Buffer.from(await r.Body!.transformToByteArray());
+    } catch (err) {
+      if (isMissing(err)) return null;
+      // An empty object satisfies no byte range (416) but does exist.
+      if (httpStatus(err) === 416) {
+        return (await blobSize(sha256)) === null ? null : Buffer.alloc(0);
+      }
+      throw err;
+    }
+  }
+  let fh;
+  try {
+    fh = await fsp.open(assetBlobPath(sha256), "r");
+    const buf = Buffer.alloc(maxBytes);
+    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+    return buf.subarray(0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await fh?.close();
+  }
+}
+
+/** Move a completed local file into the store ("exists" means an identical
+ *  blob was already stored — content-addressed, so concurrent writers of the
+ *  same key can only race harmlessly). Consumes `src` unless `keepSource` is
+ *  set (the migration script pushes the local store without eating it). */
+export async function storeBlobFromFile(
+  sha256: string,
+  src: string,
+  opts?: { keepSource?: boolean }
+): Promise<"stored" | "exists"> {
+  const cleanup = async () => {
+    if (!opts?.keepSource) await fsp.rm(src, { force: true });
+  };
+  if (s3Enabled()) {
+    if (await blobExists(sha256)) {
+      await cleanup();
+      return "exists";
+    }
+    // Multipart so multi-GB video blobs upload in bounded memory with
+    // per-part retries.
+    await new Upload({
+      client: s3(),
+      params: { Bucket: s3Bucket(), Key: s3Key(sha256), Body: fs.createReadStream(src) },
+    }).done();
+    await cleanup();
+    return "stored";
+  }
+  const dest = assetBlobPath(sha256);
+  if (fs.existsSync(dest)) {
+    await cleanup();
+    return "exists";
+  }
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  // Copy to a private temp name in the final dir, then rename, so a crash
+  // can't leave a truncated blob under its final name.
+  const copyIn = async () => {
+    const tmp = `${dest}.tmp${process.pid}`;
+    await fsp.copyFile(src, tmp);
+    await fsp.rename(tmp, dest);
+    await cleanup();
+  };
+  if (opts?.keepSource) {
+    await copyIn();
+    return "stored";
+  }
+  try {
+    // Same-filesystem fast path (upload staging lives inside the store root).
+    await fsp.rename(src, dest);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EXDEV") {
+      // Cross-device source (ingest stages under os.tmpdir).
+      await copyIn();
+    } else if (fs.existsSync(dest)) {
+      await cleanup();
+      return "exists";
+    } else {
+      throw err;
+    }
+  }
+  return "stored";
+}
+
+/** Write one in-memory blob into the store. True when newly stored, false
+ *  when an identical blob was already there. */
+export async function storeBlobBytes(sha256: string, data: Uint8Array): Promise<boolean> {
+  if (s3Enabled()) {
+    if (await blobExists(sha256)) return false;
+    await s3().send(
+      new PutObjectCommand({
+        Bucket: s3Bucket(),
+        Key: s3Key(sha256),
+        Body: data,
+        ContentLength: data.byteLength,
+      })
+    );
+    return true;
+  }
+  const dest = assetBlobPath(sha256);
+  if (fs.existsSync(dest)) return false;
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  const tmp = `${dest}.tmp${process.pid}`;
+  await fsp.writeFile(tmp, data);
+  await fsp.rename(tmp, dest);
+  return true;
+}
+
+/** Run `fn` with a blob available at a local path — the store file itself on
+ *  the local backend, a temp copy under `.fetch/` on s3 (ffmpeg wants a real
+ *  file it can seek). Returns null when the blob is missing from the store. */
+export async function withBlobFile<T>(
+  sha256: string,
+  fn: (localPath: string) => Promise<T>
+): Promise<T | null> {
+  if (!s3Enabled()) {
+    const p = assetBlobPath(sha256);
+    if (!fs.existsSync(p)) return null;
+    return fn(p);
+  }
+  const stream = await openBlobStream(sha256);
+  if (!stream) return null;
+  const dir = path.join(assetStoreDir(), ".fetch");
+  await fsp.mkdir(dir, { recursive: true });
+  const tmp = path.join(dir, `${sha256}.${randomBytes(4).toString("hex")}`);
+  try {
+    await pipeline(stream, fs.createWriteStream(tmp));
+    return await fn(tmp);
+  } finally {
+    await fsp.rm(tmp, { force: true });
+  }
+}

@@ -1,7 +1,6 @@
-import { readFile } from "node:fs/promises";
 import type { NextRequest } from "next/server";
-import { assetBlobPath } from "@/lib/assets";
 import { blameLines, type BlameCommitDto } from "@/lib/blame";
+import { readBlob } from "@/lib/blobstore";
 import { entryAt, fileLog, commitSubject, resolveRev } from "@/lib/repo-manifest";
 import { loadRepo, repoAttached } from "@/lib/repo";
 import { normalizeAssetPath } from "@/lib/slug";
@@ -56,10 +55,15 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   let versions: string[];
   try {
     versions = await Promise.all(
-      chain.map((e) => (e.blob ? readFile(assetBlobPath(idx.blobs.get(e.blob)![0]), "utf8") : ""))
+      chain.map(async (e) => {
+        if (!e.blob) return "";
+        const raw = await readBlob(idx.blobs.get(e.blob)![0]);
+        if (raw === null) throw new Error("missing blob");
+        return raw.toString("utf8");
+      })
     );
   } catch {
-    // Row + manifest landed but some blob hasn't synced to this host yet.
+    // Row + manifest landed but some blob hasn't synced to this store yet.
     return Response.json({ error: "blob bytes not in store" }, { status: 404 });
   }
 

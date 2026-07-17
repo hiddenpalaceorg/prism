@@ -1,7 +1,6 @@
-import fs from "node:fs";
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
-import { assetBlobPath } from "@/lib/assets";
+import { missingBlobs } from "@/lib/blobstore";
 import { referencedAssets } from "@/lib/submission-assets";
 import { rateLimit, clientKey } from "@/lib/ratelimit";
 import { isSha256 } from "@/lib/validate";
@@ -22,6 +21,6 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   const refs = await referencedAssets(getPool(), sha256);
   if (!refs) return Response.json({ error: "not found" }, { status: 404 });
 
-  const missing = [...refs.sizes.keys()].filter((sha) => !fs.existsSync(assetBlobPath(sha)));
+  const missing = await missingBlobs([...refs.sizes.keys()]);
   return Response.json({ sha256, referenced: refs.sizes.size, missing });
 }

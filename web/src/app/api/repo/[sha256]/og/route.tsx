@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { NextRequest } from "next/server";
 import { ImageResponse } from "next/og";
-import { assetBlobPath } from "@/lib/assets";
+import { readBlob } from "@/lib/blobstore";
 import { diffRows, type DiffRow } from "@/lib/linediff";
 import { loadRepo, repoAttached } from "@/lib/repo";
 import {
@@ -62,7 +62,7 @@ async function blobText(idx: RepoIndex, oid: string | null): Promise<string | nu
   const info = idx.blobs.get(oid);
   if (!info || info[2] === 1 || info[1] > MAX_SNIPPET_BLOB) return null;
   try {
-    return (await readFile(assetBlobPath(info[0]))).toString("utf8");
+    return (await readBlob(info[0]))?.toString("utf8") ?? null;
   } catch {
     return null;
   }

@@ -1,9 +1,7 @@
-import fs from "node:fs";
-import fsp from "node:fs/promises";
 import { Readable } from "node:stream";
 import type { NextRequest } from "next/server";
 import { unstable_cache } from "next/cache";
-import { assetBlobPath } from "@/lib/assets";
+import { blobSize, openBlobStream } from "@/lib/blobstore";
 import { getPool } from "@/lib/db";
 import { parseRange } from "@/lib/range";
 import { isSha256 } from "@/lib/validate";
@@ -59,11 +57,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
     return new Response(null, { status: 304, headers: { "Cache-Control": CACHE, ETag: `"${sha256}"` } });
   }
 
-  const blob = assetBlobPath(sha256);
-  let stat: fs.Stats;
-  try {
-    stat = await fsp.stat(blob);
-  } catch {
+  const size = await blobSize(sha256);
+  if (size === null) {
     // Metadata ingested but the bundle carrying the bytes hasn't landed yet.
     return Response.json({ error: "asset bytes not in store" }, { status: 404 });
   }
@@ -86,15 +81,15 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   };
 
   // Single-range support so <audio>/<video> can seek.
-  const range = parseRange(request.headers.get("range"), stat.size);
+  const range = parseRange(request.headers.get("range"), size);
+  const stream = await openBlobStream(sha256, range ?? undefined);
+  if (!stream) return Response.json({ error: "asset bytes not in store" }, { status: 404 });
   if (range) {
-    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${stat.size}`;
+    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${size}`;
     headers["Content-Length"] = String(range.end - range.start + 1);
-    const stream = fs.createReadStream(blob, { start: range.start, end: range.end });
     return new Response(Readable.toWeb(stream) as ReadableStream, { status: 206, headers });
   }
 
-  headers["Content-Length"] = String(stat.size);
-  const stream = fs.createReadStream(blob);
+  headers["Content-Length"] = String(size);
   return new Response(Readable.toWeb(stream) as ReadableStream, { status: 200, headers });
 }

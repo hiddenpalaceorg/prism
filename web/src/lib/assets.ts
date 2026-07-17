@@ -1,27 +1,12 @@
-// The on-disk content-addressed blob store backing the asset viewer. Blobs are
-// extracted by the desktop analyzer, shipped inside export bundles, and placed
-// here by scripts/ingest.ts; the API route streams them out by sha256.
+// Asset-domain helpers over the content-addressed blob store (blobstore.ts).
+// Blobs are extracted by the desktop analyzer, shipped inside export bundles,
+// and stored by scripts/ingest.ts; the API routes stream them out by sha256.
 
-import path from "node:path";
-import { open } from "node:fs/promises";
+import { readBlobHead } from "./blobstore";
 import { hexPreview } from "./hexdump";
 
-/** Root of the blob store. Blobs live at `<root>/<sha256[:2]>/<sha256>`. */
-export function assetStoreDir(): string {
-  // Default sits next to the app (survives the deploy rsync, excluded from git).
-  return process.env.ASSET_STORE_DIR || path.join(process.cwd(), "asset-store");
-}
-
-/** Absolute path of one blob. Caller must have validated `sha256` (isSha256). */
-export function assetBlobPath(sha256: string): string {
-  return path.join(assetStoreDir(), sha256.slice(0, 2), sha256);
-}
-
-/** Staging file for a blob's chunked upload (`.staging` can't collide with the
- *  two-hex-char blob dirs). Caller must have validated `sha256`. */
-export function assetStagingPath(sha256: string): string {
-  return path.join(assetStoreDir(), ".staging", `${sha256}.part`);
-}
+// Path helpers re-exported for the store-layout consumers (staging, tests).
+export { assetBlobPath, assetStagingPath, assetStoreDir } from "./blobstore";
 
 /** Display order for asset kinds on the build pages. */
 export const ASSET_KIND_ORDER = ["image", "audio", "video", "document", "source", "text", "binary"] as const;
@@ -46,17 +31,7 @@ export function orderAssets<T extends { kind: string }>(
 
 /** Leading bytes of a blob, or null when it is missing from the store. */
 export async function readAssetBytes(sha256: string, maxBytes = 2048): Promise<Buffer | null> {
-  let fh;
-  try {
-    fh = await open(assetBlobPath(sha256), "r");
-    const buf = Buffer.alloc(maxBytes);
-    const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
-    return buf.subarray(0, bytesRead);
-  } catch {
-    return null;
-  } finally {
-    await fh?.close();
-  }
+  return readBlobHead(sha256, maxBytes);
 }
 
 /** Leading bytes of a text blob decoded as lossy UTF-8 for an excerpt card, or

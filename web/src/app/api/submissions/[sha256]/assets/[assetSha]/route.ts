@@ -4,7 +4,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
-import { assetBlobPath, assetStagingPath } from "@/lib/assets";
+import { assetStagingPath, blobExists, storeBlobFromFile } from "@/lib/blobstore";
 import { referencedAssets, MAX_BUILD_ASSET_BYTES } from "@/lib/submission-assets";
 import { rateLimitCheck, clientKey } from "@/lib/ratelimit";
 import { isSha256 } from "@/lib/validate";
@@ -57,8 +57,7 @@ export async function PUT(
     return Response.json({ error: "build's total asset bytes exceed the cap" }, { status: 413 });
   }
 
-  const dest = assetBlobPath(assetSha);
-  if (fs.existsSync(dest)) return Response.json({ sha256: assetSha, status: "exists" });
+  if (await blobExists(assetSha)) return Response.json({ sha256: assetSha, status: "exists" });
 
   const rawOffset = new URL(request.url).searchParams.get("offset") ?? "0";
   const offset = Number(rawOffset);
@@ -118,14 +117,9 @@ export async function PUT(
     return Response.json({ error: "staged bytes do not hash to the asset sha256" }, { status: 422 });
   }
 
-  await fsp.mkdir(path.dirname(dest), { recursive: true });
-  try {
-    await fsp.rename(part, dest);
-  } catch (e) {
-    // A concurrent upload of the same blob may have finalized first — same bytes.
-    if (!fs.existsSync(dest)) throw e;
-    await fsp.rm(part, { force: true }).catch(() => {});
-    return Response.json({ sha256: assetSha, status: "exists" });
-  }
+  // A concurrent upload of the same blob may have finalized first — same
+  // bytes either way, so "exists" is as good as "stored".
+  const outcome = await storeBlobFromFile(assetSha, part);
+  if (outcome === "exists") return Response.json({ sha256: assetSha, status: "exists" });
   return Response.json({ sha256: assetSha, status: "stored" }, { status: 201 });
 }
