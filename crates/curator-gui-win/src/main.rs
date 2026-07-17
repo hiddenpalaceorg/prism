@@ -2213,7 +2213,7 @@ mod app {
     const UPLOAD_CHUNK: usize = 4 * 1024 * 1024;
 
     /// How many asset blobs to upload at once.
-    const PARALLEL_UPLOADS: usize = 4;
+    const PARALLEL_UPLOADS: usize = 32;
 
     /// Give up after this many consecutive rate-limit waits on one chunk.
     const MAX_THROTTLE_RETRIES: u32 = 30;

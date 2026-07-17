@@ -300,7 +300,7 @@ final class AppModel: ObservableObject {
     }
 
     /// How many asset blobs to upload at once.
-    private static let parallelUploads = 4
+    private static let parallelUploads = 32
 
     /// Upload the build's asset blobs that the server lacks and we hold locally,
     /// a few at a time — each is its own resumable PUT, so chunks of one blob
