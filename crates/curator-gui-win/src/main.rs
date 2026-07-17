@@ -1543,7 +1543,7 @@ mod app {
             }
         };
         let title = match node {
-            Node::Dir { name, date, size, children } => {
+            Node::Dir { name, date, size, md5, sha1, sha256, children } => {
                 row("Name", name);
                 if let Some(d) = date {
                     row("Date", d);
@@ -1552,7 +1552,21 @@ mod app {
                     row("Size", &human_size(*sz));
                 }
                 row("Items", &children.len().to_string());
-                "Directory"
+                // An archive listed as a directory: show the file's own hashes.
+                if let Some(h) = md5 {
+                    row("MD5", h);
+                }
+                if let Some(h) = sha1 {
+                    row("SHA-1", h);
+                }
+                if let Some(h) = sha256 {
+                    row("SHA-256", h);
+                }
+                if sha1.is_some() || sha256.is_some() || md5.is_some() {
+                    "Archive"
+                } else {
+                    "Directory"
+                }
             }
             Node::File { name, date, size, md5, sha1, sha256, unreadable } => {
                 row("Name", name);

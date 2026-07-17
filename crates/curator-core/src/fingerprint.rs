@@ -155,7 +155,9 @@ pub fn composites(files: &[RawFile]) -> Composites {
     let mut incomplete: u32 = 0;
 
     for f in files {
-        if f.is_dir {
+        // Archive members don't exist as far as identity is concerned: the
+        // archive file's own sha1 already covers their bytes.
+        if f.is_dir || f.in_archive {
             continue;
         }
         if f.unreadable {
@@ -202,6 +204,9 @@ pub fn structural(system: &str, files: &[RawFile]) -> Structural {
     let mut max_depth = 0u32;
     let mut ext_histogram: BTreeMap<String, u64> = BTreeMap::new();
 
+    // Structural features describe the *listing* (what the tree shows), so
+    // archive members count here — unlike composites, where the archive is
+    // one opaque file.
     for f in files {
         let depth = f.path.trim_matches('/').split('/').count() as u32;
         max_depth = max_depth.max(depth);
@@ -396,13 +401,26 @@ pub fn build_tree(files: &[RawFile]) -> Vec<Node> {
     finish_dir(root)
 }
 
-fn finish_dir(d: DirBuild) -> Vec<Node> {
+fn finish_dir(mut d: DirBuild) -> Vec<Node> {
     // Directories first, then files; each alphabetical (BTreeMap keeps key order).
     let mut out: Vec<Node> = Vec::with_capacity(d.dirs.len() + d.files.len());
-    for (name, sub) in d.dirs {
-        let date = sub.date.clone();
-        let size = sub.size;
-        out.push(Node::Dir { name, date, size, children: finish_dir(sub) });
+    for (name, sub) in std::mem::take(&mut d.dirs) {
+        let mut date = sub.date.clone();
+        let mut size = sub.size;
+        let mut md5 = None;
+        let mut sha1 = None;
+        let mut sha256 = None;
+        // An archive listed as a directory is both a file (its own record) and
+        // a dir (its members' paths): merge into one dir node carrying the
+        // file's metadata instead of showing same-named siblings.
+        if let Some(Node::File { date: fd, size: fs, md5: fm, sha1: f1, sha256: f2, .. }) =
+            d.files.remove(&name)
+        {
+            date = date.or(fd);
+            size = size.or(fs);
+            (md5, sha1, sha256) = (fm, f1, f2);
+        }
+        out.push(Node::Dir { name, date, size, md5, sha1, sha256, children: finish_dir(sub) });
     }
     out.extend(d.files.into_values());
     out
@@ -427,6 +445,7 @@ mod tests {
             sha1: Some(sha1.into()),
             sha256: None,
             unreadable: false,
+            in_archive: false,
             chunks: vec![],
             shingle: vec![],
         }
@@ -442,9 +461,14 @@ mod tests {
             sha1: None,
             sha256: None,
             unreadable: false,
+            in_archive: false,
             chunks: vec![],
             shingle: vec![],
         }
+    }
+
+    fn member(path: &str, sha1: &str) -> RawFile {
+        RawFile { in_archive: true, ..file(path, sha1) }
     }
 
     #[test]
@@ -506,6 +530,61 @@ mod tests {
         match data {
             Node::Dir { children, .. } => assert_eq!(children[0].name(), "SUB"),
             _ => panic!("DATA should be a directory"),
+        }
+    }
+
+    #[test]
+    fn archive_members_do_not_change_composites_but_count_structurally() {
+        let base = vec![file("/GAME.BIN", A), file("/PATCH.ZIP", B)];
+        let mut bad_member = member("/PATCH.ZIP/broken.dat", C);
+        bad_member.unreadable = true;
+        let listed = vec![
+            file("/GAME.BIN", A),
+            file("/PATCH.ZIP", B),
+            member("/PATCH.ZIP/deep/readme.txt", C),
+            bad_member,
+        ];
+        // The archive contributes exactly its own sha1, members nothing at all —
+        // not even to the incomplete-files count.
+        assert_eq!(composites(&base).content_hash, composites(&listed).content_hash);
+        assert_eq!(
+            composites(&base).filtered_content_hash,
+            composites(&listed).filtered_content_hash
+        );
+        assert_eq!(composites(&listed).incomplete_files, 0);
+
+        // Structural features describe the listing, so members DO count there.
+        let s = structural("PSX", &listed);
+        assert_eq!(s.file_count, 4);
+        assert_eq!(s.total_size, 40);
+        assert_eq!(s.ext_histogram.get("txt"), Some(&1));
+        assert_eq!(s.max_depth, 3);
+    }
+
+    #[test]
+    fn build_tree_merges_archive_file_into_its_dir() {
+        let mut zip = file("/DATA/PATCH.ZIP", A);
+        zip.md5 = Some("aabb".into());
+        zip.sha256 = Some("ccdd".into());
+        let tree = build_tree(&[
+            zip,
+            member("/DATA/PATCH.ZIP/src/main.c", B),
+            member("/DATA/PATCH.ZIP/title.png", C),
+        ]);
+        let Node::Dir { children: data, .. } = &tree[0] else { panic!("DATA should be a dir") };
+        // One node for the archive — a dir carrying the file's own hashes/size.
+        assert_eq!(data.len(), 1);
+        match &data[0] {
+            Node::Dir { name, size, md5, sha1, sha256, children, .. } => {
+                assert_eq!(name, "PATCH.ZIP");
+                assert_eq!(*size, Some(10));
+                assert_eq!(md5.as_deref(), Some("aabb"));
+                assert_eq!(sha1.as_deref(), Some(A));
+                assert_eq!(sha256.as_deref(), Some("ccdd"));
+                let names: Vec<&str> = children.iter().map(|n| n.name()).collect();
+                assert_eq!(names, vec!["src", "title.png"]);
+            }
+            _ => panic!("PATCH.ZIP should have become a dir node"),
         }
     }
 

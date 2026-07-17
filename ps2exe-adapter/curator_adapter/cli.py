@@ -85,7 +85,10 @@ def _clean_component(c):
 
 
 def _clean_path(p):
-    parts = [_clean_component(c) for c in p.strip("/").split("/") if c]
+    # "." / ".." only occur in archive member names (never in disc paths); drop
+    # them so a hostile or sloppy member name can't dress the tree up with fake
+    # parent components.
+    parts = [_clean_component(c) for c in p.strip("/").split("/") if c and c not in (".", "..")]
     return "/" + "/".join(parts)
 
 
@@ -453,15 +456,92 @@ def _gather_info(processor, reader, system, mods):
     }
 
 
-def _hash_files(reader, manager):
+# Archives found *inside* a volume are listed and asset-extracted as if they
+# were directories: members ride under "<archive path>/..." with in_archive on,
+# so they show up in the contents tree and the asset store. Identity stays
+# untouched — composite hashing sees only the archive file's own hashes (the
+# consumer skips in_archive records there), and members carry no chunk/shingle
+# fingerprints. Detection is by leading bytes (plus
+# tar's magic at offset 257); anything ArchiveWrapper can't open (bare gzip of
+# a single file, InstallShield cab, passworded/corrupt archives) quietly stays
+# a plain file.
+_ARCHIVE_SNIFF_BYTES = 512
+_ARCHIVE_MAX_DEPTH = 3
+
+_ARCHIVE_MAGICS = (
+    b"PK\x03\x04",          # zip
+    b"7z\xBC\xAF\x27\x1C",  # 7z
+    b"Rar\x21\x1A\x07",     # rar (v4 prefix of v5)
+    b"MSCF",                # microsoft cabinet
+    b"\x1F\x8B\x08",        # gzip (a .tar.gz; a bare .gz fails to open and stays a file)
+    b"BZh",                 # bzip2
+    b"\xFD7zXZ\x00",        # xz
+)
+
+
+def _looks_like_archive(head):
+    return bool(head) and (head.startswith(_ARCHIVE_MAGICS) or head[257:262] == b"ustar")
+
+
+class _ArchiveSource:
+    """Member handle wrapper giving ArchiveWrapper the `.name` it expects;
+    everything else (read/readinto/seek/…) proxies to the handle."""
+
+    def __init__(self, fh, name):
+        self._fh = fh
+        self.name = name
+
+    def __getattr__(self, attr):
+        return getattr(self._fh, attr)
+
+
+def _open_member_archive(reader, entry, path, manager):
+    """A CompressedPathReader over an archive member, or None when the member
+    can't be opened as one (unsupported/corrupt/passworded). The caller must
+    hand the result to _close_member_archive, which also releases the
+    decompression spool and the member handle."""
+    if str(_PS2EXE_DIR) not in sys.path:  # set by _import_ps2exe in normal runs
+        sys.path.insert(0, str(_PS2EXE_DIR))
+    from common.iso_path_reader.methods.compressed import CompressedPathReader  # noqa: E402
+    from utils.archives import ArchiveWrapper  # noqa: E402
+
+    fh = None
+    try:
+        fh = reader.open_file(entry)
+        if hasattr(fh, "__enter__"):
+            fh.__enter__()
+        src = fh if getattr(fh, "name", None) else _ArchiveSource(fh, path)
+        return CompressedPathReader(ArchiveWrapper(src, reader, manager), src, reader)
+    except Exception as e:  # noqa: BLE001 — any failure means "not an archive we can read"
+        logging.getLogger("curator-adapter").debug("could not open %s as archive: %s", path, e)
+        if fh is not None:
+            _close_handle(fh)
+        return None
+
+
+def _close_handle(fh):
+    with contextlib.suppress(Exception):
+        fh.__exit__(None, None, None) if hasattr(fh, "__exit__") else fh.close()
+
+
+def _close_member_archive(child):
+    with contextlib.suppress(Exception):
+        child.close()
+    if child.fp is not None:
+        _close_handle(child.fp)
+
+
+def _hash_files(reader, manager, prefix="", depth=0):
     files = []
     file_list = list(reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=True))
     with manager.counter(total=len(file_list), desc="Hashing files", unit="files") as pbar, \
             manager.counter(total=0, unit="B", file_name="") as hbar:
         for f in file_list:
-            path = reader.get_file_path(f)
+            path = prefix + _clean_path(reader.get_file_path(f).replace("\\", "/"))
             is_dir = bool(reader.is_directory(f))
-            rec = {"path": _clean_path(path), "is_dir": is_dir}
+            rec = {"path": path, "is_dir": is_dir}
+            if depth:
+                rec["in_archive"] = True
             date = None
             try:
                 date = reader.get_file_date(f)
@@ -477,25 +557,52 @@ def _hash_files(reader, manager):
             except Exception:  # noqa: BLE001
                 pass
 
+            head = None
             if not is_dir:
-                _hash_one(reader, f, rec, size, hbar)
+                # Members skip the chunk/shingle fingerprints: build-level
+                # similarity must keep seeing the archive as one opaque file.
+                head = _hash_one(reader, f, rec, size, hbar, fingerprints=depth == 0)
 
             files.append(rec)
+            if head is not None and depth < _ARCHIVE_MAX_DEPTH and _looks_like_archive(head):
+                files.extend(_archive_member_files(reader, f, path, manager, depth))
             pbar.update()
     return files
 
 
-def _hash_one(reader, f, rec, size, hbar):
+def _archive_member_files(reader, entry, path, manager, depth):
+    """Hash an archive member's own members as `<path>/...` records. Best-effort:
+    an archive that can't be opened or dies mid-listing just stays a plain file."""
+    child = _open_member_archive(reader, entry, path, manager)
+    if child is None:
+        return []
+    try:
+        return _hash_files(child, manager, prefix=path, depth=depth + 1)
+    except Exception as e:  # noqa: BLE001 — passworded/unsupported/corrupt
+        logging.getLogger("curator-adapter").warning("archive listing failed for %s: %s", path, e)
+        return []
+    finally:
+        _close_member_archive(child)
+
+
+def _hash_one(reader, f, rec, size, hbar, fingerprints=True):
+    """Hash one file into `rec`, returning its leading bytes (for archive
+    sniffing), or None when the file was unreadable."""
     md5 = hashlib.md5(usedforsecurity=False)
     sha1 = hashlib.sha1(usedforsecurity=False)
     sha256 = hashlib.sha256()
     read = 0
+    head = b""
     # Content-defined chunks, streamed so even multi-GB files are chunked
     # without buffering them whole.
-    chunker = _StreamingChunker()
+    chunker = _StreamingChunker() if fingerprints else None
     # Byte-shingle resemblance signature for large files only — the big blobs
     # where scattered small edits matter; tiny files lean on their whole-file hash.
-    shingler = _ShingleSignature() if size is not None and size >= _SHINGLE_MIN_SIZE else None
+    shingler = (
+        _ShingleSignature()
+        if fingerprints and size is not None and size >= _SHINGLE_MIN_SIZE
+        else None
+    )
     hbar.total = float(size or 0)
     hbar.count = 0.0
     hbar.update(incr=0, file_name=os.path.basename(rec["path"]))
@@ -509,7 +616,10 @@ def _hash_one(reader, f, rec, size, hbar):
                 md5.update(chunk)
                 sha1.update(chunk)
                 sha256.update(chunk)
-                chunker.update(chunk)
+                if len(head) < _ARCHIVE_SNIFF_BYTES:
+                    head += chunk[: _ARCHIVE_SNIFF_BYTES - len(head)]
+                if chunker is not None:
+                    chunker.update(chunk)
                 if shingler is not None:
                     shingler.update(chunk)
                 read += len(chunk)
@@ -520,7 +630,7 @@ def _hash_one(reader, f, rec, size, hbar):
     except Exception as e:  # noqa: BLE001
         logging.getLogger("curator-adapter").debug("hash failed for %s: %s", rec["path"], e)
         rec["unreadable"] = True
-        return
+        return None
 
     if read:
         rec["md5"] = md5.hexdigest()
@@ -528,15 +638,17 @@ def _hash_one(reader, f, rec, size, hbar):
         rec["sha256"] = sha256.hexdigest()
         if size is not None and read != size:
             rec["unreadable"] = True
-        chunks = chunker.finish()
-        if chunks:
-            rec["chunks"] = chunks
+        if chunker is not None:
+            chunks = chunker.finish()
+            if chunks:
+                rec["chunks"] = chunks
         if shingler is not None:
             sig = shingler.finish()
             if sig is not None:
                 rec["shingle"] = sig
     elif size:
         rec["unreadable"] = True
+    return head
 
 
 def _chunk_pair(data):
@@ -726,17 +838,18 @@ def extract(path, out_dir):
     return {"assets": _process(path, basename, parent_dir, mods, manager, work)}
 
 
-def _extract_assets(reader, out_dir, manager):
+def _extract_assets(reader, out_dir, manager, prefix="", depth=0):
     from . import viewable
 
     # Candidate list first, bytes second — the same two-step the hashing pass
     # uses, so one-pass archive streams see opens in iterator order only.
     # Every non-empty file is a candidate: viewable types ship whole, everything
     # else (unknown extension, oversized, sniff mismatch below) ships as a raw
-    # head snippet the UIs render as a hex view.
+    # head snippet the UIs render as a hex view. Archive members are candidates
+    # too, extracted through the same recursion as the hashing pass.
     entries = []
     for f in reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=False):
-        path = _clean_path(reader.get_file_path(f))
+        path = prefix + _clean_path(reader.get_file_path(f).replace("\\", "/"))
         try:
             size = int(reader.get_file_size(f))
         except Exception:  # noqa: BLE001
@@ -754,6 +867,8 @@ def _extract_assets(reader, out_dir, manager):
             if classified is None:
                 head = _read_head(reader, f, viewable.SNIPPET_BYTES)
                 asset = (head, viewable.SNIPPET_MIME, viewable.SNIPPET_KIND) if head else None
+                if head and depth < _ARCHIVE_MAX_DEPTH and _looks_like_archive(head):
+                    out.extend(_archive_member_assets(reader, f, path, out_dir, manager, depth))
             else:
                 kind, mime = classified
                 if size is not None and size > viewable.MAX_ASSET_SIZE:
@@ -787,6 +902,21 @@ def _extract_assets(reader, out_dir, manager):
             _store_blob(out_dir, sha, data)
             out.append({"path": path, "sha256": sha, "size": len(data), "mime": mime, "kind": kind})
     return out
+
+
+def _archive_member_assets(reader, entry, path, out_dir, manager, depth):
+    """Extract an archive member's own members as `<path>/...` assets.
+    Best-effort, like the listing pass."""
+    child = _open_member_archive(reader, entry, path, manager)
+    if child is None:
+        return []
+    try:
+        return _extract_assets(child, out_dir, manager, prefix=path, depth=depth + 1)
+    except Exception as e:  # noqa: BLE001 — passworded/unsupported/corrupt
+        logging.getLogger("curator-adapter").warning("archive extraction failed for %s: %s", path, e)
+        return []
+    finally:
+        _close_member_archive(child)
 
 
 def _read_capped(reader, f, cap):

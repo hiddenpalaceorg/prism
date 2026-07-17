@@ -171,14 +171,15 @@ fn entry_from_row(r: curator_core::db::LibraryRow) -> LibraryEntry {
 
 fn node_to_ffi(node: &Node) -> FileNode {
     match node {
-        Node::Dir { name, date, size, children } => FileNode {
+        Node::Dir { name, date, size, md5, sha1, sha256, children } => FileNode {
             name: name.clone(),
             is_dir: true,
             size: *size,
             date: date.clone(),
-            md5: None,
-            sha1: None,
-            sha256: None,
+            // Present on archives listed as directories (the archive's own hashes).
+            md5: md5.clone(),
+            sha1: sha1.clone(),
+            sha256: sha256.clone(),
             unreadable: false,
             children: children.iter().map(node_to_ffi).collect(),
         },

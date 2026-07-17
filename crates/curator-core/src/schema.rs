@@ -17,9 +17,10 @@ pub const FINGERPRINT_PROFILE: &str = "v1";
 /// classified as an image (previously a head snippet); 4 = TIFF likewise;
 /// 5 = PDF and PostScript (.eps/.ps/.ai) as `kind: "document"`; 6 = videos
 /// ship whole up to DVD-VOB scale (previously capped with everything else at
-/// 20MB). A record below the current value gets its assets re-extracted on
-/// the next analyze.
-pub const ASSET_PROFILE: u32 = 6;
+/// 20MB); 7 = archives (zip/7z/rar/tar/cab/…) extracted as if directories,
+/// their members' assets riding under `<archive path>/...`. A record below
+/// the current value gets its assets re-extracted on the next analyze.
+pub const ASSET_PROFILE: u32 = 7;
 
 /// A fully analyzed disc image / container — image-independent and self-describing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +264,14 @@ pub enum Node {
         date: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         size: Option<u64>,
+        /// An archive listed as a directory is still a file with bytes of its
+        /// own: these are that file's hashes (absent on plain directories).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        md5: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha1: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
         children: Vec<Node>,
     },
     File {
