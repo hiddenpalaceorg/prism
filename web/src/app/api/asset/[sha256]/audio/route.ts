@@ -34,12 +34,19 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   const meta = r.rows[0] as { path: string; mime: string } | undefined;
   if (!meta) return Response.json({ error: "not found" }, { status: 404 });
 
+  // Relative Location: request.url behind the reverse proxy is the internal
+  // origin (localhost:6800), which must never leak into a redirect target.
+  const toRaw = () =>
+    new Response(null, {
+      status: 308,
+      headers: { Location: `/api/asset/${sha256}`, "Cache-Control": CACHE },
+    });
+
   if (meta.mime !== "audio/wav") {
-    // Only WAV hides its codec behind one mime; every other audio format we
+    // Only WAV hides its codec behind one mime. Every other audio format we
     // extract plays as-is.
-    return /^audio\//.test(meta.mime)
-      ? Response.redirect(new URL(`/api/asset/${sha256}`, request.url), 308)
-      : Response.json({ error: `no audio transcode for ${meta.mime}` }, { status: 415 });
+    if (/^audio\//.test(meta.mime)) return toRaw();
+    return Response.json({ error: `no audio transcode for ${meta.mime}` }, { status: 415 });
   }
 
   // The browser already holds an immutable copy of the transcode (this ETag
@@ -53,9 +60,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
 
   const head = await readBlobHead(sha256);
   if (head === null) return Response.json({ error: "asset bytes not in store" }, { status: 404 });
-  if (wavBrowserPlayable(head)) {
-    return Response.redirect(new URL(`/api/asset/${sha256}`, request.url), 308);
-  }
+  if (wavBrowserPlayable(head)) return toRaw();
 
   // No soft-wait/202 dance like video: ADPCM to PCM runs far faster than
   // real time, so even the biggest WAVs in the corpus finish within the

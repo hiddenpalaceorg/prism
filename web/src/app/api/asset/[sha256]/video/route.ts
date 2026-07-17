@@ -40,7 +40,12 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   if (!meta) return Response.json({ error: "not found" }, { status: 404 });
 
   if (meta.mime === "video/mp4" || meta.mime === "video/webm") {
-    return Response.redirect(new URL(`/api/asset/${sha256}`, request.url), 308);
+    // Relative Location: request.url behind the reverse proxy is the internal
+    // origin (localhost:6800), which must never leak into a redirect target.
+    return new Response(null, {
+      status: 308,
+      headers: { Location: `/api/asset/${sha256}`, "Cache-Control": CACHE },
+    });
   }
   if (!transcodable(meta.mime)) {
     return Response.json({ error: `no video transcode for ${meta.mime}` }, { status: 415 });
