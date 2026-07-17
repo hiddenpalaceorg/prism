@@ -4,9 +4,8 @@
 // + indexed form, not unstable_cache (which would re-serialize the whole
 // manifest into Next's incremental cache per revalidation window).
 
-import { readFile } from "node:fs/promises";
 import { unstable_cache } from "next/cache";
-import { assetBlobPath } from "./assets";
+import { readBlob } from "./blobstore";
 import { getPool } from "./db";
 import { indexManifest, REPO_MANIFEST_VERSION, type RepoIndex, type RepoManifest } from "./repo-manifest";
 
@@ -28,9 +27,11 @@ export async function loadRepo(manifestSha256: string): Promise<RepoIndex | null
   }
   let manifest: RepoManifest;
   try {
-    manifest = JSON.parse(await readFile(assetBlobPath(manifestSha256), "utf8")) as RepoManifest;
+    const raw = await readBlob(manifestSha256);
+    if (raw === null) return null; // row landed before the blob synced
+    manifest = JSON.parse(raw.toString("utf8")) as RepoManifest;
   } catch {
-    return null; // row landed before the blob synced, or the store is elsewhere
+    return null; // unparseable manifest blob
   }
   if (manifest.version !== REPO_MANIFEST_VERSION) return null;
   const idx = indexManifest(manifest);

@@ -15,9 +15,12 @@ import { spawn, execFileSync } from "node:child_process";
 import readline from "node:readline";
 import type { Readable } from "node:stream";
 import pg from "pg";
-import { assetBlobPath, assetStoreDir } from "../src/lib/assets";
+import { missingBlobs, storeBlobFromFile, storeDescription } from "../src/lib/blobstore";
 import { ingestRecordTx, refreshAudioIdf } from "../src/lib/ingest";
 import type { BuildRecord } from "../src/lib/types";
+import { loadDotEnv } from "./dotenv";
+
+loadDotEnv();
 
 // What this importer understands. A bundle whose manifest disagrees is rejected
 // up front: a different fingerprint profile makes the similarity tiers
@@ -65,10 +68,10 @@ function readManifest(zipPath: string): Manifest {
 }
 
 /** Unpack the bundle's asset blobs (`assets/<sha256>` members) into the
- *  content-addressed store. Blobs already present are skipped; writes are
- *  staged + renamed so a crash can't leave a truncated blob under its final
- *  name. Returns how many blobs were added. */
-function unpackAssets(zipPath: string): number {
+ *  content-addressed store. Blobs already present are skipped; writes land
+ *  under their final name only once complete (storeBlobFromFile), so a crash
+ *  can't leave a truncated blob. Returns how many blobs were added. */
+async function unpackAssets(zipPath: string): Promise<number> {
   let listing: string;
   try {
     listing = execFileSync("unzip", ["-Z1", zipPath, "assets/*"], {
@@ -82,7 +85,7 @@ function unpackAssets(zipPath: string): number {
     .split("\n")
     .map((l) => l.trim().replace(/^assets\//, ""))
     .filter((s) => /^[0-9a-f]{64}$/.test(s));
-  const missing = shas.filter((s) => !fs.existsSync(assetBlobPath(s)));
+  const missing = await missingBlobs(shas);
   if (missing.length === 0) return 0;
 
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "curator-assets-"));
@@ -92,12 +95,7 @@ function unpackAssets(zipPath: string): number {
     for (const sha of missing) {
       const src = path.join(staging, "assets", sha);
       if (!fs.existsSync(src)) continue;
-      const dest = assetBlobPath(sha);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      const tmp = `${dest}.tmp${process.pid}`;
-      fs.copyFileSync(src, tmp);
-      fs.renameSync(tmp, dest);
-      n++;
+      if ((await storeBlobFromFile(sha, src)) === "stored") n++;
     }
     return n;
   } finally {
@@ -134,8 +132,8 @@ async function main() {
   try {
     // Blobs before rows: once a build_asset row exists, its blob is servable.
     if (bundle.endsWith(".zip")) {
-      const added = unpackAssets(bundle);
-      if (added > 0) console.log(`unpacked ${added} asset blob(s) into ${assetStoreDir()}`);
+      const added = await unpackAssets(bundle);
+      if (added > 0) console.log(`unpacked ${added} asset blob(s) into ${storeDescription()}`);
     }
     const { lines, done } = openRecords(bundle);
     const rl = readline.createInterface({ input: lines, crlfDelay: Infinity });

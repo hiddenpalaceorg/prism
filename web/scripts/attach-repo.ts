@@ -15,8 +15,9 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import git from "isomorphic-git";
 import pg from "pg";
-import { assetBlobPath, assetStoreDir } from "../src/lib/assets";
+import { storeBlobBytes, storeDescription } from "../src/lib/blobstore";
 import { resolveBuild } from "../src/lib/queries";
+import { loadDotEnv } from "./dotenv";
 import { buildHref } from "../src/lib/slug";
 import {
   REPO_MANIFEST_VERSION,
@@ -106,17 +107,6 @@ async function peelToCommit(
   return null;
 }
 
-/** Staged write into the content-addressed store (the ingest.ts idiom): a
- *  crash can't leave a truncated blob under its final name. */
-function storeBlob(sha256: string, data: Uint8Array): boolean {
-  const dest = assetBlobPath(sha256);
-  if (fs.existsSync(dest)) return false;
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const tmp = `${dest}.tmp${process.pid}`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, dest);
-  return true;
-}
 
 const ident = (i: { name: string; email: string; timestamp: number; timezoneOffset: number }): RepoIdent => ({
   name: i.name,
@@ -126,6 +116,7 @@ const ident = (i: { name: string; email: string; timestamp: number; timezoneOffs
 });
 
 async function main() {
+  loadDotEnv();
   const opts = parseArgs(process.argv.slice(2));
 
   const hex = opts.build.toLowerCase();
@@ -257,7 +248,7 @@ async function main() {
       const sha256 = createHash("sha256").update(blob).digest("hex");
       // Git's own binary heuristic: a NUL byte in the head of the file.
       const binary = blob.subarray(0, 8000).includes(0) ? 1 : 0;
-      if (storeBlob(sha256, blob)) written++;
+      if (await storeBlobBytes(sha256, blob)) written++;
       blobs[oid] = [sha256, blob.length, binary];
       if (++done % 500 === 0) console.log(`  blobs: ${done}/${blobOids.size}`);
     }
@@ -279,7 +270,7 @@ async function main() {
         `manifest is ${(manifestBytes.length / 1e6).toFixed(0)}MB — consider a v2 interned format before attaching many repos this size`
       );
     }
-    storeBlob(manifestSha, manifestBytes);
+    await storeBlobBytes(manifestSha, manifestBytes);
 
     await pool.query(
       `INSERT INTO build_repo (build_sha256, name, manifest_sha256, head_oid, head_ref, commit_count)
@@ -292,7 +283,7 @@ async function main() {
 
     console.log(`attached "${name}" to ${build.name} (${build.sha256.slice(0, 10)})`);
     console.log(
-      `  ${commits.length} commits, ${Object.keys(trees).length} trees, ${blobOids.size} blobs (${written} new in ${assetStoreDir()})`
+      `  ${commits.length} commits, ${Object.keys(trees).length} trees, ${blobOids.size} blobs (${written} new in ${storeDescription()})`
     );
     console.log(`  manifest ${manifestSha} (${(manifestBytes.length / 1024).toFixed(0)}KB)`);
     console.log(`  ${buildHref(build.sha256, build.name)}/repo/${encodeURIComponent(name)}`);

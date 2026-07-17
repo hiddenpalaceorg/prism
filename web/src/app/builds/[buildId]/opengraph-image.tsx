@@ -6,9 +6,8 @@
 // pane when the build has a PNG/JPEG/BMP/TGA/TIFF asset whose bytes are in the
 // blob store (largest first: big files are screenshots, tiny ones are icons/textures).
 
-import { readFile } from "node:fs/promises";
 import { ImageResponse } from "next/og";
-import { assetBlobPath } from "@/lib/assets";
+import { readBlob } from "@/lib/blobstore";
 import { getPool } from "@/lib/db";
 import { pngConvertible, toPng } from "@/lib/imgpng";
 import { buildFacts, displayTitle } from "@/lib/meta";
@@ -36,7 +35,8 @@ async function findScreenshot(sha256: string): Promise<string | null> {
   // the bytes) or undecodable — fall through to the next-largest candidate.
   for (const row of r.rows as Array<{ sha256: string; mime: string }>) {
     try {
-      const bytes = await readFile(assetBlobPath(row.sha256));
+      const bytes = await readBlob(row.sha256);
+      if (bytes === null) continue;
       // satori can't decode BMP or TGA — hand it PNG bytes instead.
       if (pngConvertible(row.mime)) {
         return `data:image/png;base64,${toPng(row.mime, bytes).toString("base64")}`;

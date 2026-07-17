@@ -1,8 +1,6 @@
-import fs from "node:fs";
-import fsp from "node:fs/promises";
 import { Readable } from "node:stream";
 import type { NextRequest } from "next/server";
-import { assetBlobPath } from "@/lib/assets";
+import { blobSize, openBlobStream } from "@/lib/blobstore";
 import { loadRepo, repoAttached } from "@/lib/repo";
 import { isSha256 } from "@/lib/validate";
 
@@ -50,12 +48,9 @@ export async function GET(
     return new Response(null, { status: 304, headers: { "Cache-Control": CACHE, ETag: `"${oid}"` } });
   }
 
-  const blob = assetBlobPath(storeSha);
-  let stat: fs.Stats;
-  try {
-    stat = await fsp.stat(blob);
-  } catch {
-    // Row + manifest landed but this blob hasn't synced to this host yet.
+  const size = await blobSize(storeSha);
+  if (size === null) {
+    // Row + manifest landed but this blob hasn't synced to this store yet.
     return Response.json({ error: "blob bytes not in store" }, { status: 404 });
   }
 
@@ -71,15 +66,15 @@ export async function GET(
     "Accept-Ranges": "bytes",
   };
 
-  const range = parseRange(request.headers.get("range"), stat.size);
+  const range = parseRange(request.headers.get("range"), size);
+  const stream = await openBlobStream(storeSha, range ?? undefined);
+  if (!stream) return Response.json({ error: "blob bytes not in store" }, { status: 404 });
   if (range) {
-    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${stat.size}`;
+    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${size}`;
     headers["Content-Length"] = String(range.end - range.start + 1);
-    const stream = fs.createReadStream(blob, { start: range.start, end: range.end });
     return new Response(Readable.toWeb(stream) as ReadableStream, { status: 206, headers });
   }
 
-  headers["Content-Length"] = String(stat.size);
-  const stream = fs.createReadStream(blob);
+  headers["Content-Length"] = String(size);
   return new Response(Readable.toWeb(stream) as ReadableStream, { status: 200, headers });
 }

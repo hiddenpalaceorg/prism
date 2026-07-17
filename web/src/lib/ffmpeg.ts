@@ -20,7 +20,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { assetBlobPath, assetStoreDir } from "./assets";
+import { assetStoreDir, withBlobFile } from "./blobstore";
 
 const execFileP = promisify(execFile);
 
@@ -234,45 +234,50 @@ async function transcode(
   job: Job
 ): Promise<{ path: string; mime: string }> {
   await mkdir(dirname(out), { recursive: true });
-  const input = assetBlobPath(sha256);
-  const size = (await stat(input)).size;
-  job.durationUs = await probeDurationUs(input);
-  // Private temp name in the final dir, atomically renamed on success, so a
-  // concurrent request in another process never streams a partial file.
-  const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
-  const args = [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-progress",
-    job.progressPath,
-    "-y",
-    "-i",
-    input,
-    // First video + first audio track only: DVD VOBs carry alternate audio
-    // tracks and subpicture/nav streams a browser player has no UI for.
-    "-map",
-    "0:v:0",
-    "-map",
-    "0:a:0?",
-    "-dn",
-    "-sn",
-    // Deinterlace frames flagged interlaced (DVD content usually is), and
-    // keep dimensions even (4:2:0 encoders reject odd sizes).
-    "-vf",
-    "yadif=deint=interlaced,scale=trunc(iw/2)*2:trunc(ih/2)*2",
-    ...p.args,
-    tmp,
-  ];
-  try {
-    await execFileP(FFMPEG_BIN, args, { timeout: transcodeTimeoutMs(size), maxBuffer: 4_000_000 });
-    if ((await stat(tmp)).size === 0) throw new Error("empty transcode");
-    await rename(tmp, out);
-    return { path: out, mime: p.mime };
-  } catch (err) {
-    await rm(tmp, { force: true });
-    throw err;
-  }
+  // ffmpeg needs a seekable local file — withBlobFile materializes the blob
+  // when the store is remote (and is a no-op pass-through when it's local).
+  const result = await withBlobFile(sha256, async (input) => {
+    const size = (await stat(input)).size;
+    job.durationUs = await probeDurationUs(input);
+    // Private temp name in the final dir, atomically renamed on success, so a
+    // concurrent request in another process never streams a partial file.
+    const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-progress",
+      job.progressPath,
+      "-y",
+      "-i",
+      input,
+      // First video + first audio track only: DVD VOBs carry alternate audio
+      // tracks and subpicture/nav streams a browser player has no UI for.
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a:0?",
+      "-dn",
+      "-sn",
+      // Deinterlace frames flagged interlaced (DVD content usually is), and
+      // keep dimensions even (4:2:0 encoders reject odd sizes).
+      "-vf",
+      "yadif=deint=interlaced,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+      ...p.args,
+      tmp,
+    ];
+    try {
+      await execFileP(FFMPEG_BIN, args, { timeout: transcodeTimeoutMs(size), maxBuffer: 4_000_000 });
+      if ((await stat(tmp)).size === 0) throw new Error("empty transcode");
+      await rename(tmp, out);
+      return { path: out, mime: p.mime };
+    } catch (err) {
+      await rm(tmp, { force: true });
+      throw err;
+    }
+  });
+  if (result === null) throw new Error("blob missing from store");
+  return result;
 }
 
 // One thumbnail per blob at a time, same reason as transcodes.
@@ -296,38 +301,40 @@ export async function ensureThumb(sha256: string): Promise<string> {
 
 async function thumb(sha256: string, out: string): Promise<string> {
   await mkdir(dirname(out), { recursive: true });
-  const input = assetBlobPath(sha256);
-  await stat(input); // missing blob: fail before spawning ffmpeg
-  // A quarter in (bounded) skips studio logos and fade-ins; the thumbnail
-  // filter then picks the most representative of the next frames, dodging
-  // black frames around the seek point. Falls back to the very start for
-  // clips too short to seek into.
-  const durationUs = await probeDurationUs(input);
-  const seekSec = durationUs ? Math.min(Math.max((durationUs / 1e6) * 0.25, 1), 45) : 3;
-  const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
-  const argsAt = (seek: number) => [
-    "-hide_banner", "-loglevel", "error", "-y",
-    ...(seek > 0 ? ["-ss", String(seek)] : []),
-    "-i", input,
-    "-map", "0:v:0", "-dn", "-sn", "-an",
-    "-vf", "yadif=deint=interlaced,thumbnail=48,scale=trunc(min(iw\\,512)/2)*2:-2",
-    "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "4", "-f", "image2",
-    tmp,
-  ];
-  try {
-    for (const seek of seekSec > 0 ? [seekSec, 0] : [0]) {
-      try {
-        await execFileP(FFMPEG_BIN, argsAt(seek), { timeout: THUMB_TIMEOUT_MS, maxBuffer: 4_000_000 });
-        if ((await stat(tmp)).size > 0) {
-          await rename(tmp, out);
-          return out;
+  const result = await withBlobFile(sha256, async (input) => {
+    // A quarter in (bounded) skips studio logos and fade-ins; the thumbnail
+    // filter then picks the most representative of the next frames, dodging
+    // black frames around the seek point. Falls back to the very start for
+    // clips too short to seek into.
+    const durationUs = await probeDurationUs(input);
+    const seekSec = durationUs ? Math.min(Math.max((durationUs / 1e6) * 0.25, 1), 45) : 3;
+    const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
+    const argsAt = (seek: number) => [
+      "-hide_banner", "-loglevel", "error", "-y",
+      ...(seek > 0 ? ["-ss", String(seek)] : []),
+      "-i", input,
+      "-map", "0:v:0", "-dn", "-sn", "-an",
+      "-vf", "yadif=deint=interlaced,thumbnail=48,scale=trunc(min(iw\\,512)/2)*2:-2",
+      "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "4", "-f", "image2",
+      tmp,
+    ];
+    try {
+      for (const seek of seekSec > 0 ? [seekSec, 0] : [0]) {
+        try {
+          await execFileP(FFMPEG_BIN, argsAt(seek), { timeout: THUMB_TIMEOUT_MS, maxBuffer: 4_000_000 });
+          if ((await stat(tmp)).size > 0) {
+            await rename(tmp, out);
+            return out;
+          }
+        } catch {
+          // Retry from the start (a clip shorter than the seek), then give up.
         }
-      } catch {
-        // Retry from the start (a clip shorter than the seek), then give up.
       }
+      throw new Error("no frame extracted");
+    } finally {
+      await rm(tmp, { force: true });
     }
-    throw new Error("no frame extracted");
-  } finally {
-    await rm(tmp, { force: true });
-  }
+  });
+  if (result === null) throw new Error("blob missing from store");
+  return result;
 }
