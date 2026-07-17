@@ -4,7 +4,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
-import { assetStagingPath, blobExists, storeBlobFromFile } from "@/lib/blobstore";
+import { assetStagingPath, blobExists, ensureDrainer, storeBlobBuffered } from "@/lib/blobstore";
 import { referencedAssets, MAX_BUILD_ASSET_BYTES } from "@/lib/submission-assets";
 import { rateLimitCheck, clientKey } from "@/lib/ratelimit";
 import { isSha256 } from "@/lib/validate";
@@ -57,12 +57,15 @@ export async function PUT(
     return Response.json({ error: "build's total asset bytes exceed the cap" }, { status: 413 });
   }
 
-  if (await blobExists(assetSha)) return Response.json({ sha256: assetSha, status: "exists" });
-
   const rawOffset = new URL(request.url).searchParams.get("offset") ?? "0";
   const offset = Number(rawOffset);
   if (!Number.isInteger(offset) || offset < 0 || offset > claimed) {
     return Response.json({ error: "invalid offset" }, { status: 400 });
+  }
+  // Only the opening chunk pays the existence probe: a non-zero offset means
+  // this client is mid-upload, and the final rename is idempotent anyway.
+  if (offset === 0 && (await blobExists(assetSha))) {
+    return Response.json({ sha256: assetSha, status: "exists" });
   }
   if (!request.body) return Response.json({ error: "missing body" }, { status: 400 });
 
@@ -117,9 +120,11 @@ export async function PUT(
     return Response.json({ error: "staged bytes do not hash to the asset sha256" }, { status: 422 });
   }
 
-  // A concurrent upload of the same blob may have finalized first — same
-  // bytes either way, so "exists" is as good as "stored".
-  const outcome = await storeBlobFromFile(assetSha, part);
+  // Lands in the local write buffer (instant) and drains to the bucket in
+  // the background. A concurrent upload of the same blob may have finalized
+  // first — same bytes either way, so "exists" is as good as "stored".
+  ensureDrainer();
+  const outcome = await storeBlobBuffered(assetSha, part);
   if (outcome === "exists") return Response.json({ sha256: assetSha, status: "exists" });
   return Response.json({ sha256: assetSha, status: "stored" }, { status: 201 });
 }

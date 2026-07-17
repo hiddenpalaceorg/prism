@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 import type { NextRequest } from "next/server";
 import { unstable_cache } from "next/cache";
 import { publicAssetUrl } from "@/lib/assets";
-import { blobSize, openBlobStream } from "@/lib/blobstore";
+import { blobBuffered, blobSize, ensureDrainer, openBlobStream } from "@/lib/blobstore";
 import { getPool } from "@/lib/db";
 import { parseRange } from "@/lib/range";
 import { isSha256 } from "@/lib/validate";
@@ -55,8 +55,11 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
 
   // Media bytes come straight off the public bucket gateway when one is
   // configured — the redirect itself caches as hard as the content would.
+  // Freshly uploaded blobs still draining to the bucket stream from the
+  // local buffer instead (a redirect would point at a gateway 404).
+  ensureDrainer();
   const pub = publicAssetUrl(sha256, meta.mime);
-  if (pub) {
+  if (pub && !blobBuffered(sha256)) {
     return new Response(null, { status: 308, headers: { Location: pub, "Cache-Control": CACHE } });
   }
 

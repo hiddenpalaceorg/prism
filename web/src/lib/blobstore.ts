@@ -120,26 +120,43 @@ function httpStatus(err: unknown): number | undefined {
   return (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
 }
 
+// Reads are local-first even with the s3 backend on: the local store doubles
+// as the write buffer for fresh uploads (drained to the bucket in the
+// background) and as the retained pre-migration copy, and a disk hit is three
+// orders of magnitude cheaper than a bucket round trip.
+
 /** Byte size of a blob, or null when it is missing from the store. */
 export async function blobSize(sha256: string): Promise<number | null> {
-  if (s3Enabled()) {
-    try {
-      const r = await s3().send(new HeadObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
-      return r.ContentLength ?? null;
-    } catch (err) {
-      if (isMissing(err)) return null;
-      throw err;
-    }
-  }
   try {
     return (await fsp.stat(assetBlobPath(sha256))).size;
   } catch {
-    return null;
+    if (!s3Enabled()) return null;
+  }
+  try {
+    const r = await s3().send(new HeadObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
+    return r.ContentLength ?? null;
+  } catch (err) {
+    if (isMissing(err)) return null;
+    throw err;
   }
 }
 
 export async function blobExists(sha256: string): Promise<boolean> {
-  return (await blobSize(sha256)) !== null;
+  if (fs.existsSync(assetBlobPath(sha256))) return true;
+  return s3Enabled() && (await bucketHasBlob(sha256));
+}
+
+/** Whether the BUCKET has the blob, ignoring local files — what the write
+ *  paths must ask, since with the buffer a local copy proves nothing about
+ *  the bucket. */
+async function bucketHasBlob(sha256: string): Promise<boolean> {
+  try {
+    await s3().send(new HeadObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
+    return true;
+  } catch (err) {
+    if (isMissing(err)) return false;
+    throw err;
+  }
 }
 
 // Bounds concurrent requests in missingBlobs (and nothing else): high enough
@@ -164,15 +181,23 @@ async function listShard(shard: string): Promise<Set<string>> {
   return keys;
 }
 
-/** The subset of `shas` missing from the store, in input order.
- *
- *  On s3, big sets are answered by listing each referenced 2-hex shard once
- *  (one round trip covers every blob in the shard) instead of a HEAD per
- *  blob: a 4096-asset submission's check would otherwise take minutes of
- *  sequential-ish round trips and blow the desktop clients' HTTP timeouts. */
+/** The subset of `shas` missing from the store, in input order. Local files
+ *  (buffered uploads, the retained pre-migration copy) count as present; only
+ *  the remainder is checked against the bucket. */
 export async function missingBlobs(shas: string[]): Promise<string[]> {
-  if (!s3Enabled()) return shas.filter((s) => !fs.existsSync(assetBlobPath(s)));
+  const notLocal = shas.filter((s) => !fs.existsSync(assetBlobPath(s)));
+  if (!s3Enabled() || notLocal.length === 0) return notLocal;
+  return bucketMissingBlobs(notLocal);
+}
 
+/** The subset of `shas` the BUCKET lacks, in input order, ignoring local
+ *  files — the drainer's and migration script's notion of missing.
+ *
+ *  Big sets are answered by listing each referenced 2-hex shard once (one
+ *  round trip covers every blob in the shard) instead of a HEAD per blob:
+ *  a 4096-asset sweep would otherwise take minutes of sequential-ish round
+ *  trips. */
+export async function bucketMissingBlobs(shas: string[]): Promise<string[]> {
   if (shas.length <= LIST_THRESHOLD) {
     const present = new Array<boolean>(shas.length);
     let next = 0;
@@ -181,7 +206,7 @@ export async function missingBlobs(shas: string[]): Promise<string[]> {
         for (;;) {
           const i = next++;
           if (i >= shas.length) return;
-          present[i] = await blobExists(shas[i]);
+          present[i] = await bucketHasBlob(shas[i]);
         }
       })
     );
@@ -209,70 +234,47 @@ export async function openBlobStream(
   sha256: string,
   range?: { start: number; end: number }
 ): Promise<Readable | null> {
-  if (s3Enabled()) {
-    try {
-      const r = await s3().send(
-        new GetObjectCommand({
-          Bucket: s3Bucket(),
-          Key: s3Key(sha256),
-          ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
-        })
-      );
-      return r.Body as Readable;
-    } catch (err) {
-      if (isMissing(err)) return null;
-      throw err;
-    }
-  }
-  // open() first so a missing blob is a null, not a later stream error event.
+  // open() first so a missing blob is a fallthrough, not a stream error event.
   try {
     const fh = await fsp.open(assetBlobPath(sha256), "r");
     return fh.createReadStream(range ? { start: range.start, end: range.end } : {});
   } catch {
-    return null;
+    if (!s3Enabled()) return null;
+  }
+  try {
+    const r = await s3().send(
+      new GetObjectCommand({
+        Bucket: s3Bucket(),
+        Key: s3Key(sha256),
+        ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+      })
+    );
+    return r.Body as Readable;
+  } catch (err) {
+    if (isMissing(err)) return null;
+    throw err;
   }
 }
 
 /** A whole blob in memory, or null when it is missing from the store.
  *  Callers cap sizes (convert/preview paths); don't hand this a DVD image. */
 export async function readBlob(sha256: string): Promise<Buffer | null> {
-  if (s3Enabled()) {
-    try {
-      const r = await s3().send(new GetObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
-      return Buffer.from(await r.Body!.transformToByteArray());
-    } catch (err) {
-      if (isMissing(err)) return null;
-      throw err;
-    }
-  }
   try {
     return await fsp.readFile(assetBlobPath(sha256));
   } catch {
-    return null;
+    if (!s3Enabled()) return null;
+  }
+  try {
+    const r = await s3().send(new GetObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
+    return Buffer.from(await r.Body!.transformToByteArray());
+  } catch (err) {
+    if (isMissing(err)) return null;
+    throw err;
   }
 }
 
 /** Leading bytes of a blob, or null when it is missing from the store. */
 export async function readBlobHead(sha256: string, maxBytes = 2048): Promise<Buffer | null> {
-  if (s3Enabled()) {
-    try {
-      const r = await s3().send(
-        new GetObjectCommand({
-          Bucket: s3Bucket(),
-          Key: s3Key(sha256),
-          Range: `bytes=0-${maxBytes - 1}`,
-        })
-      );
-      return Buffer.from(await r.Body!.transformToByteArray());
-    } catch (err) {
-      if (isMissing(err)) return null;
-      // An empty object satisfies no byte range (416) but does exist.
-      if (httpStatus(err) === 416) {
-        return (await blobSize(sha256)) === null ? null : Buffer.alloc(0);
-      }
-      throw err;
-    }
-  }
   let fh;
   try {
     fh = await fsp.open(assetBlobPath(sha256), "r");
@@ -280,9 +282,26 @@ export async function readBlobHead(sha256: string, maxBytes = 2048): Promise<Buf
     const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
     return buf.subarray(0, bytesRead);
   } catch {
-    return null;
+    if (!s3Enabled()) return null;
   } finally {
     await fh?.close();
+  }
+  try {
+    const r = await s3().send(
+      new GetObjectCommand({
+        Bucket: s3Bucket(),
+        Key: s3Key(sha256),
+        Range: `bytes=0-${maxBytes - 1}`,
+      })
+    );
+    return Buffer.from(await r.Body!.transformToByteArray());
+  } catch (err) {
+    if (isMissing(err)) return null;
+    // An empty object satisfies no byte range (416) but does exist.
+    if (httpStatus(err) === 416) {
+      return (await blobSize(sha256)) === null ? null : Buffer.alloc(0);
+    }
+    throw err;
   }
 }
 
@@ -299,7 +318,7 @@ export async function storeBlobFromFile(
     if (!opts?.keepSource) await fsp.rm(src, { force: true });
   };
   if (s3Enabled()) {
-    if (await blobExists(sha256)) {
+    if (await bucketHasBlob(sha256)) {
       await cleanup();
       return "exists";
     }
@@ -312,6 +331,18 @@ export async function storeBlobFromFile(
     await cleanup();
     return "stored";
   }
+  return storeBlobLocalFile(sha256, src, opts);
+}
+
+/** The local-filesystem store write (also the s3 backend's buffer write). */
+async function storeBlobLocalFile(
+  sha256: string,
+  src: string,
+  opts?: { keepSource?: boolean }
+): Promise<"stored" | "exists"> {
+  const cleanup = async () => {
+    if (!opts?.keepSource) await fsp.rm(src, { force: true });
+  };
   const dest = assetBlobPath(sha256);
   if (fs.existsSync(dest)) {
     await cleanup();
@@ -351,7 +382,7 @@ export async function storeBlobFromFile(
  *  when an identical blob was already there. */
 export async function storeBlobBytes(sha256: string, data: Uint8Array): Promise<boolean> {
   if (s3Enabled()) {
-    if (await blobExists(sha256)) return false;
+    if (await bucketHasBlob(sha256)) return false;
     await s3().send(
       new PutObjectCommand({
         Bucket: s3Bucket(),
@@ -378,11 +409,9 @@ export async function withBlobFile<T>(
   sha256: string,
   fn: (localPath: string) => Promise<T>
 ): Promise<T | null> {
-  if (!s3Enabled()) {
-    const p = assetBlobPath(sha256);
-    if (!fs.existsSync(p)) return null;
-    return fn(p);
-  }
+  const p = assetBlobPath(sha256);
+  if (fs.existsSync(p)) return fn(p);
+  if (!s3Enabled()) return null;
   const stream = await openBlobStream(sha256);
   if (!stream) return null;
   const dir = path.join(assetStoreDir(), ".fetch");
@@ -393,5 +422,92 @@ export async function withBlobFile<T>(
     return await fn(tmp);
   } finally {
     await fsp.rm(tmp, { force: true });
+  }
+}
+
+// --- write-buffer drain: freshly uploaded blobs -> bucket, in the background
+
+// Uploads land in the local store (instant for the submitter, no bucket round
+// trips on the request path) and are queued here; a background tick pushes
+// them to the bucket at whatever pace it accepts. Until a blob is confirmed
+// there, blobBuffered() answers true and the asset route holds off the public
+// gateway redirect. Drained blobs keep their local copy (the store doubles as
+// a read cache); reclaiming that disk stays a deliberate manual operation.
+
+const drainQueue = new Set<string>();
+let drainTimer: NodeJS.Timeout | null = null;
+let draining = false;
+let reconciledAt = 0;
+
+const DRAIN_TICK_MS = 30_000;
+const RECONCILE_MS = 60 * 60_000;
+
+/** True while a blob sits in the local buffer not yet confirmed in the
+ *  bucket — the gateway-redirect gate. */
+export function blobBuffered(sha256: string): boolean {
+  return drainQueue.has(sha256);
+}
+
+/** Start the background drain loop (idempotent, no-op without the s3
+ *  backend). The upload and asset routes call this so a restarted server
+ *  reconciles stranded blobs without waiting for the next upload. */
+export function ensureDrainer(): void {
+  if (!s3Enabled() || drainTimer) return;
+  drainTimer = setInterval(() => void drainTick().catch(() => {}), DRAIN_TICK_MS);
+  drainTimer.unref();
+}
+
+/** Store an uploaded file into the local buffer (the fast path the submitter
+ *  waits on) and queue it for the bucket. Consumes `src`. */
+export async function storeBlobBuffered(sha256: string, src: string): Promise<"stored" | "exists"> {
+  if (!s3Enabled()) return storeBlobFromFile(sha256, src);
+  const r = await storeBlobLocalFile(sha256, src);
+  drainQueue.add(sha256);
+  ensureDrainer();
+  // Soon, not per-blob: a burst of finalized uploads drains as one batch.
+  setTimeout(() => void drainTick().catch(() => {}), 3_000).unref();
+  return r;
+}
+
+async function drainTick(): Promise<void> {
+  if (draining) return;
+  draining = true;
+  try {
+    // Periodic reconcile: queue any local blob the bucket lacks, so blobs
+    // stranded by a crash or restart still drain (and a redirect never
+    // points at a gateway 404 for longer than one reconcile).
+    if (Date.now() - reconciledAt > RECONCILE_MS) {
+      reconciledAt = Date.now();
+      const root = assetStoreDir();
+      const local: string[] = [];
+      const shards = (await fsp.readdir(root).catch(() => [] as string[]))
+        .filter((d) => /^[0-9a-f]{2}$/.test(d));
+      for (const shard of shards) {
+        for (const name of await fsp.readdir(path.join(root, shard)).catch(() => [] as string[])) {
+          if (/^[0-9a-f]{64}$/.test(name)) local.push(name);
+        }
+      }
+      if (local.length) {
+        const missing = await bucketMissingBlobs(local);
+        for (const sha of missing) drainQueue.add(sha);
+        if (missing.length) console.log(`blobstore drain: reconcile queued ${missing.length} blob(s)`);
+      }
+    }
+    for (const sha of [...drainQueue]) {
+      if (!fs.existsSync(assetBlobPath(sha))) {
+        drainQueue.delete(sha); // nothing local to push (should not happen)
+        continue;
+      }
+      try {
+        await storeBlobFromFile(sha, assetBlobPath(sha), { keepSource: true });
+        drainQueue.delete(sha);
+      } catch (e) {
+        // Endpoint blip: leave the queue as is and retry next tick.
+        console.error(`blobstore drain: ${sha}: ${(e as Error).message}`);
+        break;
+      }
+    }
+  } finally {
+    draining = false;
   }
 }

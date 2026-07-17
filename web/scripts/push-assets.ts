@@ -13,7 +13,7 @@ import path from "node:path";
 import {
   assetBlobPath,
   assetStoreDir,
-  missingBlobs,
+  bucketMissingBlobs,
   s3Enabled,
   storeBlobFromFile,
   storeDescription,
@@ -61,7 +61,7 @@ async function main() {
   let failed = 0;
   for (let off = 0; off < shas.length; off += CHUNK) {
     const chunk = shas.slice(off, off + CHUNK);
-    const missing = await withRetry("existence sweep", () => missingBlobs(chunk));
+    const missing = await withRetry("existence sweep", () => bucketMissingBlobs(chunk));
     let next = 0;
     await Promise.all(
       Array.from({ length: Math.min(UPLOAD_CONCURRENCY, missing.length) }, async () => {

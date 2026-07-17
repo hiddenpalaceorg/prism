@@ -6,12 +6,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   assetBlobPath,
+  blobBuffered,
   blobExists,
   blobSize,
   missingBlobs,
   openBlobStream,
   readBlob,
   readBlobHead,
+  storeBlobBuffered,
   storeBlobBytes,
   storeBlobFromFile,
   withBlobFile,
@@ -101,4 +103,39 @@ test("readBlobHead of an empty blob answers empty, not missing", async () => {
   await mkdir(dirname(blob), { recursive: true });
   await writeFile(blob, "");
   assert.equal((await readBlobHead(SHA_A))?.length, 0);
+});
+
+test("storeBlobBuffered without the s3 backend is a plain local store", async () => {
+  const dir = await tempStore();
+  const src = join(dir, "buffered.part");
+  await writeFile(src, "buffered bytes");
+  assert.equal(await storeBlobBuffered(SHA_A, src), "stored");
+  assert.equal(existsSync(src), false); // consumed
+  assert.equal((await readBlob(SHA_A))?.toString(), "buffered bytes");
+  assert.equal(blobBuffered(SHA_A), false); // no bucket, nothing to drain
+});
+
+// The env is read per call, so a locally present blob must be answered from
+// disk without the S3 client ever being built — an unroutable endpoint makes
+// any accidental network attempt fail loudly. Keep this test last: the
+// client memoizes its config on first construction.
+test("reads are local-first under the s3 backend", async () => {
+  await tempStore();
+  process.env.ASSET_S3_ENDPOINT = "https://127.0.0.1:1";
+  try {
+    const blob = assetBlobPath(SHA_A);
+    await mkdir(dirname(blob), { recursive: true });
+    await writeFile(blob, "local wins");
+    assert.equal((await readBlob(SHA_A))?.toString(), "local wins");
+    assert.equal(await blobSize(SHA_A), 10);
+    assert.equal(await blobExists(SHA_A), true);
+    assert.deepEqual(await missingBlobs([SHA_A]), []);
+    const got = await withBlobFile(SHA_A, async (p) => {
+      assert.equal(p, blob); // served from disk, not materialized
+      return "ok";
+    });
+    assert.equal(got, "ok");
+  } finally {
+    delete process.env.ASSET_S3_ENDPOINT;
+  }
 });
