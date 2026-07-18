@@ -58,6 +58,9 @@ struct Counter {
 struct State {
     batch: Option<String>,
     counters: Vec<Counter>,
+    /// The last secondary counter to finish, shown full on the second row
+    /// while newer counters have nothing to show yet.
+    done: Option<Counter>,
     pending: Vec<String>, // messages to scroll out above the loader
 }
 
@@ -125,7 +128,9 @@ impl LoaderObserver {
             } else {
                 name.to_string()
             };
-            self.state.lock().unwrap().batch = Some(label);
+            let mut st = self.state.lock().unwrap();
+            st.batch = Some(label);
+            st.done = None; // a finished bar never outlives its batch item
         } else if total > 1 {
             errln!("[{}/{}] {}", index + 1, total, name);
         }
@@ -172,7 +177,17 @@ impl ProgressObserver for LoaderObserver {
             }
             Event::CounterClose { id } => {
                 if self.tty {
-                    self.state.lock().unwrap().counters.retain(|c| c.id != id);
+                    let mut st = self.state.lock().unwrap();
+                    if let Some(pos) = st.counters.iter().position(|c| c.id == id) {
+                        let c = st.counters.remove(pos);
+                        // A finished secondary counter lingers on the second
+                        // row, pinned at full, until something overtakes it.
+                        if pos > 0 {
+                            if let Some(total) = c.total.filter(|t| *t > 0.0) {
+                                st.done = Some(Counter { count: total, ..c });
+                            }
+                        }
+                    }
                 }
             }
             Event::Message(m) => {
@@ -258,15 +273,21 @@ fn draw_loop(state: Arc<Mutex<State>>, running: Arc<AtomicBool>) {
 fn compose(st: &State, t: f32, buf: &mut String) {
     let spin = tetra::frame(t, ascii_mode());
     buf.push_str("\r\x1b[2K\n"); // blank line separating the loader from prior output
+    // Second row: the newest secondary counter once it has progress to show,
+    // otherwise the last one to finish (pinned at full), so with many quick
+    // items the row tails completions instead of idling at zero.
+    let second = match st.counters.last() {
+        Some(last) if st.counters.len() > 1 && (last.count > 0.0 || st.done.is_none()) => {
+            Some(counter_line(last, t))
+        }
+        Some(_) => st.done.as_ref().map(|c| counter_line(c, t)),
+        None => None,
+    };
     let texts: [String; tetra::H] = [
         st.batch.as_deref().map(|s| truncate(s, BATCHW)).unwrap_or_default(),
         String::new(),
         st.counters.first().map(|c| counter_line(c, t)).unwrap_or_default(),
-        if st.counters.len() > 1 {
-            counter_line(st.counters.last().unwrap(), t)
-        } else {
-            String::new()
-        },
+        second.unwrap_or_default(),
     ];
     for (line, text) in spin.iter().zip(texts.iter()) {
         buf.push_str("\r\x1b[2K");
