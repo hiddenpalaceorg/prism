@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { BuildMediaView, MediaKind } from "@/lib/media";
+import type { BuildMediaView, MediaKind, SkipFlags } from "@/lib/media";
 
 interface Viewer {
   name?: string;
@@ -19,32 +19,49 @@ interface Upload {
 interface Props {
   sha256: string;
   items: BuildMediaView[];
+  skips: SkipFlags;
 }
 
 const CHUNK = 8 * 1024 * 1024;
 
-const SECTIONS: Array<{ kind: MediaKind; title: string; accept: string; add: string; multiple: boolean }> = [
+const SECTIONS: Array<{
+  kind: MediaKind;
+  title: string;
+  accept: string;
+  add: string;
+  multiple: boolean;
+  skipKey: keyof SkipFlags;
+}> = [
   {
     kind: "screenshot",
     title: "Screenshots",
     accept: "image/png,image/jpeg,image/webp,image/gif",
     add: "Add screenshots",
     multiple: true,
+    skipKey: "skip_screenshots",
   },
-  { kind: "video", title: "Video", accept: "video/mp4,video/webm", add: "Add video", multiple: false },
+  {
+    kind: "video",
+    title: "Video",
+    accept: "video/mp4,video/webm",
+    add: "Add video",
+    multiple: false,
+    skipKey: "skip_video",
+  },
   {
     kind: "physical",
     title: "Physical media",
     accept: "image/png,image/jpeg,image/webp,image/gif",
     add: "Add photos",
     multiple: true,
+    skipKey: "skip_physical",
   },
 ];
 
 // Community media gallery + uploader. Uploads go in 8MB chunks (the chunk
 // route resumes on 409), so even long captures pass the proxy body limit.
 // Gating here is cosmetic: the routes re-check the wiki session server-side.
-export default function MediaSection({ sha256, items }: Props) {
+export default function MediaSection({ sha256, items, skips }: Props) {
   const router = useRouter();
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
@@ -128,11 +145,12 @@ export default function MediaSection({ sha256, items }: Props) {
       <div className="mt-3 grid gap-8">
         {SECTIONS.map((s) => {
           const mine = items.filter((m) => m.kind === s.kind);
+          const skipped = skips[s.skipKey] && mine.length === 0;
           return (
             <div key={s.kind}>
               <div className="flex items-center gap-3">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{s.title}</h3>
-                {loggedIn && (
+                {loggedIn && !skipped && (
                   <AddButton
                     label={s.add}
                     accept={s.accept}
@@ -141,7 +159,11 @@ export default function MediaSection({ sha256, items }: Props) {
                   />
                 )}
               </div>
-              {mine.length === 0 ? (
+              {skipped ? (
+                <p className="mt-2 text-xs text-neutral-400" title="Marked not applicable">
+                  Skipped
+                </p>
+              ) : mine.length === 0 ? (
                 <p className="mt-2 text-xs text-neutral-400">None yet.</p>
               ) : s.kind === "video" ? (
                 <div className="mt-2 grid gap-4 sm:grid-cols-2">

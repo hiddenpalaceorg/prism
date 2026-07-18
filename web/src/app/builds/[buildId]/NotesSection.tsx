@@ -12,11 +12,12 @@ interface Viewer {
 interface Props {
   sha256: string;
   notes: BuildNoteRow[];
+  skipped: boolean;
 }
 
 // Community notes: plain text, attributed, editable by their author or a
 // moderator. Gating here is cosmetic: the routes re-check server-side.
-export default function NotesSection({ sha256, notes }: Props) {
+export default function NotesSection({ sha256, notes, skipped }: Props) {
   const router = useRouter();
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [draft, setDraft] = useState("");
@@ -37,6 +38,7 @@ export default function NotesSection({ sha256, notes }: Props) {
   }, []);
 
   const loggedIn = !!viewer?.name || !!viewer?.moderator;
+  const skipEmpty = skipped && notes.length === 0;
 
   async function call(path: string, init: RequestInit): Promise<boolean> {
     setBusy(true);
@@ -89,7 +91,13 @@ export default function NotesSection({ sha256, notes }: Props) {
       <h2 className="text-lg font-medium">
         Notes {notes.length > 0 && <span className="text-sm font-normal text-neutral-400">({notes.length})</span>}
       </h2>
-      {notes.length === 0 && <p className="mt-2 text-xs text-neutral-400">None yet.</p>}
+      {skipEmpty ? (
+        <p className="mt-2 text-xs text-neutral-400" title="Marked not applicable">
+          Skipped
+        </p>
+      ) : (
+        notes.length === 0 && <p className="mt-2 text-xs text-neutral-400">None yet.</p>
+      )}
       <ul className="mt-3 grid max-w-3xl gap-3">
         {notes.map((n) => {
           const canEdit = !!viewer && (viewer.moderator || (!!viewer.name && viewer.name === n.author));
@@ -150,7 +158,7 @@ export default function NotesSection({ sha256, notes }: Props) {
           );
         })}
       </ul>
-      {loggedIn ? (
+      {skipEmpty ? null : loggedIn ? (
         <div className="mt-4 grid max-w-3xl gap-2">
           <textarea
             value={draft}
