@@ -6,10 +6,9 @@
 //! the same rail. Falls back to plain line output when stderr is not a
 //! terminal.
 //!
-//! Consoles whose font lacks braille (legacy Windows conhost, WSL windows
-//! outside Windows Terminal) get an all-ASCII loader instead. The default is
-//! ASCII on Windows unless WT_SESSION marks a Windows Terminal session, and
-//! PRISM_ASCII=1 or =0 forces the choice on any platform.
+//! Windows console fonts are not reliable braille renderers, so on Windows
+//! and inside WSL the loader is all-ASCII. PRISM_ASCII=1 or =0 forces the
+//! choice on any platform.
 
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +32,17 @@ static ASCII_MODE: AtomicBool = AtomicBool::new(false);
 
 fn ascii_mode() -> bool {
     ASCII_MODE.load(Ordering::Relaxed)
+}
+
+// WSL runs Linux binaries in a Windows console with the same font limits.
+fn wsl() -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .map(|v| v.to_ascii_lowercase().contains("microsoft"))
+            .unwrap_or(false)
 }
 
 struct Counter {
@@ -93,7 +103,7 @@ impl LoaderObserver {
         let ascii = match std::env::var("PRISM_ASCII").ok().as_deref() {
             Some("1") => true,
             Some("0") => false,
-            _ => cfg!(windows) && std::env::var_os("WT_SESSION").is_none(),
+            _ => cfg!(windows) || wsl(),
         };
         ASCII_MODE.store(ascii, Ordering::Relaxed);
         let tty = std::io::stderr().is_terminal() && enable_vt();
