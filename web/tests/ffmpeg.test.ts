@@ -24,8 +24,9 @@ const execFileP = promisify(execFile);
 // Transcode tests need real ffmpeg and skip without it (set FFMPEG_BIN when
 // `ffmpeg` isn't on PATH).
 
-test("transcodable covers exactly the MPEG program-stream mime", () => {
+test("transcodable covers exactly the MPEG program-stream and AVI mimes", () => {
   assert.equal(transcodable("video/mpeg"), true);
+  assert.equal(transcodable("video/x-msvideo"), true);
   assert.equal(transcodable("video/mp4"), false);
   assert.equal(transcodable("video/webm"), false);
   assert.equal(transcodable("audio/mpeg"), false);
@@ -104,6 +105,41 @@ test("ensureTranscode converts an MPEG-PS blob and caches the result", async (t)
     const before = (await stat(video.path)).mtimeMs;
     assert.equal((await ensureTranscode(sha)).path, video.path);
     assert.equal((await stat(video.path)).mtimeMs, before);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** A 1s 64x48 AVI with the codecs a period disc would carry (MPEG-4 ASP +
+ *  MP2 needs no extra encoders in any ffmpeg build). */
+async function aviFixture(dir: string): Promise<Buffer> {
+  const out = join(dir, "fixture.avi");
+  await execFileP(process.env.FFMPEG_BIN || "ffmpeg", [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "testsrc=duration=1:size=64x48:rate=10",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+    "-c:v", "mpeg4", "-c:a", "mp2", "-f", "avi",
+    out,
+  ]);
+  return readFile(out);
+}
+
+test("ensureTranscode converts an AVI blob", async (t) => {
+  const profile = await transcodeProfile();
+  if (!profile) return t.skip("ffmpeg not installed");
+  const dir = await tempStore();
+  try {
+    const sha = "ab".repeat(32);
+    const avi = await aviFixture(dir);
+    // The fixture must carry the RIFF/AVI magic viewable.py sniffs for.
+    assert.equal(avi.subarray(0, 4).toString("latin1"), "RIFF");
+    assert.equal(avi.subarray(8, 12).toString("latin1"), "AVI ");
+    await putBlob(sha, avi);
+
+    const video = await ensureTranscode(sha);
+    assert.equal(video.path, transcodePath(sha, profile.ext));
+    assert.equal(video.mime, profile.mime);
+    assert.ok((await stat(video.path)).size > 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

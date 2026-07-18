@@ -34,10 +34,14 @@ export function imageSrc(a: ViewableAsset): string {
     : assetUrl(a);
 }
 
+/** Video mimes browsers won't play natively — served through the server's
+ *  transcode. Must match transcodable() in lib/ffmpeg.ts. */
+const TRANSCODED_VIDEO = new Set(["video/mpeg", "video/x-msvideo"]);
+
 /** Where <video> should point: MP4/WebM play natively, while MPEG-1/2 program
- *  streams (.mpg, DVD .vob) go through the server's transcode. */
+ *  streams (.mpg, DVD .vob) and AVI go through the server's transcode. */
 export function videoSrc(a: ViewableAsset): string {
-  return a.mime === "video/mpeg" ? `${assetUrl(a)}/video` : assetUrl(a);
+  return TRANSCODED_VIDEO.has(a.mime) ? `${assetUrl(a)}/video` : assetUrl(a);
 }
 
 /** Where <audio> should point: WAVs go through the server's codec sniff,
@@ -172,7 +176,7 @@ const TRANSCODE_POLL_MS = 4_000;
 /**
  * Video player over an extracted asset, shared by the viewer body and the
  * gallery cards. MP4/WebM play natively; MPEG program streams (.mpg, DVD
- * .vob) go through the server's ffmpeg transcode, which for DVD-sized inputs
+ * .vob) and AVI go through the server's ffmpeg transcode, which for DVD-sized inputs
  * may still be running when playback is first attempted — the player then
  * polls ./video/status, showing progress over the poster still, and starts
  * playback when the stream is ready. A transcode that is unavailable (no
@@ -271,7 +275,7 @@ export function VideoPlayer({
       title={asset.path}
       className={className}
       onError={() => {
-        if (asset.mime === "video/mpeg" && readyAt === 0) setPhase("preparing");
+        if (TRANSCODED_VIDEO.has(asset.mime) && readyAt === 0) setPhase("preparing");
         else setPhase("failed");
       }}
     />

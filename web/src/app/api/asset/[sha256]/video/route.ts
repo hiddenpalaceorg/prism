@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 // GET /api/asset/<sha256>/video — the asset transcoded to a browser-playable
 // format (H.264/AAC MP4, or VP9/Opus WebM when the server's ffmpeg lacks
 // libx264), for video formats browsers won't play natively: today MPEG-1/2
-// program streams, i.e. .mpg and DVD .vob. Native formats redirect to the raw
+// program streams (.mpg, DVD .vob) and AVI. Native formats redirect to the raw
 // asset route. The transcode is produced once, cached on disk, and streamed
 // with Range support so the player can seek. The URL is content-addressed, so
 // responses cache hard.
