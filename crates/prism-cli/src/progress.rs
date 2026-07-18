@@ -49,6 +49,7 @@ fn wsl() -> bool {
 struct Counter {
     id: u64,
     label: String,
+    unit: String,
     total: Option<f64>,
     count: f64,
 }
@@ -147,10 +148,10 @@ impl Drop for LoaderObserver {
 impl ProgressObserver for LoaderObserver {
     fn on_event(&self, ev: Event) {
         match ev {
-            Event::CounterOpen { id, label, unit: _, total } => {
+            Event::CounterOpen { id, label, unit, total } => {
                 if self.tty {
                     let mut st = self.state.lock().unwrap();
-                    st.counters.push(Counter { id, label, total, count: 0.0 });
+                    st.counters.push(Counter { id, label, unit, total, count: 0.0 });
                 }
             }
             Event::Progress { id, count } => {
@@ -268,12 +269,19 @@ fn compose(st: &State, t: f32, buf: &mut String) {
     }
 }
 
+// Byte counters read best as a percentage, item counters (files, blobs) as
+// the k/n they actually are.
 fn counter_line(c: &Counter, t: f32) -> String {
     let label = truncate(&c.label, LABELW);
     match c.total {
         Some(total) if total > 0.0 => {
             let frac = (c.count / total).clamp(0.0, 1.0) as f32;
-            format!("{label:<LABELW$} {} {:>3}%", bar(frac), (frac * 100.0) as u32)
+            let tail = if c.unit == "B" {
+                format!("{:>3}%", (frac * 100.0) as u32)
+            } else {
+                format!("{}/{}", c.count.min(total) as u64, total as u64)
+            };
+            format!("{label:<LABELW$} {} {tail}", bar(frac))
         }
         _ => format!("{label:<LABELW$} {}", sweep(t)),
     }
