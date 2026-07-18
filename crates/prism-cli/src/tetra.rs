@@ -108,11 +108,17 @@ pub(crate) fn frame(t: f32, ascii: bool) -> [String; 4] {
 // far, so edges receding from the camera visibly thin out. All three are
 // full-cell characters, which keeps the shape connected where slope-matched
 // strokes ('/', '|', '\') fall apart at this resolution. The pose spins
-// about the vertical axis with a slight fixed tilt instead of tumbling:
+// about the vertical axis with a slight tilt instead of tumbling:
 // 14x4 characters cannot keep arbitrary poses readable, a triangle
-// silhouette with sweeping inner edges stays one.
+// silhouette with sweeping inner edges stays one. The tilt nutates a
+// little (slow pitch and roll wobble) so the apex, which sits on the
+// spin axis, does not render as a frozen pair of cells.
 fn render_ascii(t: f32) -> [String; 4] {
-    let v = rotated_vertices(0.18, 1.0 - t * 2.2, 0.0);
+    let v = rotated_vertices(
+        0.18 + 0.12 * (t * 1.3).sin(),
+        1.0 - t * 2.2,
+        0.22 * (t * 0.9).sin(),
+    );
     let visible = face_visibility(&v);
 
     const SX: f32 = 3.6; // cols per world unit
