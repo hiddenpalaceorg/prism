@@ -104,12 +104,13 @@ pub(crate) fn frame(t: f32, ascii: bool) -> [String; 4] {
     render_wire(0.85 + t * 0.9, 1.0 + t * 2.0, 0.3 + t * 0.55, 7.2, 8.0)
 }
 
-// ASCII tetrahedron: every cell an edge passes through is a '#'. Uniform
-// cells keep the shape connected where slope-matched strokes ('/', '|', '\')
-// fall apart at this resolution. The pose spins about the vertical axis with
-// a slight fixed tilt instead of tumbling: 14x4 characters cannot keep
-// arbitrary poses readable, a triangle silhouette with sweeping inner edges
-// stays one.
+// ASCII tetrahedron in sharp glyphs graded by depth: '#' near, '%' mid, '*'
+// far, so edges receding from the camera visibly thin out. All three are
+// full-cell characters, which keeps the shape connected where slope-matched
+// strokes ('/', '|', '\') fall apart at this resolution. The pose spins
+// about the vertical axis with a slight fixed tilt instead of tumbling:
+// 14x4 characters cannot keep arbitrary poses readable, a triangle
+// silhouette with sweeping inner edges stays one.
 fn render_ascii(t: f32) -> [String; 4] {
     let v = rotated_vertices(0.18, 1.0 + t * 2.2, 0.0);
     let visible = face_visibility(&v);
@@ -118,8 +119,10 @@ fn render_ascii(t: f32) -> [String; 4] {
     const SY: f32 = 2.0; // rows per world unit, near half of SX for 1:2 cells
     const CC: f32 = W as f32 / 2.0; // center col
     const CR: f32 = 2.3; // center row
+    const GLYPH: [char; 4] = [' ', '*', '%', '#'];
 
-    let mut grid = [[' '; W]; H];
+    // per cell, the densest rank of any sample landing there: near edges win
+    let mut grid = [[0u8; W]; H];
     for &(ia, ib, fa, fb) in EDGES.iter() {
         if !visible[fa] && !visible[fb] {
             continue;
@@ -138,10 +141,19 @@ fn render_ascii(t: f32) -> [String; 4] {
             if c < 0 || c >= W as i32 || r < 0 || r >= H as i32 {
                 continue;
             }
-            grid[r as usize][c as usize] = '#';
+            let z = v[ia][2] + (v[ib][2] - v[ia][2]) * s;
+            let rank = if z > 0.35 {
+                3
+            } else if z > -0.35 {
+                2
+            } else {
+                1
+            };
+            let cell = &mut grid[r as usize][c as usize];
+            *cell = (*cell).max(rank);
         }
     }
-    std::array::from_fn(|r| grid[r].iter().collect())
+    std::array::from_fn(|r| grid[r].iter().map(|&g| GLYPH[g as usize]).collect())
 }
 
 // s: dots per world unit (braille dot pitch is square, so one scale for both
