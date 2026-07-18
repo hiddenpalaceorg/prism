@@ -27,7 +27,7 @@ Curator can:
 crates/curator-core/     Rust engine: schema, adapter driver, fingerprints, cache, SQLite, DAT/JSON
 crates/curator-cli/      command-line interface
 crates/curator-ffi/      UniFFI bridge over the core, used by the native GUIs
-crates/curator-gui-win/  Windows GUI (windows-rs)
+crates/curator-win/      Windows app: GUI + CLI via --cli (windows-rs)
 macos/                   macOS GUI (SwiftUI)
 ps2exe-adapter/          Python adapter: runs ps2exe, emits canonical JSON + progress
 web/                     Next.js + Postgres listing and similarity service

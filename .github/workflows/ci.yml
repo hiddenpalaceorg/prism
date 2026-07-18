@@ -29,19 +29,19 @@ jobs:
         run: uv run --group dev pyinstaller --noconfirm curator-adapter.spec
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # gui-win is excluded from the root workspace; it has its own target dir.
-          workspaces: crates/curator-gui-win
+          # curator-win is excluded from the root workspace; it has its own target dir.
+          workspaces: crates/curator-win
           key: windows-msvc
-      - name: build GUI with the adapter embedded (single self-contained exe)
-        # build.rs embeds $CURATOR_ADAPTER_EXE; the GUI extracts it to TEMP on launch.
+      - name: build curator-win with the adapter embedded (single self-contained exe)
+        # build.rs embeds $CURATOR_ADAPTER_EXE; the app extracts it to TEMP on launch.
         env:
           CURATOR_ADAPTER_EXE: ${{ github.workspace }}\ps2exe-adapter\dist\curator-adapter.exe
-        run: cargo build --release --manifest-path crates/curator-gui-win/Cargo.toml
+        run: cargo build --release --manifest-path crates/curator-win/Cargo.toml
       - name: upload single exe
         uses: actions/upload-artifact@v4
         with:
-          name: curator-gui-win-${{ github.sha }}
-          path: crates/curator-gui-win/target/release/curator-gui-win.exe
+          name: curator-win-${{ github.sha }}
+          path: crates/curator-win/target/release/curator-win.exe
           if-no-files-found: error
 
   macos-build:
@@ -96,7 +96,7 @@ jobs:
           token=$(openssl rand -hex 6)
           mkdir out
           # Windows is a single self-contained .exe (adapter embedded); macOS is the .app zip.
-          cp dl/curator-gui-win-*/curator-gui-win.exe "out/Curator-win-${token}.exe"
+          cp dl/curator-win-*/curator-win.exe "out/Curator-win-${token}.exe"
           cp dl/Curator-macos-*/Curator-app.zip        "out/Curator-mac-${token}.zip"
           ls -la out
       - name: publish per-branch draft release (rolling; hidden from /releases, no git tag)
