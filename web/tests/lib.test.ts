@@ -238,9 +238,9 @@ test("publicAssetUrl hands off sniffable media and nothing else", () => {
   const sha = "ab".repeat(32);
   delete process.env.ASSET_PUBLIC_BASE;
   assert.equal(publicAssetUrl(sha, "image/png"), null); // no gateway configured
-  process.env.ASSET_PUBLIC_BASE = "https://curator.example.org/";
+  process.env.ASSET_PUBLIC_BASE = "https://prism.example.org/";
   try {
-    assert.equal(publicAssetUrl(sha, "image/png"), `https://curator.example.org/ab/${sha}`);
+    assert.equal(publicAssetUrl(sha, "image/png"), `https://prism.example.org/ab/${sha}`);
     assert.ok(publicAssetUrl(sha, "audio/ogg"));
     assert.ok(publicAssetUrl(sha, "video/mp4"));
     // Needs the app's Content-Type/Disposition/CSP headers — no handoff.

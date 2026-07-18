@@ -1,0 +1,22 @@
+# UniFFI bridge over prism-core for the native GUIs (macOS SwiftUI today; the
+# same scaffolding feeds Kotlin/etc. later). Excluded from the root workspace so a
+# plain `cargo build` of the CLI doesn't drag in uniffi.
+[package]
+name = "prism-ffi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Prism core bridged to native front-ends via UniFFI."
+
+[lib]
+name = "prism_ffi"
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[dependencies]
+prism-core = { path = "../prism-core" }
+uniffi = { version = "0.31", features = ["cli"] }
+thiserror = "1"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"

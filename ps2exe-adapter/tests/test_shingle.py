@@ -1,4 +1,4 @@
-"""Tests for the byte-shingle resemblance signature (curator_adapter.cli).
+"""Tests for the byte-shingle resemblance signature (prism_adapter.cli).
 
 Validates the vectorized OPH against an independent pure-Python reference, that the
 streaming feed matches a one-shot feed, and the defining property: resemblance stays
@@ -10,7 +10,7 @@ import random
 
 import pytest
 
-from curator_adapter.cli import (
+from prism_adapter.cli import (
     _SHINGLE_K,
     _SHINGLE_W,
     _ShingleSignature,

@@ -20,7 +20,7 @@ node_modules
 
 # Local data / artifacts
 *.db
-/old/old-curator.db
+/old/old-prism.db
 
 # Sample disc images (large, local test fixtures only)
 /builds

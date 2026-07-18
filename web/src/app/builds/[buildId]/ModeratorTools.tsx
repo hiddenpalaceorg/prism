@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 // so there is nothing to subscribe to — the store only bridges the SSR/client
 // gap: the server snapshot renders nothing, hydration reveals the saved token.
 const noSubscribe = () => () => {};
-const clientToken = () => sessionStorage.getItem("curator-mod-token") ?? "";
+const clientToken = () => sessionStorage.getItem("prism-mod-token") ?? "";
 const serverToken = () => "";
 
 interface Props {
@@ -105,14 +105,14 @@ export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, l
           <span className="text-xs text-neutral-500">Lot</span>
           <div className="flex gap-2">
             <input
-              list="curator-lot-names"
+              list="prism-lot-names"
               value={lotInput}
               onChange={(e) => setLotInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && lotDirty && !busy && save({ lot: lotInput.trim() || null })}
               placeholder="e.g. Sonic Month 2026"
               className="h-9 w-72 max-w-full rounded-md border border-neutral-300 bg-transparent px-3 outline-none placeholder:text-neutral-400 focus:border-neutral-500 dark:border-neutral-700"
             />
-            <datalist id="curator-lot-names">
+            <datalist id="prism-lot-names">
               {lots.map((l) => (
                 <option key={l} value={l} />
               ))}

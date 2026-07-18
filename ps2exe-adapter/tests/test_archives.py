@@ -8,9 +8,9 @@ import hashlib
 import io
 import zipfile
 
-from curator_adapter import viewable
-from curator_adapter.cli import _extract_assets, _hash_files
-from curator_adapter.progress import ProgressManager
+from prism_adapter import viewable
+from prism_adapter.cli import _extract_assets, _hash_files
+from prism_adapter.progress import ProgressManager
 
 
 class FakeVolume:

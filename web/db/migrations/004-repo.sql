@@ -5,7 +5,7 @@
 -- src/lib/repo-manifest.ts). Rows are created only by scripts/attach-repo.ts —
 -- re-ingest never touches this table (ingestRecord rewrites build_asset from
 -- the record; attached repos must survive).
--- Idempotent — safe to re-run. Apply to every curator DB:
+-- Idempotent — safe to re-run. Apply to every prism DB:
 --   psql -d <db> -f db/migrations/004-repo.sql
 
 CREATE TABLE IF NOT EXISTS build_repo (

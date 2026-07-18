@@ -1,0 +1,43 @@
+# Windows-only; excluded from the root workspace. Build/check explicitly:
+#   cargo build  --manifest-path crates/prism-win/Cargo.toml            (on Windows)
+#   cargo check  --manifest-path crates/prism-win/Cargo.toml --target x86_64-pc-windows-gnu
+[package]
+name = "prism-win"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Prism for Windows: native GUI (windows-rs) plus the full CLI via --cli."
+
+[[bin]]
+name = "prism-win"
+path = "src/main.rs"
+
+[dependencies]
+prism-core = { path = "../prism-core" }
+prism-cli = { path = "../prism-cli" }
+serde_json = "1"
+
+# Embeds a Common-Controls v6 manifest (build.rs) so ListView groups and modern visual
+# styles work. Cross-toolchain (MSVC + GNU), no external resource compiler needed.
+# Unconditional: build-dep cfg() matches the host, not the target; build.rs gates the
+# actual embed on CARGO_CFG_WINDOWS instead.
+[build-dependencies]
+embed-manifest = "1.4"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_Networking_WinHttp",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+] }

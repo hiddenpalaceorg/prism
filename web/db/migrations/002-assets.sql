@@ -2,7 +2,7 @@
 -- the desktop analyzer into a content-addressed store and shipped in export
 -- bundles. Rows are metadata only; the bytes live on disk in ASSET_STORE_DIR
 -- (blobs at <store>/<sha256[:2]>/<sha256>), placed there by scripts/ingest.ts.
--- Idempotent — safe to re-run. Apply to every curator DB:
+-- Idempotent — safe to re-run. Apply to every prism DB:
 --   psql -d <db> -f db/migrations/002-assets.sql
 --
 -- No backfill: records ingested before the analyzer grew asset extraction

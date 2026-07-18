@@ -1,6 +1,6 @@
 -- Fast page loads: inverted fileset table, sortable build_date column, and a
 -- lower(name) index for the paginated /builds listing. Idempotent — safe to
--- re-run. Apply to every curator DB (local curator / curator_wiki and the
+-- re-run. Apply to every prism DB (local prism / prism_wiki and the
 -- deployed ones):   psql -d <db> -f db/migrations/001-fast-pages.sql
 --
 -- fileset_entry is derived data (unnest of build_fileset.hashes); the backfill

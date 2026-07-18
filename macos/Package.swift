@@ -2,16 +2,16 @@
 import PackageDescription
 
 // Build the Rust core first so the static lib exists:
-//   cargo build -p curator-ffi              (debug)   -> ../target/debug/libcurator_ffi.a
-//   cargo build -p curator-ffi --release    (release) -> ../target/release/libcurator_ffi.a
+//   cargo build -p prism-ffi              (debug)   -> ../target/debug/libprism_ffi.a
+//   cargo build -p prism-ffi --release    (release) -> ../target/release/libprism_ffi.a
 // Then:  swift build            (uses debug; pass -c release + -Xlinker for release)
 //
-// CURATOR_RUST_LIB_DIR overrides the search dir if you build elsewhere.
+// PRISM_RUST_LIB_DIR overrides the search dir if you build elsewhere.
 import Foundation
-let rustLibDir = ProcessInfo.processInfo.environment["CURATOR_RUST_LIB_DIR"] ?? "../target/debug"
+let rustLibDir = ProcessInfo.processInfo.environment["PRISM_RUST_LIB_DIR"] ?? "../target/debug"
 
 let linkRust: [LinkerSetting] = [
-    .unsafeFlags(["-L\(rustLibDir)", "-lcurator_ffi"]),
+    .unsafeFlags(["-L\(rustLibDir)", "-lprism_ffi"]),
     // Frameworks/libs the Rust staticlib (rusqlite bundled sqlite, blake3, std) needs.
     .linkedLibrary("c++"),
     .linkedFramework("CoreFoundation"),
@@ -19,32 +19,32 @@ let linkRust: [LinkerSetting] = [
 ]
 
 let package = Package(
-    name: "Curator",
+    name: "Prism",
     platforms: [.macOS(.v13)],
     targets: [
         // C target exposing the UniFFI scaffolding header to Swift.
         .target(
-            name: "curator_ffiFFI",
-            path: "Sources/curator_ffiFFI"
+            name: "prism_ffiFFI",
+            path: "Sources/prism_ffiFFI"
         ),
         // Generated Swift bindings + hand-written Swift conveniences.
         .target(
-            name: "CuratorKit",
-            dependencies: ["curator_ffiFFI"],
-            path: "Sources/CuratorKit"
+            name: "PrismKit",
+            dependencies: ["prism_ffiFFI"],
+            path: "Sources/PrismKit"
         ),
         // The SwiftUI app.
         .executableTarget(
-            name: "CuratorApp",
-            dependencies: ["CuratorKit"],
-            path: "Sources/CuratorApp",
+            name: "PrismApp",
+            dependencies: ["PrismKit"],
+            path: "Sources/PrismApp",
             linkerSettings: linkRust
         ),
         // Headless runtime check that the FFI round-trips (no GUI session needed).
         .executableTarget(
-            name: "curator-probe",
-            dependencies: ["CuratorKit"],
-            path: "Sources/curator-probe",
+            name: "prism-probe",
+            dependencies: ["PrismKit"],
+            path: "Sources/prism-probe",
             linkerSettings: linkRust
         ),
     ]

@@ -1,4 +1,4 @@
-// Mirror of the canonical BuildRecord (curator-core/src/schema.rs).
+// Mirror of the canonical BuildRecord (prism-core/src/schema.rs).
 
 export interface ImageInfo {
   name: string;
@@ -71,7 +71,7 @@ export interface BuildRecord {
   /** Extracted files in the blob store (viewable ones whole, the rest as head
    *  snippets). Absent = extraction never ran. */
   assets?: AssetRef[] | null;
-  /** Asset-extraction generation (see curator-core ASSET_PROFILE). */
+  /** Asset-extraction generation (see prism-core ASSET_PROFILE). */
   asset_profile?: number;
 }
 

@@ -3,30 +3,30 @@
 ## Mac / Unix
 
 ```
-./curator path/to/image.iso
+./prism path/to/image.iso
 ```
 
 or
 
 ```
-cd curator-cli
-poetry run curator-cli path/to/image.iso
+cd prism-cli
+poetry run prism-cli path/to/image.iso
 ```
 
 # Installing from source
 
 1. Install Python
 2. Install [Poetry for Python](https://python-poetry.org/docs/)
-3. Run `git clone --recurse-submodules git@github.com:hiddenpalaceorg/curator.git` to clone together with submodules
-4. Run `cd curator-cli && poetry install`
-5. Run `./curator` from the `curator` directory (not `curator-cli`)
+3. Run `git clone --recurse-submodules git@github.com:hiddenpalaceorg/prism.git` to clone together with submodules
+4. Run `cd prism-cli && poetry install`
+5. Run `./prism` from the `prism` directory (not `prism-cli`)
 
 Note: You might have to initialize git submodules.
 
 # Example
 
 ```
-$ ./curator 'Sonic 3D Blast (Tech Demo).iso'
+$ ./prism 'Sonic 3D Blast (Tech Demo).iso'
 ```
 
 ```xml

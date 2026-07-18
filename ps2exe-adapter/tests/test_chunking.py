@@ -1,4 +1,4 @@
-"""Tests for the streaming content-defined chunker (curator_adapter.cli).
+"""Tests for the streaming content-defined chunker (prism_adapter.cli).
 
 The streaming chunker must produce byte-identical output to running fastcdc() over the
 whole file at once (so files no longer need to fit in memory), and it must localize a
@@ -10,7 +10,7 @@ import random
 
 import pytest
 
-from curator_adapter.cli import (
+from prism_adapter.cli import (
     _CDC_AVG,
     _CDC_MAX,
     _CDC_MIN,

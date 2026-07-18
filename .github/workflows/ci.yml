@@ -26,22 +26,22 @@ jobs:
           enable-cache: true
       - name: freeze adapter (PyInstaller one-file)
         working-directory: ps2exe-adapter
-        run: uv run --group dev pyinstaller --noconfirm curator-adapter.spec
+        run: uv run --group dev pyinstaller --noconfirm prism-adapter.spec
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          # curator-win is excluded from the root workspace; it has its own target dir.
-          workspaces: crates/curator-win
+          # prism-win is excluded from the root workspace; it has its own target dir.
+          workspaces: crates/prism-win
           key: windows-msvc
-      - name: build curator-win with the adapter embedded (single self-contained exe)
-        # build.rs embeds $CURATOR_ADAPTER_EXE; the app extracts it to TEMP on launch.
+      - name: build prism-win with the adapter embedded (single self-contained exe)
+        # build.rs embeds $PRISM_ADAPTER_EXE; the app extracts it to TEMP on launch.
         env:
-          CURATOR_ADAPTER_EXE: ${{ github.workspace }}\ps2exe-adapter\dist\curator-adapter.exe
-        run: cargo build --release --manifest-path crates/curator-win/Cargo.toml
+          PRISM_ADAPTER_EXE: ${{ github.workspace }}\ps2exe-adapter\dist\prism-adapter.exe
+        run: cargo build --release --manifest-path crates/prism-win/Cargo.toml
       - name: upload single exe
         uses: actions/upload-artifact@v4
         with:
-          name: curator-win-${{ github.sha }}
-          path: crates/curator-win/target/release/curator-win.exe
+          name: prism-win-${{ github.sha }}
+          path: crates/prism-win/target/release/prism-win.exe
           if-no-files-found: error
 
   macos-build:
@@ -62,20 +62,20 @@ jobs:
           # Invalidate when Swift sources, the package, or the FFI/core surface (which
           # the regenerated UniFFI bindings derive from) change; restore-keys lets a
           # stale .build seed an incremental rebuild.
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('macos/Package.swift', 'macos/Sources/**', 'crates/curator-ffi/src/**', 'crates/curator-core/src/**') }}
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('macos/Package.swift', 'macos/Sources/**', 'crates/prism-ffi/src/**', 'crates/prism-core/src/**') }}
           restore-keys: |
             swiftpm-${{ runner.os }}-
-      - name: build Curator.app (release, adapter frozen + embedded by build-app.sh)
+      - name: build Prism.app (release, adapter frozen + embedded by build-app.sh)
         run: bash macos/build-app.sh release
       - name: ad-hoc codesign (reduces Gatekeeper friction on download)
-        run: codesign --force --deep --sign - macos/dist/Curator.app
+        run: codesign --force --deep --sign - macos/dist/Prism.app
       - name: zip the bundle (ditto preserves the .app structure)
-        run: ditto -c -k --keepParent macos/dist/Curator.app macos/dist/Curator-app.zip
+        run: ditto -c -k --keepParent macos/dist/Prism.app macos/dist/Prism-app.zip
       - name: upload app
         uses: actions/upload-artifact@v4
         with:
-          name: Curator-macos-${{ github.sha }}
-          path: macos/dist/Curator-app.zip
+          name: Prism-macos-${{ github.sha }}
+          path: macos/dist/Prism-app.zip
           if-no-files-found: error
 
   release:
@@ -96,8 +96,8 @@ jobs:
           token=$(openssl rand -hex 6)
           mkdir out
           # Windows is a single self-contained .exe (adapter embedded); macOS is the .app zip.
-          cp dl/curator-win-*/curator-win.exe "out/Curator-win-${token}.exe"
-          cp dl/Curator-macos-*/Curator-app.zip        "out/Curator-mac-${token}.zip"
+          cp dl/prism-win-*/prism-win.exe "out/Prism-win-${token}.exe"
+          cp dl/Prism-macos-*/Prism-app.zip        "out/Prism-mac-${token}.zip"
           ls -la out
       - name: publish per-branch draft release (rolling; hidden from /releases, no git tag)
         env:

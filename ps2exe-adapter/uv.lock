@@ -247,7 +247,7 @@ wheels = [
 ]
 
 [[package]]
-name = "curator-adapter"
+name = "prism-adapter"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

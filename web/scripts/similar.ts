@@ -14,7 +14,7 @@ if (!sha) {
 
 async function main() {
   const pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL || "postgres:///curator_test",
+    connectionString: process.env.DATABASE_URL || "postgres:///prism_test",
   });
   const me = (await pool.query("SELECT record FROM builds WHERE sha256=$1", [sha])).rows[0];
   if (!me) {

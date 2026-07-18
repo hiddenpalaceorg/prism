@@ -35,11 +35,11 @@ export default function Moderate() {
 
   // Remember the moderation token locally so it isn't retyped each visit.
   useEffect(() => {
-    setToken(sessionStorage.getItem("curator-mod-token") ?? "");
+    setToken(sessionStorage.getItem("prism-mod-token") ?? "");
   }, []);
   function saveToken(t: string) {
     setToken(t);
-    sessionStorage.setItem("curator-mod-token", t);
+    sessionStorage.setItem("prism-mod-token", t);
   }
   const authHeaders = useCallback(
     (extra: Record<string, string> = {}) => (token ? { ...extra, "x-moderation-token": token } : extra),

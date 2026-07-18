@@ -4,7 +4,7 @@
 #     rarfile.tool_setup(sevenzip=True, sevenzip2=True, unrar=True, unar=False, bsdtar=False)
 # which demands a system 7-Zip/unrar on PATH. Its except handler points rarfile at a
 # bundled UnRAR for Windows/Linux but has NO macOS branch, so it just re-runs the same
-# call. On a frozen Curator.app — where no Homebrew 7z/unrar is on PATH — both calls
+# call. On a frozen Prism.app — where no Homebrew 7z/unrar is on PATH — both calls
 # raise rarfile.RarCannotExec and the adapter dies at import, before any RAR is touched.
 #
 # RAR extraction itself doesn't need that external tool: the primary path decodes RARs

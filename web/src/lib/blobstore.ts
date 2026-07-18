@@ -14,7 +14,7 @@
 // caches (.transcode, .thumb), and sources materialized for ffmpeg (.fetch).
 //
 // Config (s3 backend): ASSET_S3_ENDPOINT, ASSET_S3_BUCKET (default
-// "curator"), ASSET_S3_PREFIX (default "", for scratch/test namespaces),
+// "prism"), ASSET_S3_PREFIX (default "", for scratch/test namespaces),
 // ASSET_S3_REGION (default "us-east-1"), ASSET_S3_ACCESS_KEY_ID +
 // ASSET_S3_SECRET_ACCESS_KEY (else the SDK's default credential chain), and
 // ASSET_S3_INSECURE_TLS=1 to accept a self-signed endpoint certificate.
@@ -65,7 +65,7 @@ export function storeDescription(): string {
 }
 
 function s3Bucket(): string {
-  return process.env.ASSET_S3_BUCKET || "curator";
+  return process.env.ASSET_S3_BUCKET || "prism";
 }
 
 function s3Prefix(): string {

@@ -1,4 +1,4 @@
-"""Tests for the constellation audio fingerprint (curator_adapter.audio).
+"""Tests for the constellation audio fingerprint (prism_adapter.audio).
 
 Synthesizes deterministic PCM (no real disc needed) and asserts the key properties:
 identical match, offset tolerance (the whole point of the constellation design), and
@@ -8,7 +8,7 @@ discrimination against unrelated audio.
 import numpy as np
 import pytest
 
-from curator_adapter import audio
+from prism_adapter import audio
 
 SR = audio.SR0
 

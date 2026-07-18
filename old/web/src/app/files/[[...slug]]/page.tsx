@@ -5,9 +5,9 @@ import { ContainerInfo } from "@/components/container-info";
 import { SimilarContainers } from "@/components/similar-containers";
 
 async function openDb() {
-  //   const db = new sqlite3.Database("./curator-cli/curator.db");
+  //   const db = new sqlite3.Database("./prism-cli/prism.db");
   const db = await open({
-    filename: "./curator-cli/curator.db",
+    filename: "./prism-cli/prism.db",
     driver: sqlite3.Database,
   });
 

@@ -1,4 +1,4 @@
-from curator_adapter import viewable
+from prism_adapter import viewable
 
 
 def test_classify_by_extension():

@@ -106,7 +106,7 @@ export function bmpToPng(bytes: Buffer): Buffer {
 // TGA decode, hand-rolled: the format is trivial and the npm decoders are as
 // unmaintained as bmp-js. Covers what game dumps carry — 8bpp grayscale and
 // color-mapped, 15/16bpp, 24/32bpp, raw and RLE, either vertical origin.
-// Mirrors curator-core/src/tga.rs (the Windows GUI's TGA→BMP staging).
+// Mirrors prism-core/src/tga.rs (the Windows GUI's TGA→BMP staging).
 
 /** Expand a 5-bit channel to 8 bits by bit replication. */
 function scale5(c: number): number {
