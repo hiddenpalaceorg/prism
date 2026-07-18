@@ -13,6 +13,7 @@ pub mod fingerprint;
 pub mod progress;
 pub mod render;
 pub mod schema;
+pub mod summary;
 pub mod tga;
 
 use std::io::Write;

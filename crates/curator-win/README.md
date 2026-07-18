@@ -1,4 +1,4 @@
-# curator-gui-win
+# curator-win
 
 Native **Windows** GUI over `curator-core` using **windows-rs**. The core is called
 directly in-process (same language, no FFI); analysis runs on a worker thread and
@@ -26,12 +26,27 @@ Excluded from the root workspace so non-Windows `cargo build` skips it.
   `{nickname, record}` to `/api/submissions`. Web base URL from `CURATOR_WEB_URL`
   (default `https://hiddenpalace.org`). Both calls run on a worker thread.
 
+## CLI mode
+
+`curator-win.exe --cli <command…>` runs the shared curator CLI (the
+`curator-cli` crate) instead of opening a window — the full command surface:
+`analyze`, `import`, `list`, `systems`, `recent`, `show`, `extract`, `similar`,
+`submit`, `export`, `stats`. The process attaches to the launching console (or
+allocates one), so output, pipes, and redirection behave normally. Adapter
+resolution matches the GUI: `--adapter-bin`/`--adapter-dir` (or their env vars)
+first, then the bundled/embedded adapter.
+
+One caveat of a GUI-subsystem exe: an interactive cmd/PowerShell prompt does not
+wait for it, so the prompt may return before output finishes. `curator-win
+--cli … | more`, redirection, or `start /wait` give the usual synchronous
+behavior.
+
 ## Build / check
 
 On Windows (MSVC), the normal path:
 
 ```sh
-cargo build --manifest-path crates/curator-gui-win/Cargo.toml          # → curator-gui-win.exe
+cargo build --manifest-path crates/curator-win/Cargo.toml          # → curator-win.exe
 ```
 
 Cross-compile-checked from macOS/Linux against the GNU target (used during development —
@@ -44,8 +59,8 @@ brew install mingw-w64                      # or your distro's mingw-w64
 export CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
 export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
-cargo build --manifest-path crates/curator-gui-win/Cargo.toml --target x86_64-pc-windows-gnu
-# → target/x86_64-pc-windows-gnu/debug/curator-gui-win.exe  (PE32+ GUI executable)
+cargo build --manifest-path crates/curator-win/Cargo.toml --target x86_64-pc-windows-gnu
+# → target/x86_64-pc-windows-gnu/debug/curator-win.exe  (PE32+ GUI executable)
 ```
 
 ## Adapter binary
@@ -54,7 +69,7 @@ The adapter is a PyInstaller one-file build: `uv run --group dev pyinstaller
 curator-adapter.spec` (run in `ps2exe-adapter\`, uv on PATH) freezes
 `dist\curator-adapter.exe`. CI builds it, then builds the GUI with
 `CURATOR_ADAPTER_EXE` pointing at it, so `build.rs` **embeds the adapter inside
-`curator-gui-win.exe`** — the shipped download is a single self-contained file that
+`curator-win.exe`** — the shipped download is a single self-contained file that
 extracts the adapter to `%TEMP%\curator\` on first launch.
 
 Resolution order at runtime: `CURATOR_ADAPTER_BIN` → `adapter\curator-adapter*` beside
