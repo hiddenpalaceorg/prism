@@ -54,10 +54,13 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   if (!meta) return Response.json({ error: "not found" }, { status: 404 });
 
   // Media bytes come straight off the public bucket gateway when one is
-  // configured — the redirect itself caches as hard as the content would.
+  // configured. Temporary redirect with a bounded max-age, never a cached
+  // permanent one: the target embeds ASSET_PUBLIC_BASE, and when the gateway
+  // moved hosts (2026-07-18) browsers kept following year-long cached 308s
+  // to the dead host.
   const pub = publicAssetUrl(sha256, meta.mime);
   if (pub) {
-    return new Response(null, { status: 308, headers: { Location: pub, "Cache-Control": CACHE } });
+    return new Response(null, { status: 307, headers: { Location: pub, "Cache-Control": "public, max-age=3600" } });
   }
 
   // The browser already holds an immutable copy — never re-send the bytes.

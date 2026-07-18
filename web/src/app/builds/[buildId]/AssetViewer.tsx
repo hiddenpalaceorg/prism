@@ -22,12 +22,16 @@ export function assetUrl(a: ViewableAsset): string {
   return `/api/asset/${a.sha256}`;
 }
 
-/** Where <img> should point: browsers render every image mime we extract
- *  except TGA and TIFF, which go through the server's PNG conversion. Kept in
- *  sync with pngConvertible (imgpng.ts) — not imported: that module pulls the
- *  decoders into the client bundle. */
+/** Where <img> should point: web-safe mimes load raw, while TGA, TIFF, and
+ *  BMP go through the server's PNG conversion. BMP is not browser-safe:
+ *  WebKit rejects common legacy variants (biClrUsed=2^24, as written by
+ *  90s-era tools) even when served as image/bmp. Kept in sync with
+ *  pngConvertible (imgpng.ts) — not imported: that module pulls the decoders
+ *  into the client bundle. */
 export function imageSrc(a: ViewableAsset): string {
-  return a.mime === "image/x-tga" || a.mime === "image/tiff" ? `${assetUrl(a)}/png` : assetUrl(a);
+  return a.mime === "image/bmp" || a.mime === "image/x-tga" || a.mime === "image/tiff"
+    ? `${assetUrl(a)}/png`
+    : assetUrl(a);
 }
 
 /** Where <video> should point: MP4/WebM play natively, while MPEG-1/2 program
