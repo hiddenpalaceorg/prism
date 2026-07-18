@@ -41,5 +41,9 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
     "typescript": "^5"
+  },
+  "overrides": {
+    "adm-zip": "^0.6.0",
+    "postcss": "^8.5.10"
   }
 }
