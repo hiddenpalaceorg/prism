@@ -66,6 +66,9 @@ _VIDEO = {
     "m1v": "video/mpeg",
     "m2v": "video/mpeg",
     "vob": "video/mpeg",
+    # AVI (RIFF container) — the PC-era press/demo disc staple. Also not
+    # browser-playable; takes the same transcode path as MPEG.
+    "avi": "video/x-msvideo",
 }
 
 # Print-format documents. Browsers render PDF natively; PostScript (.eps, .ps,
@@ -175,6 +178,7 @@ _MAGIC = {
     # Program streams (.mpg, DVD .vob) open on a pack start code, elementary
     # video streams (.m1v/.m2v) on a sequence header.
     "video/mpeg": lambda h: h.startswith((b"\x00\x00\x01\xba", b"\x00\x00\x01\xb3")),
+    "video/x-msvideo": lambda h: h[:4] == b"RIFF" and h[8:12] == b"AVI ",
     "application/pdf": lambda h: h.startswith(b"%PDF-"),
     # ASCII PostScript/EPS, or the DOS EPS binary wrapper around one.
     "application/postscript": lambda h: h.startswith((b"%!PS", b"\xc5\xd0\xd3\xc6")),

@@ -1,6 +1,6 @@
-// ffmpeg-backed transcoding: MPEG-1/2 program streams (.mpg, DVD .vob) and
-// bare MPEG video elementary streams to a format browsers actually play, and
-// ADPCM-family WAVs (Xbox ADPCM and friends) to plain 16-bit PCM WAV.
+// ffmpeg-backed transcoding: MPEG-1/2 program streams (.mpg, DVD .vob), bare
+// MPEG video elementary streams, and AVI to a format browsers actually play,
+// and ADPCM-family WAVs (Xbox ADPCM and friends) to plain 16-bit PCM WAV.
 // Like Ghostscript in gs.ts, ffmpeg is a soft dependency: feature-detected at
 // runtime, and callers degrade (download-only viewer) when it's missing.
 //
@@ -48,7 +48,7 @@ const THUMB_TIMEOUT_MS = 120_000;
 
 /** Mimes ensureTranscode can convert. */
 export function transcodable(mime: string): boolean {
-  return mime === "video/mpeg";
+  return mime === "video/mpeg" || mime === "video/x-msvideo";
 }
 
 export interface TranscodeProfile {

@@ -20,9 +20,10 @@ pub const FINGERPRINT_PROFILE: &str = "v1";
 /// 20MB); 7 = archives (zip/7z/rar/tar/cab/…) extracted as if directories,
 /// their members' assets riding under `<archive path>/...`; 8 = the shared
 /// asset cap raised from 20 to 64 MiB (files between the two previously fell
-/// back to head snippets). A record below the current value gets its assets
-/// re-extracted on the next analyze.
-pub const ASSET_PROFILE: u32 = 8;
+/// back to head snippets); 9 = AVI classified as video (previously a head
+/// snippet). A record below the current value gets its assets re-extracted
+/// on the next analyze.
+pub const ASSET_PROFILE: u32 = 9;
 
 /// A fully analyzed disc image / container — image-independent and self-describing.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -86,6 +86,19 @@ def test_sniff_mpeg_video():
     assert not viewable.sniff(b"MZ\x90\x00", "video/mpeg")
 
 
+def test_classify_avi_video():
+    assert viewable.classify("/MOVIES/TRAILER.AVI") == ("video", "video/x-msvideo")
+    assert viewable.classify("/fmv/intro.avi") == ("video", "video/x-msvideo")
+
+
+def test_sniff_avi_video():
+    assert viewable.sniff(b"RIFF\x24\x08\x00\x00AVI LIST", "video/x-msvideo")
+    # Other RIFF families (WAV, CDXA) must not pass as AVI.
+    assert not viewable.sniff(b"RIFF\x24\x08\x00\x00WAVEfmt ", "video/x-msvideo")
+    assert not viewable.sniff(b"RIFF\x24\x08\x00\x00CDXAfmt ", "video/x-msvideo")
+    assert not viewable.sniff(b"MZ\x90\x00", "video/x-msvideo")
+
+
 def test_classify_documents():
     assert viewable.classify("/COMIC/BOOK.PDF") == ("document", "application/pdf")
     assert viewable.classify("/ART/LOGO.EPS") == ("document", "application/postscript")
