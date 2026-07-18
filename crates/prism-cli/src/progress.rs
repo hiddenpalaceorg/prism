@@ -287,14 +287,18 @@ fn counter_line(c: &Counter, t: f32) -> String {
     }
 }
 
-// Heavy rule with a half-cell head, empty missing. ASCII mode draws the
-// classic equals-and-chevron bar instead.
+// Heavy rule with a half-cell head, empty missing. ASCII mode draws a plain
+// equals rule with no head.
 fn bar(frac: f32) -> String {
     let n = (frac * BARW as f32) as usize;
-    let (fill, head) = if ascii_mode() { ("=", '>') } else { ("━", '╸') };
-    let mut s = fill.repeat(n);
+    if ascii_mode() {
+        let mut s = "=".repeat(n);
+        s.push_str(&" ".repeat(BARW - n));
+        return s;
+    }
+    let mut s = "━".repeat(n);
     if n < BARW {
-        s.push(head);
+        s.push('╸');
         s.push_str(&" ".repeat(BARW - n - 1));
     }
     s
@@ -307,7 +311,7 @@ fn sweep(t: f32) -> String {
     let p = if phase < 1.0 { phase } else { 2.0 - phase };
     let p = (p * span) as usize;
     let mut s = " ".repeat(p);
-    s.push_str(if ascii_mode() { "<=>" } else { "╺━╸" });
+    s.push_str(if ascii_mode() { "===" } else { "╺━╸" });
     s.push_str(&" ".repeat(BARW - p - 3));
     s
 }
