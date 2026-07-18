@@ -194,13 +194,19 @@ pub fn run(args: Vec<String>, fallback_adapter: Option<AdapterCommand>) -> i32 {
             return e.exit_code();
         }
     };
-    match execute(cli, fallback_adapter) {
+    let code = match execute(cli, fallback_adapter) {
         Ok(()) => 0,
         Err(e) => {
             errln!("error: {e:#}");
             1
         }
+    };
+    // A parting blank line puts the shell prompt on a fresh column-zero row,
+    // whatever column the run left the cursor in.
+    if crate::out::stderr_tty() {
+        errln!();
     }
+    code
 }
 
 fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
@@ -340,20 +346,52 @@ fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
             let token = moderation_token.as_deref().filter(|t| !t.is_empty());
             let total = targets.len();
             let mut failed = 0usize;
+            let (mut pushed, mut blobs, mut bytes) = (0usize, 0usize, 0u64);
+            let (mut unavailable, mut accepted) = (0usize, 0usize);
             // One loader across all targets: batch shows "[n/N] name" beside the
             // spinner, and every submit-phase line scrolls out above it (the
             // loader's frames carry the explicit `\r`s a Windows console needs).
             let observer = Arc::new(LoaderObserver::new());
             for (i, target) in targets.iter().enumerate() {
                 observer.batch(i as u64, total as u64, target);
-                if let Err(e) =
-                    submit_one(&analyzer, &reader, &client, target, &nickname, token, force, &observer)
+                match submit_one(&analyzer, &reader, &client, target, &nickname, token, force, &observer)
                 {
-                    failed += 1;
-                    observer.on_event(Event::Message(format!("error: {target}: {e:#}")));
+                    Ok(o) => {
+                        pushed += 1;
+                        blobs += o.uploaded;
+                        bytes += o.bytes;
+                        unavailable += o.unavailable;
+                        accepted += usize::from(o.accepted);
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        observer.on_event(Event::Message(format!("error: {target}: {e:#}")));
+                    }
                 }
             }
             observer.finish();
+            // The end-of-run summary: what this whole invocation accomplished.
+            let mut summary = format!(
+                "submitted {pushed} of {total} build{}",
+                if total == 1 { "" } else { "s" }
+            );
+            if blobs > 0 {
+                summary.push_str(&format!(
+                    ", uploaded {blobs} asset blob{} ({})",
+                    if blobs == 1 { "" } else { "s" },
+                    summary::human_size(bytes),
+                ));
+            }
+            if unavailable > 0 {
+                summary.push_str(&format!(
+                    ", {unavailable} blob{} not in local store",
+                    if unavailable == 1 { "" } else { "s" }
+                ));
+            }
+            if accepted > 0 {
+                summary.push_str(&format!(", accepted {accepted}"));
+            }
+            errln!("{summary}");
             if failed > 0 {
                 bail!("{failed} of {total} submissions failed");
             }
@@ -515,7 +553,7 @@ fn submit_one(
     moderation_token: Option<&str>,
     force: bool,
     observer: &Arc<LoaderObserver>,
-) -> Result<()> {
+) -> Result<service::SubmitOutcome> {
     let analysis = resolve_target(analyzer, target, force, observer)?;
     let json = render::to_json(&analysis.record)?;
     observer.on_event(Event::Message(format!(

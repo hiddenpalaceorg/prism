@@ -30,6 +30,18 @@ pub struct Client {
     base: String,
 }
 
+/// What one submission accomplished, for the caller's end-of-run summary.
+pub struct SubmitOutcome {
+    /// Asset blobs newly confirmed on the server.
+    pub uploaded: usize,
+    /// Blobs the server wants that the local store does not hold.
+    pub unavailable: usize,
+    /// Bytes confirmed server-side across the uploaded blobs.
+    pub bytes: u64,
+    /// Whether the submission was moderation-accepted into the live build.
+    pub accepted: bool,
+}
+
 impl Client {
     pub fn new(web_url: &str) -> Result<Self> {
         let tls = native_tls::TlsConnector::new().context("initializing TLS")?;
@@ -92,7 +104,7 @@ impl Client {
         local: &HashMap<String, PathBuf>,
         moderation_token: Option<&str>,
         obs: &dyn ProgressObserver,
-    ) -> Result<()> {
+    ) -> Result<SubmitOutcome> {
         let record: serde_json::Value =
             serde_json::from_str(record_json).context("parsing record JSON")?;
         let body = serde_json::json!({ "nickname": nickname, "record": record });
@@ -112,25 +124,28 @@ impl Client {
             .unwrap_or_else(|| "queued".into());
         obs.on_event(Event::Message(format!("submitted — {status}")));
 
-        self.upload_missing_assets(build_sha, local, obs)?;
+        let (uploaded, unavailable, bytes) = self.upload_missing_assets(build_sha, local, obs)?;
 
+        let mut accepted = false;
         if let Some(token) = moderation_token {
             self.accept(build_sha, token, obs)?;
+            accepted = true;
         }
-        Ok(())
+        Ok(SubmitOutcome { uploaded, unavailable, bytes, accepted })
     }
 
     /// Ask the server which of the submitted build's asset blobs it lacks,
     /// then PUT each one we hold locally, a few at once. Errors if any upload
     /// fails — the record submission itself has already succeeded by then.
+    /// Returns (uploaded blobs, blobs not held locally, bytes confirmed).
     fn upload_missing_assets(
         &self,
         build_sha: &str,
         local: &HashMap<String, PathBuf>,
         obs: &dyn ProgressObserver,
-    ) -> Result<()> {
+    ) -> Result<(usize, usize, u64)> {
         if local.is_empty() {
-            return Ok(()); // nothing extracted locally — nothing to offer
+            return Ok((0, 0, 0)); // nothing extracted locally — nothing to offer
         }
         let assets_url = format!("{}/api/submissions/{build_sha}/assets", self.base);
         let (code, body) = self.request("GET", &assets_url, &[], None)?;
@@ -147,7 +162,7 @@ impl Client {
             .unwrap_or_default();
         if missing.is_empty() {
             obs.on_event(Event::Message("assets already on server".into()));
-            return Ok(());
+            return Ok((0, 0, 0));
         }
         let todo: Vec<&String> = missing.iter().filter(|sha| local.contains_key(*sha)).collect();
         let unavailable = missing.len() - todo.len();
@@ -155,21 +170,18 @@ impl Client {
             obs.on_event(Event::Message(format!(
                 "{unavailable} missing asset blobs are not in the local store"
             )));
-            return Ok(());
+            return Ok((0, unavailable, 0));
         }
         // Workers pull the next blob off a shared counter; each blob is its own
-        // resumable PUT (chunks of one blob never interleave). One byte-level
-        // counter spans all blobs, advanced as chunks are accepted.
+        // resumable PUT (chunks of one blob never interleave). One counter
+        // spans all blobs, counted per completed blob (the loader shows a
+        // non-byte counter as k/n rather than a percentage).
         let total = todo.len();
-        let total_bytes: u64 = todo
-            .iter()
-            .map(|sha| std::fs::metadata(&local[*sha]).map(|m| m.len()).unwrap_or(0))
-            .sum();
         obs.on_event(Event::CounterOpen {
             id: UPLOAD_ID,
             label: "Uploading".into(),
-            unit: "B".into(),
-            total: Some(total_bytes as f64),
+            unit: "blobs".into(),
+            total: Some(total as f64),
         });
         let bytes_done = AtomicU64::new(0);
         let next = AtomicUsize::new(0);
@@ -180,13 +192,13 @@ impl Client {
                 s.spawn(|| loop {
                     let Some(sha) = todo.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
                     let ok = self.upload_asset_chunked(&assets_url, sha, &local[*sha], &|delta| {
-                        let done = bytes_done.fetch_add(delta as u64, Ordering::Relaxed) + delta as u64;
-                        obs.on_event(Event::Progress { id: UPLOAD_ID, count: done as f64 });
+                        bytes_done.fetch_add(delta as u64, Ordering::Relaxed);
                     });
                     if ok {
                         ok_count.fetch_add(1, Ordering::Relaxed);
                     }
                     let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    obs.on_event(Event::Progress { id: UPLOAD_ID, count: n as f64 });
                     obs.on_event(Event::Message(format!(
                         "  [{n}/{total}] {}… {}",
                         &sha[..12.min(sha.len())],
@@ -207,7 +219,7 @@ impl Client {
             bail!("{failed} asset upload{} failed (submission is queued; retry to resume)",
                 if failed == 1 { "" } else { "s" });
         }
-        Ok(())
+        Ok((uploaded, unavailable, bytes_done.into_inner()))
     }
 
     /// PUT one asset blob in resumable chunks: each request appends at

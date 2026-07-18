@@ -15,9 +15,13 @@ fn stdout_crlf() -> bool {
     cfg!(windows) && *V.get_or_init(|| std::io::stdout().is_terminal())
 }
 
-fn stderr_crlf() -> bool {
+pub fn stderr_tty() -> bool {
     static V: OnceLock<bool> = OnceLock::new();
-    cfg!(windows) && *V.get_or_init(|| std::io::stderr().is_terminal())
+    *V.get_or_init(|| std::io::stderr().is_terminal())
+}
+
+fn stderr_crlf() -> bool {
+    cfg!(windows) && stderr_tty()
 }
 
 fn emit(w: &mut impl Write, args: fmt::Arguments, crlf: bool, newline: bool) {
