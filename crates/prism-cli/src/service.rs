@@ -5,17 +5,22 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use prism_core::{Event, ProgressObserver};
 
 /// Upload chunk size — small enough to clear typical proxy body-size limits.
 const UPLOAD_CHUNK: usize = 4 * 1024 * 1024;
 
 /// How many asset blobs to upload at once.
 const PARALLEL_UPLOADS: usize = 32;
+
+/// Counter id for the upload progress bar. The adapter's counters are all
+/// closed by the time the service phase starts, so any id would do.
+const UPLOAD_ID: u64 = u64::MAX;
 
 /// Give up after this many consecutive rate-limit waits on one chunk.
 const MAX_THROTTLE_RETRIES: u32 = 30;
@@ -86,6 +91,7 @@ impl Client {
         nickname: &str,
         local: &HashMap<String, PathBuf>,
         moderation_token: Option<&str>,
+        obs: &dyn ProgressObserver,
     ) -> Result<()> {
         let record: serde_json::Value =
             serde_json::from_str(record_json).context("parsing record JSON")?;
@@ -104,12 +110,12 @@ impl Client {
             .ok()
             .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(String::from))
             .unwrap_or_else(|| "queued".into());
-        println!("submitted — {status}");
+        obs.on_event(Event::Message(format!("submitted — {status}")));
 
-        self.upload_missing_assets(build_sha, local)?;
+        self.upload_missing_assets(build_sha, local, obs)?;
 
         if let Some(token) = moderation_token {
-            self.accept(build_sha, token)?;
+            self.accept(build_sha, token, obs)?;
         }
         Ok(())
     }
@@ -117,7 +123,12 @@ impl Client {
     /// Ask the server which of the submitted build's asset blobs it lacks,
     /// then PUT each one we hold locally, a few at once. Errors if any upload
     /// fails — the record submission itself has already succeeded by then.
-    fn upload_missing_assets(&self, build_sha: &str, local: &HashMap<String, PathBuf>) -> Result<()> {
+    fn upload_missing_assets(
+        &self,
+        build_sha: &str,
+        local: &HashMap<String, PathBuf>,
+        obs: &dyn ProgressObserver,
+    ) -> Result<()> {
         if local.is_empty() {
             return Ok(()); // nothing extracted locally — nothing to offer
         }
@@ -135,18 +146,32 @@ impl Client {
             })
             .unwrap_or_default();
         if missing.is_empty() {
-            println!("assets already on server");
+            obs.on_event(Event::Message("assets already on server".into()));
             return Ok(());
         }
         let todo: Vec<&String> = missing.iter().filter(|sha| local.contains_key(*sha)).collect();
         let unavailable = missing.len() - todo.len();
         if todo.is_empty() {
-            println!("{unavailable} missing asset blobs are not in the local store");
+            obs.on_event(Event::Message(format!(
+                "{unavailable} missing asset blobs are not in the local store"
+            )));
             return Ok(());
         }
         // Workers pull the next blob off a shared counter; each blob is its own
-        // resumable PUT (chunks of one blob never interleave).
+        // resumable PUT (chunks of one blob never interleave). One byte-level
+        // counter spans all blobs, advanced as chunks are accepted.
         let total = todo.len();
+        let total_bytes: u64 = todo
+            .iter()
+            .map(|sha| std::fs::metadata(&local[*sha]).map(|m| m.len()).unwrap_or(0))
+            .sum();
+        obs.on_event(Event::CounterOpen {
+            id: UPLOAD_ID,
+            label: "Uploading".into(),
+            unit: "B".into(),
+            total: Some(total_bytes as f64),
+        });
+        let bytes_done = AtomicU64::new(0);
         let next = AtomicUsize::new(0);
         let completed = AtomicUsize::new(0);
         let ok_count = AtomicUsize::new(0);
@@ -154,26 +179,30 @@ impl Client {
             for _ in 0..PARALLEL_UPLOADS.min(total) {
                 s.spawn(|| loop {
                     let Some(sha) = todo.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
-                    let ok = self.upload_asset_chunked(&assets_url, sha, &local[*sha]);
+                    let ok = self.upload_asset_chunked(&assets_url, sha, &local[*sha], &|delta| {
+                        let done = bytes_done.fetch_add(delta as u64, Ordering::Relaxed) + delta as u64;
+                        obs.on_event(Event::Progress { id: UPLOAD_ID, count: done as f64 });
+                    });
                     if ok {
                         ok_count.fetch_add(1, Ordering::Relaxed);
                     }
                     let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                    eprintln!(
+                    obs.on_event(Event::Message(format!(
                         "  [{n}/{total}] {}… {}",
                         &sha[..12.min(sha.len())],
                         if ok { "uploaded" } else { "FAILED" }
-                    );
+                    )));
                 });
             }
         });
+        obs.on_event(Event::CounterClose { id: UPLOAD_ID });
         let uploaded = ok_count.into_inner();
         let failed = total - uploaded;
         let mut note = format!("uploaded {uploaded} asset blob{}", if uploaded == 1 { "" } else { "s" });
         if unavailable > 0 {
             note.push_str(&format!(", {unavailable} not in local store"));
         }
-        println!("{note}");
+        obs.on_event(Event::Message(note));
         if failed > 0 {
             bail!("{failed} asset upload{} failed (submission is queued; retry to resume)",
                 if failed == 1 { "" } else { "s" });
@@ -183,10 +212,19 @@ impl Client {
 
     /// PUT one asset blob in resumable chunks: each request appends at
     /// `offset`, a 409 answers with the server's staged offset to resume from,
-    /// and the final chunk returns `stored` (or `exists`).
-    fn upload_asset_chunked(&self, assets_url: &str, sha: &str, path: &Path) -> bool {
+    /// and the final chunk returns `stored` (or `exists`). `report` receives
+    /// newly-confirmed byte counts, monotonic per blob (a 409 resume can move
+    /// the offset either way, only fresh high-water marks are reported).
+    fn upload_asset_chunked(
+        &self,
+        assets_url: &str,
+        sha: &str,
+        path: &Path,
+        report: &dyn Fn(usize),
+    ) -> bool {
         let Ok(bytes) = std::fs::read(path) else { return false };
         let mut offset: usize = 0;
+        let mut reported: usize = 0;
         let mut last_staged: Option<usize> = None;
         let mut throttled = 0u32;
         while offset < bytes.len() {
@@ -205,13 +243,22 @@ impl Client {
                 c if (200..300).contains(&c) => {
                     let v = serde_json::from_str::<serde_json::Value>(&body).unwrap_or_default();
                     match v.get("status").and_then(|s| s.as_str()) {
-                        Some("stored") | Some("exists") => return true,
+                        Some("stored") | Some("exists") => {
+                            if bytes.len() > reported {
+                                report(bytes.len() - reported);
+                            }
+                            return true;
+                        }
                         _ => {
                             offset = v
                                 .get("offset")
                                 .and_then(|o| o.as_u64())
                                 .map(|o| o as usize)
                                 .unwrap_or(end);
+                            if offset > reported {
+                                report(offset - reported);
+                                reported = offset;
+                            }
                             last_staged = None;
                             throttled = 0;
                         }
@@ -244,6 +291,10 @@ impl Client {
                     }
                     last_staged = Some(staged);
                     offset = staged;
+                    if staged > reported {
+                        report(staged - reported);
+                        reported = staged;
+                    }
                 }
                 _ => return false,
             }
@@ -253,7 +304,7 @@ impl Client {
 
     /// Accept the just-submitted build with the moderation token, so the
     /// record (and its refreshed assets) replaces the live build immediately.
-    fn accept(&self, build_sha: &str, token: &str) -> Result<()> {
+    fn accept(&self, build_sha: &str, token: &str, obs: &dyn ProgressObserver) -> Result<()> {
         let url = format!("{}/api/submissions/{build_sha}", self.base);
         let (code, body) = self.request(
             "POST",
@@ -263,7 +314,7 @@ impl Client {
         )?;
         match code {
             c if (200..300).contains(&c) => {
-                println!("accepted — live build updated");
+                obs.on_event(Event::Message("accepted — live build updated".into()));
                 Ok(())
             }
             401 => bail!("accept failed: moderation token rejected (submission stays queued)"),

@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use prism_core::{Event, ProgressObserver};
 
+use crate::out::errln;
 use crate::tetra;
 
 const REGION_H: usize = tetra::H + 1; // loader lines: one blank, then the spinner rows
@@ -125,7 +126,7 @@ impl LoaderObserver {
             };
             self.state.lock().unwrap().batch = Some(label);
         } else if total > 1 {
-            eprintln!("[{}/{}] {}", index + 1, total, name);
+            errln!("[{}/{}] {}", index + 1, total, name);
         }
     }
 
@@ -169,7 +170,7 @@ impl ProgressObserver for LoaderObserver {
                 if self.tty {
                     self.state.lock().unwrap().pending.push(m);
                 } else {
-                    eprintln!("{m}");
+                    errln!("{m}");
                 }
             }
             Event::BatchItem { index, total, name } => {
