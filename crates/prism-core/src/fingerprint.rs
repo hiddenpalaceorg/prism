@@ -45,7 +45,7 @@ pub fn hash_image(path: &str, observer: &Arc<dyn ProgressObserver>) -> Result<Im
     const ID: u64 = 0;
     observer.on_event(Event::CounterOpen {
         id: ID,
-        label: format!("Hashing image {name}"),
+        label: "Hashing".into(),
         unit: "B".into(),
         total: Some(size as f64),
     });
@@ -79,7 +79,7 @@ fn hash_dir(root: &std::path::Path, observer: &Arc<dyn ProgressObserver>) -> Res
     const ID: u64 = 0;
     observer.on_event(Event::CounterOpen {
         id: ID,
-        label: format!("Hashing image {name}"),
+        label: "Hashing".into(),
         unit: "B".into(),
         total: Some(total as f64),
     });
