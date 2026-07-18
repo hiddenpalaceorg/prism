@@ -15,7 +15,17 @@ export const metadata: Metadata = {
 
 const PER_PAGE = 100;
 
-const SORT_KEYS: BuildSortKey[] = ["name", "system", "build_date", "file_count", "total_size"];
+const SORT_KEYS: BuildSortKey[] = [
+  "name",
+  "system",
+  "build_date",
+  "file_count",
+  "total_size",
+  "notes",
+  "screenshots",
+  "video",
+  "physical",
+];
 
 // Search/filter/sort/pagination all resolve in SQL — the old version shipped
 // every build (a 6MB payload at 16k builds) and filtered client-side.
