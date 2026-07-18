@@ -104,11 +104,12 @@ pub(crate) fn frame(t: f32, ascii: bool) -> [String; 4] {
     render_wire(0.85 + t * 0.9, 1.0 + t * 2.0, 0.3 + t * 0.55, 7.2, 8.0)
 }
 
-// ASCII tetrahedron. One character per cell picked from the owning edge's
-// overall screen slope, so every edge draws as a consistent stroke. The pose
-// spins about the vertical axis with a slight fixed tilt instead of
-// tumbling: 14x4 characters cannot keep arbitrary poses readable, a
-// triangle silhouette with sweeping inner edges stays one.
+// ASCII tetrahedron: every cell an edge passes through is a '#'. Uniform
+// cells keep the shape connected where slope-matched strokes ('/', '|', '\')
+// fall apart at this resolution. The pose spins about the vertical axis with
+// a slight fixed tilt instead of tumbling: 14x4 characters cannot keep
+// arbitrary poses readable, a triangle silhouette with sweeping inner edges
+// stays one.
 fn render_ascii(t: f32) -> [String; 4] {
     let v = rotated_vertices(0.18, 1.0 + t * 2.2, 0.0);
     let visible = face_visibility(&v);
@@ -129,9 +130,6 @@ fn render_ascii(t: f32) -> [String; 4] {
         };
         let (x0, y0) = pr(v[ia]);
         let (x1, y1) = pr(v[ib]);
-        // slope in visual units: a row is twice as tall as a col is wide
-        let (vdx, vdy) = (x1 - x0, (y1 - y0) * 2.0);
-        let steep = vdy.abs() / vdx.abs().max(1e-6);
         const M: usize = 64;
         for m in 0..=M {
             let s = m as f32 / M as f32;
@@ -140,20 +138,7 @@ fn render_ascii(t: f32) -> [String; 4] {
             if c < 0 || c >= W as i32 || r < 0 || r >= H as i32 {
                 continue;
             }
-            let ch = if steep > 2.4 {
-                '|'
-            } else if steep < 0.45 {
-                if y - y.floor() > 0.6 {
-                    '_'
-                } else {
-                    '-'
-                }
-            } else if vdx * vdy > 0.0 {
-                '\\'
-            } else {
-                '/'
-            };
-            grid[r as usize][c as usize] = ch;
+            grid[r as usize][c as usize] = '#';
         }
     }
     std::array::from_fn(|r| grid[r].iter().collect())
