@@ -1,10 +1,10 @@
 //! Renders core progress events as a 4-line loader on stderr: a tumbling
-//! braille tetrahedron beside the item being worked on, a blank line, and up
-//! to two progress rows (the first counter still open and the most recently
-//! opened one), each as a label column, a heavy-rule bar with a half-cell
-//! head, and a percentage. Indeterminate counters get a bouncing comet on
-//! the same rail. Falls back to plain line output when stderr is not a
-//! terminal.
+//! braille tetrahedron beside the item being worked on, a transient
+//! per-item status line, and up to two progress rows (the first counter
+//! still open and the most recently opened one), each as a label column, a
+//! heavy-rule bar with a half-cell head, and a percentage or item count.
+//! Indeterminate counters get a bouncing comet on the same rail. Falls
+//! back to plain line output when stderr is not a terminal.
 //!
 //! Windows console fonts are not reliable braille renderers, so on Windows
 //! and inside WSL the loader is all-ASCII. PRISM_ASCII=1 or =0 forces the
@@ -57,6 +57,9 @@ struct Counter {
 #[derive(Default)]
 struct State {
     batch: Option<String>,
+    /// Latest per-item status, drawn inside the loader region and replaced
+    /// by the next one (unlike `pending`, it never reaches the scrollback).
+    transient: Option<String>,
     counters: Vec<Counter>,
     pending: Vec<String>, // messages to scroll out above the loader
 }
@@ -125,9 +128,21 @@ impl LoaderObserver {
             } else {
                 name.to_string()
             };
-            self.state.lock().unwrap().batch = Some(label);
+            let mut st = self.state.lock().unwrap();
+            st.batch = Some(label);
+            st.transient = None; // a new item starts with a clean status line
         } else if total > 1 {
             errln!("[{}/{}] {}", index + 1, total, name);
+        }
+    }
+
+    /// Show a per-item status inside the loader region, replacing the
+    /// previous one. Plain mode logs it as an ordinary line instead.
+    pub fn transient(&self, text: String) {
+        if self.tty {
+            self.state.lock().unwrap().transient = Some(text);
+        } else {
+            errln!("{text}");
         }
     }
 
@@ -252,7 +267,7 @@ fn compose(st: &State, t: f32, buf: &mut String) {
     buf.push_str("\r\x1b[2K\n"); // blank line separating the loader from prior output
     let texts: [String; tetra::H] = [
         st.batch.as_deref().map(|s| truncate(s, BATCHW)).unwrap_or_default(),
-        String::new(),
+        st.transient.as_deref().map(|s| truncate(s, BATCHW)).unwrap_or_default(),
         st.counters.first().map(|c| counter_line(c, t)).unwrap_or_default(),
         if st.counters.len() > 1 {
             counter_line(st.counters.last().unwrap(), t)

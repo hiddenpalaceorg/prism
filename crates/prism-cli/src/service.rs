@@ -12,6 +12,8 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use prism_core::{Event, ProgressObserver};
 
+use crate::progress::LoaderObserver;
+
 /// Upload chunk size — small enough to clear typical proxy body-size limits.
 const UPLOAD_CHUNK: usize = 4 * 1024 * 1024;
 
@@ -103,7 +105,7 @@ impl Client {
         nickname: &str,
         local: &HashMap<String, PathBuf>,
         moderation_token: Option<&str>,
-        obs: &dyn ProgressObserver,
+        obs: &LoaderObserver,
     ) -> Result<SubmitOutcome> {
         let record: serde_json::Value =
             serde_json::from_str(record_json).context("parsing record JSON")?;
@@ -142,7 +144,7 @@ impl Client {
         &self,
         build_sha: &str,
         local: &HashMap<String, PathBuf>,
-        obs: &dyn ProgressObserver,
+        obs: &LoaderObserver,
     ) -> Result<(usize, usize, u64)> {
         if local.is_empty() {
             return Ok((0, 0, 0)); // nothing extracted locally — nothing to offer
@@ -199,11 +201,18 @@ impl Client {
                     }
                     let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     obs.on_event(Event::Progress { id: UPLOAD_ID, count: n as f64 });
-                    obs.on_event(Event::Message(format!(
+                    let line = format!(
                         "  [{n}/{total}] {}… {}",
                         &sha[..12.min(sha.len())],
                         if ok { "uploaded" } else { "FAILED" }
-                    )));
+                    );
+                    // Successes tick by inside the loader; failures must
+                    // survive in the scrollback.
+                    if ok {
+                        obs.transient(line);
+                    } else {
+                        obs.on_event(Event::Message(line));
+                    }
                 });
             }
         });
@@ -316,7 +325,7 @@ impl Client {
 
     /// Accept the just-submitted build with the moderation token, so the
     /// record (and its refreshed assets) replaces the live build immediately.
-    fn accept(&self, build_sha: &str, token: &str, obs: &dyn ProgressObserver) -> Result<()> {
+    fn accept(&self, build_sha: &str, token: &str, obs: &LoaderObserver) -> Result<()> {
         let url = format!("{}/api/submissions/{build_sha}", self.base);
         let (code, body) = self.request(
             "POST",
