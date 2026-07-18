@@ -5,6 +5,11 @@
 //! head, and a percentage. Indeterminate counters get a bouncing comet on
 //! the same rail. Falls back to plain line output when stderr is not a
 //! terminal.
+//!
+//! Consoles whose font lacks braille (legacy Windows conhost, WSL windows
+//! outside Windows Terminal) get an all-ASCII loader instead. The default is
+//! ASCII on Windows unless WT_SESSION marks a Windows Terminal session, and
+//! PRISM_ASCII=1 or =0 forces the choice on any platform.
 
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +26,14 @@ const BARW: usize = 30; // bar columns
 const LABELW: usize = 14; // label column width; longer labels truncate
 const BATCHW: usize = 58; // truncation budget for the item line
 const FRAME_US: u64 = 16_667; // 60fps
+
+// Render with ASCII-safe glyphs only (see the module docs). Set once at
+// observer creation, read wherever glyphs are chosen.
+static ASCII_MODE: AtomicBool = AtomicBool::new(false);
+
+fn ascii_mode() -> bool {
+    ASCII_MODE.load(Ordering::Relaxed)
+}
 
 struct Counter {
     id: u64,
@@ -77,6 +90,12 @@ fn enable_vt() -> bool {
 
 impl LoaderObserver {
     pub fn new() -> Self {
+        let ascii = match std::env::var("PRISM_ASCII").ok().as_deref() {
+            Some("1") => true,
+            Some("0") => false,
+            _ => cfg!(windows) && std::env::var_os("WT_SESSION").is_none(),
+        };
+        ASCII_MODE.store(ascii, Ordering::Relaxed);
         let tty = std::io::stderr().is_terminal() && enable_vt();
         let state = Arc::new(Mutex::new(State::default()));
         let running = Arc::new(AtomicBool::new(true));
@@ -217,7 +236,7 @@ fn draw_loop(state: Arc<Mutex<State>>, running: Arc<AtomicBool>) {
 // The four loader lines: spinner cells, then title / current item / bars.
 // Every line is \x1b[2K-cleared before writing, so no padding is needed.
 fn compose(st: &State, t: f32, buf: &mut String) {
-    let spin = tetra::frame(t);
+    let spin = tetra::frame(t, ascii_mode());
     buf.push_str("\r\x1b[2K\n"); // blank line separating the loader from prior output
     let texts: [String; tetra::H] = [
         st.batch.as_deref().map(|s| truncate(s, BATCHW)).unwrap_or_default(),
@@ -249,12 +268,14 @@ fn counter_line(c: &Counter, t: f32) -> String {
     }
 }
 
-// Heavy rule with a half-cell head, empty missing.
+// Heavy rule with a half-cell head, empty missing. ASCII mode draws the
+// classic equals-and-chevron bar instead.
 fn bar(frac: f32) -> String {
     let n = (frac * BARW as f32) as usize;
-    let mut s = "━".repeat(n);
+    let (fill, head) = if ascii_mode() { ("=", '>') } else { ("━", '╸') };
+    let mut s = fill.repeat(n);
     if n < BARW {
-        s.push('╸');
+        s.push(head);
         s.push_str(&" ".repeat(BARW - n - 1));
     }
     s
@@ -267,7 +288,7 @@ fn sweep(t: f32) -> String {
     let p = if phase < 1.0 { phase } else { 2.0 - phase };
     let p = (p * span) as usize;
     let mut s = " ".repeat(p);
-    s.push_str("╺━╸");
+    s.push_str(if ascii_mode() { "<=>" } else { "╺━╸" });
     s.push_str(&" ".repeat(BARW - p - 3));
     s
 }
@@ -279,6 +300,11 @@ fn truncate(s: &str, max: usize) -> String {
     if n <= max {
         return s.to_string();
     }
-    let tail: String = s.chars().skip(n - (max - 1)).collect();
-    format!("…{tail}")
+    if ascii_mode() {
+        let tail: String = s.chars().skip(n - (max - 2)).collect();
+        format!("..{tail}")
+    } else {
+        let tail: String = s.chars().skip(n - (max - 1)).collect();
+        format!("…{tail}")
+    }
 }
