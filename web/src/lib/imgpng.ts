@@ -24,8 +24,9 @@ export function toPng(mime: string, bytes: Buffer): Buffer {
 }
 
 // Refuse to decode absurd dimensions (decode allocates width*height*4 up
-// front, and headers are attacker-controlled bytes).
-const MAX_PIXELS = 16_000_000;
+// front, and headers are attacker-controlled bytes). Sized to admit hi-res
+// print artwork scans (5760x3600 and up).
+const MAX_PIXELS = 32_000_000;
 
 // The standard BGRA channel masks — what every mainstream tool writes when it
 // uses BI_BITFIELDS on 24/32bpp instead of plain BI_RGB.
