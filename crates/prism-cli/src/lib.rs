@@ -370,7 +370,11 @@ fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
                 }
             }
             observer.finish();
-            // The end-of-run summary: what this whole invocation accomplished.
+            // The end-of-run summary: what this whole invocation accomplished,
+            // set off from the scrolled per-blob lines by a blank line.
+            if crate::out::stderr_tty() {
+                errln!();
+            }
             let mut summary = format!(
                 "submitted {pushed} of {total} build{}",
                 if total == 1 { "" } else { "s" }
