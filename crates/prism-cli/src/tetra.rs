@@ -112,7 +112,7 @@ pub(crate) fn frame(t: f32, ascii: bool) -> [String; 4] {
 // 14x4 characters cannot keep arbitrary poses readable, a triangle
 // silhouette with sweeping inner edges stays one.
 fn render_ascii(t: f32) -> [String; 4] {
-    let v = rotated_vertices(0.18, 1.0 + t * 2.2, 0.0);
+    let v = rotated_vertices(0.18, 1.0 - t * 2.2, 0.0);
     let visible = face_visibility(&v);
 
     const SX: f32 = 3.6; // cols per world unit
