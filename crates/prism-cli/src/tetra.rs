@@ -95,27 +95,68 @@ fn face_visibility(v: &[[f32; 3]; 4]) -> [bool; 4] {
 }
 
 /// The four spinner lines at time `t` seconds: the tumble pose advances on
-/// all three axes at different velocities. `ascii` swaps the wireframe for a
-/// plain rotating spinner, for consoles whose font has no braille block.
+/// all three axes at different velocities. `ascii` draws the tetrahedron
+/// with plain ASCII strokes, for consoles whose font has no braille block.
 pub(crate) fn frame(t: f32, ascii: bool) -> [String; 4] {
     if ascii {
-        return spinner_ascii(t);
+        return render_ascii(t);
     }
     render_wire(0.85 + t * 0.9, 1.0 + t * 2.0, 0.3 + t * 0.55, 7.2, 8.0)
 }
 
-// The wireframe is illegible at 14x4 in bare ASCII, so the fallback is the
-// classic four-phase spinner, on the same row as the first progress bar.
-fn spinner_ascii(t: f32) -> [String; 4] {
-    const PHASES: [char; 4] = ['|', '/', '-', '\\'];
-    let ch = PHASES[(t * 8.0) as usize % PHASES.len()];
-    std::array::from_fn(|r| {
-        let mut line = " ".repeat(W);
-        if r == 2 {
-            line.replace_range(6..7, &ch.to_string());
+// ASCII tetrahedron. One character per cell picked from the owning edge's
+// overall screen slope, so every edge draws as a consistent stroke. The pose
+// spins about the vertical axis with a slight fixed tilt instead of
+// tumbling: 14x4 characters cannot keep arbitrary poses readable, a
+// triangle silhouette with sweeping inner edges stays one.
+fn render_ascii(t: f32) -> [String; 4] {
+    let v = rotated_vertices(0.18, 1.0 + t * 2.2, 0.0);
+    let visible = face_visibility(&v);
+
+    const SX: f32 = 3.6; // cols per world unit
+    const SY: f32 = 2.0; // rows per world unit, near half of SX for 1:2 cells
+    const CC: f32 = W as f32 / 2.0; // center col
+    const CR: f32 = 2.3; // center row
+
+    let mut grid = [[' '; W]; H];
+    for &(ia, ib, fa, fb) in EDGES.iter() {
+        if !visible[fa] && !visible[fb] {
+            continue;
         }
-        line
-    })
+        let pr = |p: [f32; 3]| {
+            let f = CAM / (CAM - p[2]);
+            (p[0] * f * SX + CC, -p[1] * f * SY + CR)
+        };
+        let (x0, y0) = pr(v[ia]);
+        let (x1, y1) = pr(v[ib]);
+        // slope in visual units: a row is twice as tall as a col is wide
+        let (vdx, vdy) = (x1 - x0, (y1 - y0) * 2.0);
+        let steep = vdy.abs() / vdx.abs().max(1e-6);
+        const M: usize = 64;
+        for m in 0..=M {
+            let s = m as f32 / M as f32;
+            let (x, y) = (x0 + (x1 - x0) * s, y0 + (y1 - y0) * s);
+            let (c, r) = (x.floor() as i32, y.floor() as i32);
+            if c < 0 || c >= W as i32 || r < 0 || r >= H as i32 {
+                continue;
+            }
+            let ch = if steep > 2.4 {
+                '|'
+            } else if steep < 0.45 {
+                if y - y.floor() > 0.6 {
+                    '_'
+                } else {
+                    '-'
+                }
+            } else if vdx * vdy > 0.0 {
+                '\\'
+            } else {
+                '/'
+            };
+            grid[r as usize][c as usize] = ch;
+        }
+    }
+    std::array::from_fn(|r| grid[r].iter().collect())
 }
 
 // s: dots per world unit (braille dot pitch is square, so one scale for both
