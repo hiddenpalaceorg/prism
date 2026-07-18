@@ -95,92 +95,26 @@ fn face_visibility(v: &[[f32; 3]; 4]) -> [bool; 4] {
 }
 
 /// The four spinner lines at time `t` seconds: the tumble pose advances on
-/// all three axes at different velocities. `ascii` draws with line-printer
-/// strokes instead of braille, for consoles whose font has no braille block.
+/// all three axes at different velocities. `ascii` swaps the wireframe for a
+/// plain rotating spinner, for consoles whose font has no braille block.
 pub(crate) fn frame(t: f32, ascii: bool) -> [String; 4] {
-    let (rx, ry, rz) = (0.85 + t * 0.9, 1.0 + t * 2.0, 0.3 + t * 0.55);
     if ascii {
-        render_ascii(rx, ry, rz, 7.2, 8.0)
-    } else {
-        render_wire(rx, ry, rz, 7.2, 8.0)
+        return spinner_ascii(t);
     }
+    render_wire(0.85 + t * 0.9, 1.0 + t * 2.0, 0.3 + t * 0.55, 7.2, 8.0)
 }
 
-// ASCII wireframe: one character per cell, picked from the local stroke
-// direction of the edges crossing it. '|' for steep runs, '/' and '\' for
-// diagonals, and '"' '-' '_' for shallow runs by height within the cell.
-fn render_ascii(rx: f32, ry: f32, rz: f32, s: f32, rc: f32) -> [String; 4] {
-    let v = rotated_vertices(rx, ry, rz);
-    let visible = face_visibility(&v);
-
-    #[derive(Clone, Copy, Default)]
-    struct Acc {
-        n: f32,
-        ax: f32,
-        ay: f32,
-        diag: f32,
-        sub: f32,
-    }
-    let mut cells = [[Acc::default(); W]; H];
-    for &(ia, ib, fa, fb) in EDGES.iter() {
-        if !visible[fa] && !visible[fb] {
-            continue;
-        }
-        let pr = |p: [f32; 3]| {
-            let f = CAM / (CAM - p[2]);
-            (p[0] * f * s + DW as f32 * 0.5, -p[1] * f * s + rc)
-        };
-        let (x0, y0) = pr(v[ia]);
-        let (x1, y1) = pr(v[ib]);
-        let (dx, dy) = (x1 - x0, y1 - y0);
-        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
-        let (ux, uy) = (dx / len, dy / len);
-        const M: usize = 96;
-        for m in 0..=M {
-            let t = m as f32 / M as f32;
-            let (fx, fy) = (x0 + dx * t, y0 + dy * t);
-            if fx < 0.0 || fy < 0.0 {
-                continue;
-            }
-            let (c, r) = ((fx / 2.0) as usize, (fy / 4.0) as usize);
-            if c >= W || r >= H {
-                continue;
-            }
-            let a = &mut cells[r][c];
-            a.n += 1.0;
-            a.ax += ux.abs();
-            a.ay += uy.abs();
-            a.diag += (ux * uy).signum();
-            a.sub += fy - (r as f32) * 4.0;
-        }
-    }
-
+// The wireframe is illegible at 14x4 in bare ASCII, so the fallback is the
+// classic four-phase spinner, on the same row as the first progress bar.
+fn spinner_ascii(t: f32) -> [String; 4] {
+    const PHASES: [char; 4] = ['|', '/', '-', '\\'];
+    let ch = PHASES[(t * 8.0) as usize % PHASES.len()];
     std::array::from_fn(|r| {
-        (0..W)
-            .map(|c| {
-                let a = cells[r][c];
-                if a.n == 0.0 {
-                    return ' ';
-                }
-                let (ax, ay) = (a.ax / a.n, a.ay / a.n);
-                if ay > 2.0 * ax {
-                    '|'
-                } else if ax > 2.0 * ay {
-                    let sub = a.sub / a.n; // 0..4 within the cell, y down
-                    if sub < 1.2 {
-                        '"'
-                    } else if sub < 2.6 {
-                        '-'
-                    } else {
-                        '_'
-                    }
-                } else if a.diag > 0.0 {
-                    '\\'
-                } else {
-                    '/'
-                }
-            })
-            .collect()
+        let mut line = " ".repeat(W);
+        if r == 2 {
+            line.replace_range(6..7, &ch.to_string());
+        }
+        line
     })
 }
 
