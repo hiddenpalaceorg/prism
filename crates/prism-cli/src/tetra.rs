@@ -121,8 +121,24 @@ fn render_ascii(t: f32) -> [String; 4] {
     const CR: f32 = 2.3; // center row
     const GLYPH: [char; 4] = [' ', '*', '%', '#'];
 
-    // per cell, the densest rank of any sample landing there: near edges win
+    // per cell, the densest rank of any edge crossing it: near edges win.
+    // Edges step along their major axis, one cell per step, so every stroke
+    // stays a single cell wide.
     let mut grid = [[0u8; W]; H];
+    let mut mark = |c: i32, r: i32, z: f32| {
+        if c < 0 || c >= W as i32 || r < 0 || r >= H as i32 {
+            return;
+        }
+        let rank: u8 = if z > 0.35 {
+            3
+        } else if z > -0.35 {
+            2
+        } else {
+            1
+        };
+        let cell = &mut grid[r as usize][c as usize];
+        *cell = (*cell).max(rank);
+    };
     for &(ia, ib, fa, fb) in EDGES.iter() {
         if !visible[fa] && !visible[fb] {
             continue;
@@ -133,24 +149,23 @@ fn render_ascii(t: f32) -> [String; 4] {
         };
         let (x0, y0) = pr(v[ia]);
         let (x1, y1) = pr(v[ib]);
-        const M: usize = 64;
-        for m in 0..=M {
-            let s = m as f32 / M as f32;
-            let (x, y) = (x0 + (x1 - x0) * s, y0 + (y1 - y0) * s);
-            let (c, r) = (x.floor() as i32, y.floor() as i32);
-            if c < 0 || c >= W as i32 || r < 0 || r >= H as i32 {
-                continue;
+        let (z0, z1) = (v[ia][2], v[ib][2]);
+        let (dx, dy) = (x1 - x0, y1 - y0);
+        if dx == 0.0 && dy == 0.0 {
+            continue;
+        }
+        if dy.abs() >= dx.abs() {
+            let (lo, hi) = (y0.min(y1).floor() as i32, y0.max(y1).floor() as i32);
+            for r in lo..=hi {
+                let t = ((r as f32 + 0.5 - y0) / dy).clamp(0.0, 1.0);
+                mark((x0 + dx * t).floor() as i32, r, z0 + (z1 - z0) * t);
             }
-            let z = v[ia][2] + (v[ib][2] - v[ia][2]) * s;
-            let rank = if z > 0.35 {
-                3
-            } else if z > -0.35 {
-                2
-            } else {
-                1
-            };
-            let cell = &mut grid[r as usize][c as usize];
-            *cell = (*cell).max(rank);
+        } else {
+            let (lo, hi) = (x0.min(x1).floor() as i32, x0.max(x1).floor() as i32);
+            for c in lo..=hi {
+                let t = ((c as f32 + 0.5 - x0) / dx).clamp(0.0, 1.0);
+                mark(c, (y0 + dy * t).floor() as i32, z0 + (z1 - z0) * t);
+            }
         }
     }
     std::array::from_fn(|r| grid[r].iter().map(|&g| GLYPH[g as usize]).collect())
