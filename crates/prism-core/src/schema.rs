@@ -18,9 +18,11 @@ pub const FINGERPRINT_PROFILE: &str = "v1";
 /// 5 = PDF and PostScript (.eps/.ps/.ai) as `kind: "document"`; 6 = videos
 /// ship whole up to DVD-VOB scale (previously capped with everything else at
 /// 20MB); 7 = archives (zip/7z/rar/tar/cab/…) extracted as if directories,
-/// their members' assets riding under `<archive path>/...`. A record below
-/// the current value gets its assets re-extracted on the next analyze.
-pub const ASSET_PROFILE: u32 = 7;
+/// their members' assets riding under `<archive path>/...`; 8 = the shared
+/// asset cap raised from 20 to 64 MiB (files between the two previously fell
+/// back to head snippets). A record below the current value gets its assets
+/// re-extracted on the next analyze.
+pub const ASSET_PROFILE: u32 = 8;
 
 /// A fully analyzed disc image / container — image-independent and self-describing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
