@@ -1,10 +1,10 @@
 //! Renders core progress events as a 4-line loader on stderr: a tumbling
-//! braille tetrahedron beside the item being worked on, a blank line, and up
-//! to two progress rows (the first counter still open and the most recently
-//! opened one), each as a label column, a heavy-rule bar with a half-cell
-//! head, and a percentage. Indeterminate counters get a bouncing comet on
-//! the same rail. Falls back to plain line output when stderr is not a
-//! terminal.
+//! braille tetrahedron beside the item being worked on, a blank line, and
+//! up to two progress rows (the first counter still open and the most
+//! recently opened one), each as a label column, a heavy-rule bar with a
+//! half-cell head, and a percentage or item count. Indeterminate counters
+//! get a bouncing comet on the same rail. Falls back to plain line output
+//! when stderr is not a terminal.
 //!
 //! Windows console fonts are not reliable braille renderers, so on Windows
 //! and inside WSL the loader is all-ASCII. PRISM_ASCII=1 or =0 forces the
@@ -18,11 +18,13 @@ use std::time::{Duration, Instant};
 
 use prism_core::{Event, ProgressObserver};
 
+use crate::out::errln;
 use crate::tetra;
 
 const REGION_H: usize = tetra::H + 1; // loader lines: one blank, then the spinner rows
 const BARW: usize = 30; // bar columns
 const LABELW: usize = 14; // label column width; longer labels truncate
+const TAILW: usize = 9; // progress figure column, right-aligned ("9999/9999", " 100%")
 const BATCHW: usize = 58; // truncation budget for the item line
 const FRAME_US: u64 = 16_667; // 60fps
 
@@ -48,6 +50,7 @@ fn wsl() -> bool {
 struct Counter {
     id: u64,
     label: String,
+    unit: String,
     total: Option<f64>,
     count: f64,
 }
@@ -56,6 +59,9 @@ struct Counter {
 struct State {
     batch: Option<String>,
     counters: Vec<Counter>,
+    /// The last secondary counter to finish, shown full on the second row
+    /// while newer counters have nothing to show yet.
+    done: Option<Counter>,
     pending: Vec<String>, // messages to scroll out above the loader
 }
 
@@ -123,9 +129,19 @@ impl LoaderObserver {
             } else {
                 name.to_string()
             };
-            self.state.lock().unwrap().batch = Some(label);
+            let mut st = self.state.lock().unwrap();
+            st.batch = Some(label);
+            st.done = None; // a finished bar never outlives its batch item
         } else if total > 1 {
-            eprintln!("[{}/{}] {}", index + 1, total, name);
+            errln!("[{}/{}] {}", index + 1, total, name);
+        }
+    }
+
+    /// Log a line in plain mode only. The tty loader carries the same
+    /// information in its counter rows, so it stays quiet there.
+    pub fn plain(&self, text: String) {
+        if !self.tty {
+            errln!("{text}");
         }
     }
 
@@ -146,10 +162,10 @@ impl Drop for LoaderObserver {
 impl ProgressObserver for LoaderObserver {
     fn on_event(&self, ev: Event) {
         match ev {
-            Event::CounterOpen { id, label, unit: _, total } => {
+            Event::CounterOpen { id, label, unit, total } => {
                 if self.tty {
                     let mut st = self.state.lock().unwrap();
-                    st.counters.push(Counter { id, label, total, count: 0.0 });
+                    st.counters.push(Counter { id, label, unit, total, count: 0.0 });
                 }
             }
             Event::Progress { id, count } => {
@@ -162,14 +178,24 @@ impl ProgressObserver for LoaderObserver {
             }
             Event::CounterClose { id } => {
                 if self.tty {
-                    self.state.lock().unwrap().counters.retain(|c| c.id != id);
+                    let mut st = self.state.lock().unwrap();
+                    if let Some(pos) = st.counters.iter().position(|c| c.id == id) {
+                        let c = st.counters.remove(pos);
+                        // A finished secondary counter lingers on the second
+                        // row, pinned at full, until something overtakes it.
+                        if pos > 0 {
+                            if let Some(total) = c.total.filter(|t| *t > 0.0) {
+                                st.done = Some(Counter { count: total, ..c });
+                            }
+                        }
+                    }
                 }
             }
             Event::Message(m) => {
                 if self.tty {
                     self.state.lock().unwrap().pending.push(m);
                 } else {
-                    eprintln!("{m}");
+                    errln!("{m}");
                 }
             }
             Event::BatchItem { index, total, name } => {
@@ -248,15 +274,21 @@ fn draw_loop(state: Arc<Mutex<State>>, running: Arc<AtomicBool>) {
 fn compose(st: &State, t: f32, buf: &mut String) {
     let spin = tetra::frame(t, ascii_mode());
     buf.push_str("\r\x1b[2K\n"); // blank line separating the loader from prior output
+    // Second row: the newest secondary counter once it has progress to show,
+    // otherwise the last one to finish (pinned at full), so with many quick
+    // items the row tails completions instead of idling at zero.
+    let second = match st.counters.last() {
+        Some(last) if st.counters.len() > 1 && (last.count > 0.0 || st.done.is_none()) => {
+            Some(counter_line(last, t))
+        }
+        Some(_) => st.done.as_ref().map(|c| counter_line(c, t)),
+        None => None,
+    };
     let texts: [String; tetra::H] = [
         st.batch.as_deref().map(|s| truncate(s, BATCHW)).unwrap_or_default(),
         String::new(),
         st.counters.first().map(|c| counter_line(c, t)).unwrap_or_default(),
-        if st.counters.len() > 1 {
-            counter_line(st.counters.last().unwrap(), t)
-        } else {
-            String::new()
-        },
+        second.unwrap_or_default(),
     ];
     for (line, text) in spin.iter().zip(texts.iter()) {
         buf.push_str("\r\x1b[2K");
@@ -267,25 +299,36 @@ fn compose(st: &State, t: f32, buf: &mut String) {
     }
 }
 
+// Byte counters read best as a percentage, item counters (files, blobs) as
+// the k/n they actually are.
 fn counter_line(c: &Counter, t: f32) -> String {
     let label = truncate(&c.label, LABELW);
     match c.total {
         Some(total) if total > 0.0 => {
             let frac = (c.count / total).clamp(0.0, 1.0) as f32;
-            format!("{label:<LABELW$} {} {:>3}%", bar(frac), (frac * 100.0) as u32)
+            let tail = if c.unit == "B" {
+                format!("{}%", (frac * 100.0) as u32)
+            } else {
+                format!("{}/{}", c.count.min(total) as u64, total as u64)
+            };
+            format!("{label:<LABELW$} {} {tail:>TAILW$}", bar(frac))
         }
         _ => format!("{label:<LABELW$} {}", sweep(t)),
     }
 }
 
-// Heavy rule with a half-cell head, empty missing. ASCII mode draws the
-// classic equals-and-chevron bar instead.
+// Heavy rule with a half-cell head, empty missing. ASCII mode draws a plain
+// equals rule with no head.
 fn bar(frac: f32) -> String {
     let n = (frac * BARW as f32) as usize;
-    let (fill, head) = if ascii_mode() { ("=", '>') } else { ("━", '╸') };
-    let mut s = fill.repeat(n);
+    if ascii_mode() {
+        let mut s = "=".repeat(n);
+        s.push_str(&" ".repeat(BARW - n));
+        return s;
+    }
+    let mut s = "━".repeat(n);
     if n < BARW {
-        s.push(head);
+        s.push('╸');
         s.push_str(&" ".repeat(BARW - n - 1));
     }
     s
@@ -298,7 +341,7 @@ fn sweep(t: f32) -> String {
     let p = if phase < 1.0 { phase } else { 2.0 - phase };
     let p = (p * span) as usize;
     let mut s = " ".repeat(p);
-    s.push_str(if ascii_mode() { "<=>" } else { "╺━╸" });
+    s.push_str(if ascii_mode() { "===" } else { "╺━╸" });
     s.push_str(&" ".repeat(BARW - p - 3));
     s
 }

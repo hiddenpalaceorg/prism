@@ -4,6 +4,7 @@
 //! the local library, inspect a build's views, extract assets, and talk to the
 //! web service (Find Similar / Submit).
 
+mod out;
 pub mod progress;
 mod service;
 mod tetra;
@@ -17,8 +18,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use prism_core::adapter::AdapterCommand;
 use prism_core::db::{LibraryRow, LibrarySort};
 use prism_core::summary::{self, Section};
-use prism_core::{render, Analysis, Analyzer, Config, Node, Reader};
+use prism_core::{render, Analysis, Analyzer, Config, Event, Node, ProgressObserver, Reader};
 
+use crate::out::{errln, out, outln};
 use crate::progress::LoaderObserver;
 
 #[derive(Parser)]
@@ -192,13 +194,19 @@ pub fn run(args: Vec<String>, fallback_adapter: Option<AdapterCommand>) -> i32 {
             return e.exit_code();
         }
     };
-    match execute(cli, fallback_adapter) {
+    let code = match execute(cli, fallback_adapter) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("error: {e:#}");
+            errln!("error: {e:#}");
             1
         }
+    };
+    // A parting blank line puts the shell prompt on a fresh column-zero row,
+    // whatever column the run left the cursor in.
+    if crate::out::stderr_tty() {
+        errln!();
     }
+    code
 }
 
 fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
@@ -214,24 +222,24 @@ fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
 
     match cli.command {
         Command::Stats => {
-            println!("builds in library: {}", analyzer.library_size()?);
+            outln!("builds in library: {}", analyzer.library_size()?);
         }
         Command::Export { out } => match &out {
             Some(p) if p.extension().and_then(|e| e.to_str()) == Some("zip") => {
                 let n = analyzer
                     .export_bundle(p)
                     .with_context(|| format!("writing bundle {}", p.display()))?;
-                eprintln!("exported {n} builds -> {}", p.display());
+                errln!("exported {n} builds -> {}", p.display());
             }
             Some(p) => {
                 let f = std::fs::File::create(p)
                     .with_context(|| format!("creating {}", p.display()))?;
                 let n = analyzer.export_jsonl(std::io::BufWriter::new(f))?;
-                eprintln!("exported {n} builds -> {}", p.display());
+                errln!("exported {n} builds -> {}", p.display());
             }
             None => {
                 let n = analyzer.export_jsonl(std::io::stdout().lock())?;
-                eprintln!("exported {n} builds");
+                errln!("exported {n} builds");
             }
         },
         Command::Analyze { files, format, out, force } => {
@@ -269,7 +277,7 @@ fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
         }
         Command::Systems => {
             for s in analyzer.open_reader()?.list_systems()? {
-                println!("{s}");
+                outln!("{s}");
             }
         }
         Command::Recent { limit } => {
@@ -288,19 +296,23 @@ fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
                     print_sections(&sections);
                 }
                 View::Tree => print_tree(&analysis.record.contents, 0),
-                View::Xml => print!("{}", render::to_dat_xml(&analysis.record)),
-                View::Json => print!("{}", render::to_json(&analysis.record)?),
+                View::Xml => out!("{}", render::to_dat_xml(&analysis.record)),
+                View::Json => out!("{}", render::to_json(&analysis.record)?),
             }
         }
         Command::Extract { sha, out, filter } => {
             extract(&analyzer, &sha, &out, filter.as_deref())?;
         }
         Command::Similar { target } => {
-            let analysis = resolve_target(&analyzer, &target, false)?;
+            let observer = Arc::new(LoaderObserver::new());
+            observer.batch(0, 1, &target);
+            let analysis = resolve_target(&analyzer, &target, false, &observer)?;
             let json = render::to_json(&analysis.record)?;
             let client = service::Client::new(&cli.web_url)?;
-            eprintln!("querying similar builds…");
-            print!("{}", client.similarity(&json)?);
+            observer.batch(0, 1, "querying similar builds…");
+            let similar = client.similarity(&json)?;
+            observer.finish();
+            out!("{similar}");
         }
         Command::Submit { targets, nickname, recursive, force, moderation_token } => {
             if nickname.trim().is_empty() {
@@ -334,16 +346,56 @@ fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
             let token = moderation_token.as_deref().filter(|t| !t.is_empty());
             let total = targets.len();
             let mut failed = 0usize;
+            let (mut pushed, mut blobs, mut bytes) = (0usize, 0usize, 0u64);
+            let (mut unavailable, mut accepted) = (0usize, 0usize);
+            // One loader across all targets: batch shows "[n/N] name" beside the
+            // spinner, and every submit-phase line scrolls out above it (the
+            // loader's frames carry the explicit `\r`s a Windows console needs).
+            let observer = Arc::new(LoaderObserver::new());
             for (i, target) in targets.iter().enumerate() {
-                if total > 1 {
-                    eprintln!("[{}/{total}] {target}", i + 1);
-                }
-                if let Err(e) = submit_one(&analyzer, &reader, &client, target, &nickname, token, force)
+                observer.batch(i as u64, total as u64, target);
+                match submit_one(&analyzer, &reader, &client, target, &nickname, token, force, &observer)
                 {
-                    failed += 1;
-                    eprintln!("error: {target}: {e:#}");
+                    Ok(o) => {
+                        pushed += 1;
+                        blobs += o.uploaded;
+                        bytes += o.bytes;
+                        unavailable += o.unavailable;
+                        accepted += usize::from(o.accepted);
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        observer.on_event(Event::Message(format!("error: {target}: {e:#}")));
+                    }
                 }
             }
+            observer.finish();
+            // The end-of-run summary: what this whole invocation accomplished,
+            // set off from the scrolled per-blob lines by a blank line.
+            if crate::out::stderr_tty() {
+                errln!();
+            }
+            let mut summary = format!(
+                "submitted {pushed} of {total} build{}",
+                if total == 1 { "" } else { "s" }
+            );
+            if blobs > 0 {
+                summary.push_str(&format!(
+                    ", uploaded {blobs} asset blob{} ({})",
+                    if blobs == 1 { "" } else { "s" },
+                    summary::human_size(bytes),
+                ));
+            }
+            if unavailable > 0 {
+                summary.push_str(&format!(
+                    ", {unavailable} blob{} not in local store",
+                    if unavailable == 1 { "" } else { "s" }
+                ));
+            }
+            if accepted > 0 {
+                summary.push_str(&format!(", accepted {accepted}"));
+            }
+            errln!("{summary}");
             if failed > 0 {
                 bail!("{failed} of {total} submissions failed");
             }
@@ -387,14 +439,14 @@ fn analyze(
                 };
                 std::fs::write(&path, rendered)
                     .with_context(|| format!("writing {}", path.display()))?;
-                eprintln!(
+                errln!(
                     "{} {} -> {}",
                     if analysis.from_cache { "[cached]" } else { "[analyzed]" },
                     analysis.record.image.sha256,
                     path.display()
                 );
             }
-            None => print!("{rendered}"),
+            None => out!("{rendered}"),
         }
     }
     Ok(())
@@ -424,7 +476,7 @@ fn expand_inputs(paths: &[String]) -> Vec<String> {
 fn import(analyzer: &Analyzer, paths: &[String]) -> Result<()> {
     let files = expand_inputs(paths);
     if files.is_empty() {
-        eprintln!("no files found to import");
+        errln!("no files found to import");
         return Ok(());
     }
     let total = files.len() as u64;
@@ -438,11 +490,11 @@ fn import(analyzer: &Analyzer, paths: &[String]) -> Result<()> {
             Ok(_) => imported += 1,
             Err(e) => {
                 skipped += 1;
-                eprintln!("  skipped {path}: {e}");
+                errln!("  skipped {path}: {e}");
             }
         }
     }
-    println!("imported {imported}, skipped {skipped} unsupported");
+    outln!("imported {imported}, skipped {skipped} unsupported");
     Ok(())
 }
 
@@ -475,19 +527,21 @@ fn load_build(reader: &Reader, sha: &str) -> Result<Analysis> {
 
 /// A submit/similar target: an existing path is analyzed (cache hit when
 /// already imported; `force` re-parses from scratch); anything else is
-/// treated as a library sha256/prefix.
-fn resolve_target(analyzer: &Analyzer, target: &str, force: bool) -> Result<Analysis> {
+/// treated as a library sha256/prefix. The caller owns the loader (and has
+/// set its batch label), so it keeps spinning through the service phase.
+fn resolve_target(
+    analyzer: &Analyzer,
+    target: &str,
+    force: bool,
+    observer: &Arc<LoaderObserver>,
+) -> Result<Analysis> {
     if Path::new(target).exists() {
-        let observer = Arc::new(LoaderObserver::new());
-        observer.batch(0, 1, target);
-        let analysis = if force {
+        if force {
             analyzer.reanalyze(target, observer.clone())
         } else {
             analyzer.analyze(target, observer.clone())
         }
-        .with_context(|| format!("analyzing {target}"))?;
-        observer.finish();
-        Ok(analysis)
+        .with_context(|| format!("analyzing {target}"))
     } else {
         load_build(&analyzer.open_reader()?, target)
     }
@@ -502,15 +556,16 @@ fn submit_one(
     nickname: &str,
     moderation_token: Option<&str>,
     force: bool,
-) -> Result<()> {
-    let analysis = resolve_target(analyzer, target, force)?;
+    observer: &Arc<LoaderObserver>,
+) -> Result<service::SubmitOutcome> {
+    let analysis = resolve_target(analyzer, target, force, observer)?;
     let json = render::to_json(&analysis.record)?;
-    eprintln!(
+    observer.on_event(Event::Message(format!(
         "{} {} — {}",
         if analysis.from_cache { "[cached]" } else { "[analyzed]" },
         analysis.record.image.sha256,
         analysis.record.info.system,
-    );
+    )));
     // Resolve which of the build's asset blobs exist locally (sha256 → path);
     // the client uploads whichever the server lacks.
     let mut local: HashMap<String, PathBuf> = HashMap::new();
@@ -519,7 +574,7 @@ fn submit_one(
             local.insert(a.sha256.clone(), p);
         }
     }
-    client.submit(&analysis.record.image.sha256, &json, nickname, &local, moderation_token)
+    client.submit(&analysis.record.image.sha256, &json, nickname, &local, moderation_token, observer.as_ref())
 }
 
 fn extract(analyzer: &Analyzer, sha: &str, out: &Path, filter: Option<&str>) -> Result<()> {
@@ -552,7 +607,7 @@ fn extract(analyzer: &Analyzer, sha: &str, out: &Path, filter: Option<&str>) -> 
         }
         std::fs::copy(&blob, &dest)
             .with_context(|| format!("writing {}", dest.display()))?;
-        println!("{}", dest.display());
+        outln!("{}", dest.display());
         extracted += 1;
     }
     let note = if missing > 0 {
@@ -560,7 +615,7 @@ fn extract(analyzer: &Analyzer, sha: &str, out: &Path, filter: Option<&str>) -> 
     } else {
         String::new()
     };
-    eprintln!("extracted {extracted} assets{note}");
+    errln!("extracted {extracted} assets{note}");
     Ok(())
 }
 
@@ -588,12 +643,12 @@ fn safe_component(comp: &str) -> String {
 fn print_sections(sections: &[Section]) {
     for (i, sec) in sections.iter().enumerate() {
         if i > 0 {
-            println!();
+            outln!();
         }
-        println!("{}", sec.title);
+        outln!("{}", sec.title);
         let width = sec.rows.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
         for (key, value) in &sec.rows {
-            println!("  {key:<width$}  {value}");
+            outln!("  {key:<width$}  {value}");
         }
     }
 }
@@ -603,7 +658,7 @@ fn print_tree(nodes: &[Node], depth: usize) {
         let indent = "  ".repeat(depth);
         match node {
             Node::Dir { name, children, .. } => {
-                println!("{indent}{name}/");
+                outln!("{indent}{name}/");
                 print_tree(children, depth + 1);
             }
             Node::File { name, size, unreadable, .. } => {
@@ -614,7 +669,7 @@ fn print_tree(nodes: &[Node], depth: usize) {
                 if *unreadable {
                     line.push_str("  [unreadable]");
                 }
-                println!("{line}");
+                outln!("{line}");
             }
         }
     }
@@ -622,17 +677,17 @@ fn print_tree(nodes: &[Node], depth: usize) {
 
 fn print_rows(rows: &[LibraryRow]) {
     if rows.is_empty() {
-        eprintln!("(no builds)");
+        errln!("(no builds)");
         return;
     }
     let name_w = rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(0).clamp(4, 60);
     let sys_w = rows.iter().map(|r| r.system.chars().count()).max().unwrap_or(0).max(6);
-    println!(
+    outln!(
         "{:<name_w$}  {:<sys_w$}  {:>6}  {:>9}  {:<10}  {}",
         "NAME", "SYSTEM", "FILES", "SIZE", "ANALYZED", "SHA256"
     );
     for r in rows {
-        println!(
+        outln!(
             "{:<name_w$}  {:<sys_w$}  {:>6}  {:>9}  {:<10}  {}",
             truncate(&r.name, name_w),
             r.system,

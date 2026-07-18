@@ -104,40 +104,50 @@ pub(crate) fn frame(t: f32, ascii: bool) -> [String; 4] {
     render_wire(0.85 + t * 0.9, 1.0 + t * 2.0, 0.3 + t * 0.55, 7.2, 8.0)
 }
 
-// ASCII tetrahedron in sharp glyphs graded by depth: '#' near, '%' mid, '*'
-// far, so edges receding from the camera visibly thin out. All three are
-// full-cell characters, which keeps the shape connected where slope-matched
-// strokes ('/', '|', '\') fall apart at this resolution. The pose spins
-// about the vertical axis with a slight fixed tilt instead of tumbling:
-// 14x4 characters cannot keep arbitrary poses readable, a triangle
-// silhouette with sweeping inner edges stays one.
+// ASCII tetrahedron in thin strokes: each edge picks its glyph from its
+// projected slope ('|', '/', '\', '-'), so lines read as lines instead of
+// blocks. Slope alone fell apart here once, the fix is classifying in
+// visual pixel space (cells are about twice as tall as wide) and letting
+// shallow runs fall back to '-' rather than stacking slashes. Depth still
+// grades weight: far edges thin out to '.', the nearest horizontal gets
+// '='. The pose spins about the vertical axis with a slight tilt instead
+// of tumbling: 14x4 characters cannot keep arbitrary poses readable, a
+// triangle silhouette with sweeping inner edges stays one. The tilt
+// nutates a little (slow pitch and roll wobble) so the apex, which sits
+// on the spin axis, does not render as a frozen pair of cells.
 fn render_ascii(t: f32) -> [String; 4] {
-    let v = rotated_vertices(0.18, 1.0 + t * 2.2, 0.0);
+    let v = rotated_vertices(
+        0.18 + 0.12 * (t * 1.3).sin(),
+        1.0 - t * 2.2,
+        0.22 * (t * 0.9).sin(),
+    );
     let visible = face_visibility(&v);
 
     const SX: f32 = 3.6; // cols per world unit
     const SY: f32 = 2.0; // rows per world unit, near half of SX for 1:2 cells
     const CC: f32 = W as f32 / 2.0; // center col
     const CR: f32 = 2.3; // center row
-    const GLYPH: [char; 4] = [' ', '*', '%', '#'];
 
-    // per cell, the densest rank of any edge crossing it: near edges win.
-    // Edges step along their major axis, one cell per step, so every stroke
-    // stays a single cell wide.
-    let mut grid = [[0u8; W]; H];
-    let mut mark = |c: i32, r: i32, z: f32| {
+    // per cell, the glyph of the nearest edge crossing it: higher rank wins,
+    // an equal-rank crossing keeps the first comer. Edges step along their
+    // major axis, one cell per step, so every stroke stays a single cell wide.
+    let mut grid = [[(0u8, ' '); W]; H];
+    let mut mark = |c: i32, r: i32, z: f32, dir: usize| {
         if c < 0 || c >= W as i32 || r < 0 || r >= H as i32 {
             return;
         }
-        let rank: u8 = if z > 0.35 {
-            3
+        // dir: 0 '|', 1 '/', 2 '\', 3 '-'
+        let (rank, glyph): (u8, char) = if z > 0.35 {
+            (3, ['|', '/', '\\', '='][dir])
         } else if z > -0.35 {
-            2
+            (2, ['|', '/', '\\', '-'][dir])
         } else {
-            1
+            (1, '.')
         };
         let cell = &mut grid[r as usize][c as usize];
-        *cell = (*cell).max(rank);
+        if rank > cell.0 {
+            *cell = (rank, glyph);
+        }
     };
     for &(ia, ib, fa, fb) in EDGES.iter() {
         if !visible[fa] && !visible[fb] {
@@ -154,21 +164,34 @@ fn render_ascii(t: f32) -> [String; 4] {
         if dx == 0.0 && dy == 0.0 {
             continue;
         }
+        // Classify the stroke by its on-screen slope, in pixels (rows are
+        // about twice as tall as columns are wide, so the cell slope
+        // doubles). A '/' or '\' glyph itself runs at pixel slope ~2.
+        let pixel_slope = 2.0 * dy / dx;
+        let dir = if pixel_slope.abs() > 4.5 || dx == 0.0 {
+            0
+        } else if pixel_slope.abs() < 0.9 {
+            3
+        } else if pixel_slope < 0.0 {
+            1
+        } else {
+            2
+        };
         if dy.abs() >= dx.abs() {
             let (lo, hi) = (y0.min(y1).floor() as i32, y0.max(y1).floor() as i32);
             for r in lo..=hi {
                 let t = ((r as f32 + 0.5 - y0) / dy).clamp(0.0, 1.0);
-                mark((x0 + dx * t).floor() as i32, r, z0 + (z1 - z0) * t);
+                mark((x0 + dx * t).floor() as i32, r, z0 + (z1 - z0) * t, dir);
             }
         } else {
             let (lo, hi) = (x0.min(x1).floor() as i32, x0.max(x1).floor() as i32);
             for c in lo..=hi {
                 let t = ((c as f32 + 0.5 - x0) / dx).clamp(0.0, 1.0);
-                mark(c, (y0 + dy * t).floor() as i32, z0 + (z1 - z0) * t);
+                mark(c, (y0 + dy * t).floor() as i32, z0 + (z1 - z0) * t, dir);
             }
         }
     }
-    std::array::from_fn(|r| grid[r].iter().map(|&g| GLYPH[g as usize]).collect())
+    std::array::from_fn(|r| grid[r].iter().map(|&(_, g)| g).collect())
 }
 
 // s: dots per world unit (braille dot pitch is square, so one scale for both
