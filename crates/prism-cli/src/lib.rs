@@ -479,6 +479,7 @@ fn load_build(reader: &Reader, sha: &str) -> Result<Analysis> {
 fn resolve_target(analyzer: &Analyzer, target: &str, force: bool) -> Result<Analysis> {
     if Path::new(target).exists() {
         let observer = Arc::new(LoaderObserver::new());
+        observer.batch(0, 1, target);
         let analysis = if force {
             analyzer.reanalyze(target, observer.clone())
         } else {

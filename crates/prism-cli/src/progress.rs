@@ -43,9 +43,41 @@ pub struct LoaderObserver {
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
+// The Windows console interprets VT sequences only once
+// ENABLE_VIRTUAL_TERMINAL_PROCESSING is set (Windows Terminal and WSL windows
+// have it on already, legacy conhost does not). No console mode to speak of
+// elsewhere.
+#[cfg(windows)]
+fn enable_vt() -> bool {
+    type Handle = *mut core::ffi::c_void;
+    const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+    const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
+    extern "system" {
+        fn GetStdHandle(n: u32) -> Handle;
+        fn GetConsoleMode(h: Handle, mode: *mut u32) -> i32;
+        fn SetConsoleMode(h: Handle, mode: u32) -> i32;
+    }
+    unsafe {
+        let h = GetStdHandle(STD_ERROR_HANDLE);
+        let mut mode = 0u32;
+        if GetConsoleMode(h, &mut mode) == 0 {
+            return false;
+        }
+        if mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0 {
+            return true;
+        }
+        SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn enable_vt() -> bool {
+    true
+}
+
 impl LoaderObserver {
     pub fn new() -> Self {
-        let tty = std::io::stderr().is_terminal();
+        let tty = std::io::stderr().is_terminal() && enable_vt();
         let state = Arc::new(Mutex::new(State::default()));
         let running = Arc::new(AtomicBool::new(true));
         let thread = tty.then(|| {
@@ -140,7 +172,7 @@ fn draw_loop(state: Arc<Mutex<State>>, running: Arc<AtomicBool>) {
                 buf.push_str(&format!("\x1b[{REGION_H}F")); // top of the loader
             }
             for m in st.pending.drain(..) {
-                buf.push_str("\x1b[2K");
+                buf.push_str("\r\x1b[2K");
                 buf.push_str(&m);
                 buf.push('\n');
             }
@@ -168,7 +200,7 @@ fn draw_loop(state: Arc<Mutex<State>>, running: Arc<AtomicBool>) {
         buf.push_str(&format!("\x1b[{REGION_H}F"));
     }
     for m in state.lock().unwrap().pending.drain(..) {
-        buf.push_str("\x1b[2K");
+        buf.push_str("\r\x1b[2K");
         buf.push_str(&m);
         buf.push('\n');
     }
@@ -186,7 +218,7 @@ fn draw_loop(state: Arc<Mutex<State>>, running: Arc<AtomicBool>) {
 // Every line is \x1b[2K-cleared before writing, so no padding is needed.
 fn compose(st: &State, t: f32, buf: &mut String) {
     let spin = tetra::frame(t);
-    buf.push_str("\x1b[2K\n"); // blank line separating the loader from prior output
+    buf.push_str("\r\x1b[2K\n"); // blank line separating the loader from prior output
     let texts: [String; tetra::H] = [
         st.batch.as_deref().map(|s| truncate(s, BATCHW)).unwrap_or_default(),
         String::new(),
@@ -198,7 +230,7 @@ fn compose(st: &State, t: f32, buf: &mut String) {
         },
     ];
     for (line, text) in spin.iter().zip(texts.iter()) {
-        buf.push_str("\x1b[2K");
+        buf.push_str("\r\x1b[2K");
         buf.push_str(line);
         buf.push_str("  ");
         buf.push_str(text);
