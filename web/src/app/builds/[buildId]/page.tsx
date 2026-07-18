@@ -281,9 +281,9 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
         </section>
       )}
 
-      <MediaSection sha256={sha256} items={media.map(mediaView)} />
+      <MediaSection sha256={sha256} items={media.map(mediaView)} skips={skips} />
 
-      <NotesSection sha256={sha256} notes={notes} />
+      <NotesSection sha256={sha256} notes={notes} skipped={skips.skip_notes} />
 
       <section className="mt-8">
         <h2 className="text-lg font-medium">
