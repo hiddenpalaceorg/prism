@@ -8,7 +8,7 @@ import { isSha256 } from "./validate";
 
 /** Per-blob hard caps — mirror max_size() in the adapter's viewable.py:
  *  videos ship whole up to DVD-VOB scale, everything else stays small. */
-export const MAX_ASSET_BLOB_BYTES = 20 * 1024 * 1024;
+export const MAX_ASSET_BLOB_BYTES = 64 * 1024 * 1024;
 export const MAX_VIDEO_BLOB_BYTES = 1280 * 1024 * 1024;
 
 function maxBlobBytes(kind: unknown): number {

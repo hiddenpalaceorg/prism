@@ -7,7 +7,8 @@ can't script against the web origin.
 """
 
 # Hard cap on extracted asset size. Files past this fall back to a head snippet.
-MAX_ASSET_SIZE = 20 * 1024 * 1024
+# Sized for press/artwork discs, whose uncompressed TGA/BMP scans run ~30 MiB.
+MAX_ASSET_SIZE = 64 * 1024 * 1024
 
 # Videos get a larger allowance: DVD-Video discs split a title into .VOB files
 # of up to 1 GiB each, and demoting those to head snippets would drop the only

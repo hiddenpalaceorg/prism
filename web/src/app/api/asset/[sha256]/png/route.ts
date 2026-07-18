@@ -16,8 +16,9 @@ export const runtime = "nodejs";
 const CACHE = "public, max-age=31536000, immutable";
 
 // Bound what the in-process decoder will chew on (decoded size is capped
-// separately by the converters' MAX_PIXELS).
-const MAX_CONVERT_BYTES = 32_000_000;
+// separately by the converters' MAX_PIXELS). Matches the adapter's
+// MAX_ASSET_SIZE so any stored image asset is convertible.
+const MAX_CONVERT_BYTES = 64 * 1024 * 1024;
 
 export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await ctx.params;
