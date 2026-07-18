@@ -24,6 +24,7 @@ use crate::tetra;
 const REGION_H: usize = tetra::H + 1; // loader lines: one blank, then the spinner rows
 const BARW: usize = 30; // bar columns
 const LABELW: usize = 14; // label column width; longer labels truncate
+const TAILW: usize = 9; // progress figure column, right-aligned ("9999/9999", " 100%")
 const BATCHW: usize = 58; // truncation budget for the item line
 const FRAME_US: u64 = 16_667; // 60fps
 
@@ -306,11 +307,11 @@ fn counter_line(c: &Counter, t: f32) -> String {
         Some(total) if total > 0.0 => {
             let frac = (c.count / total).clamp(0.0, 1.0) as f32;
             let tail = if c.unit == "B" {
-                format!("{:>3}%", (frac * 100.0) as u32)
+                format!("{}%", (frac * 100.0) as u32)
             } else {
                 format!("{}/{}", c.count.min(total) as u64, total as u64)
             };
-            format!("{label:<LABELW$} {} {tail}", bar(frac))
+            format!("{label:<LABELW$} {} {tail:>TAILW$}", bar(frac))
         }
         _ => format!("{label:<LABELW$} {}", sweep(t)),
     }
