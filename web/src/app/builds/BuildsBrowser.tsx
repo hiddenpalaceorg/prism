@@ -124,7 +124,11 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
               <Th label="System" sortKey="system" sort={sort} dir={dir} onSort={toggleSort} />
               <Th label="Date" sortKey="build_date" sort={sort} dir={dir} onSort={toggleSort} />
               <Th label="Files" sortKey="file_count" sort={sort} dir={dir} onSort={toggleSort} align="right" />
-              <Th label="Size" sortKey="total_size" sort={sort} dir={dir} onSort={toggleSort} align="right" last />
+              <Th label="Size" sortKey="total_size" sort={sort} dir={dir} onSort={toggleSort} align="right" />
+              <Th label="Notes" sortKey="notes" sort={sort} dir={dir} onSort={toggleSort} align="right" />
+              <Th label="Screens" sortKey="screenshots" sort={sort} dir={dir} onSort={toggleSort} align="right" />
+              <Th label="Video" sortKey="video" sort={sort} dir={dir} onSort={toggleSort} align="right" />
+              <Th label="Physical" sortKey="physical" sort={sort} dir={dir} onSort={toggleSort} align="right" last />
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-900/60">
@@ -161,8 +165,28 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
                 <td className="h-full p-0">
                   <RowLink href={href} className="px-3 text-right tabular-nums text-neutral-500">{b.file_count}</RowLink>
                 </td>
-                <td className="h-full p-0 last:[&>a]:pr-0">
+                <td className="h-full p-0">
                   <RowLink href={href} className="px-3 text-right tabular-nums text-neutral-500">{humanSize(b.total_size)}</RowLink>
+                </td>
+                <td className="h-full p-0">
+                  <RowLink href={href} className="px-3 text-right tabular-nums">
+                    <Count value={b.notes} skipped={b.skip_notes} />
+                  </RowLink>
+                </td>
+                <td className="h-full p-0">
+                  <RowLink href={href} className="px-3 text-right tabular-nums">
+                    <Count value={b.screenshots} skipped={b.skip_screenshots} />
+                  </RowLink>
+                </td>
+                <td className="h-full p-0">
+                  <RowLink href={href} className="px-3 text-right tabular-nums">
+                    <Count value={b.videos} skipped={b.skip_video} />
+                  </RowLink>
+                </td>
+                <td className="h-full p-0 last:[&>a]:pr-0">
+                  <RowLink href={href} className="px-3 text-right tabular-nums">
+                    <Count value={b.physical} skipped={b.skip_physical} />
+                  </RowLink>
                 </td>
               </tr>
             );})}
@@ -193,6 +217,27 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
       )}
     </>
   );
+}
+
+// Community completeness cell: a missing category (0, not skipped) renders
+// orange so gaps jump out; a skipped category is explicitly not applicable.
+function Count({ value, skipped }: { value?: number; skipped?: boolean }) {
+  const v = value ?? 0;
+  if (skipped) {
+    return (
+      <span className="text-neutral-400" title="Marked not applicable">
+        skip
+      </span>
+    );
+  }
+  if (v === 0) {
+    return (
+      <span className="rounded bg-orange-100 px-1.5 py-0.5 font-medium text-orange-800 dark:bg-orange-900/40 dark:text-orange-300">
+        0
+      </span>
+    );
+  }
+  return <span className="text-neutral-500">{v}</span>;
 }
 
 function Th({

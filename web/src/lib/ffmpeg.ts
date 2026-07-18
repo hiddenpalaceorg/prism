@@ -349,41 +349,47 @@ export async function ensureThumb(sha256: string): Promise<string> {
 }
 
 async function thumb(sha256: string, out: string): Promise<string> {
-  await mkdir(dirname(out), { recursive: true });
-  const result = await withBlobFile(sha256, async (input) => {
-    // A quarter in (bounded) skips studio logos and fade-ins; the thumbnail
-    // filter then picks the most representative of the next frames, dodging
-    // black frames around the seek point. Falls back to the very start for
-    // clips too short to seek into.
-    const durationUs = await probeDurationUs(input);
-    const seekSec = durationUs ? Math.min(Math.max((durationUs / 1e6) * 0.25, 1), 45) : 3;
-    const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
-    const argsAt = (seek: number) => [
-      "-hide_banner", "-loglevel", "error", "-y",
-      ...(seek > 0 ? ["-ss", String(seek)] : []),
-      "-i", input,
-      "-map", "0:v:0", "-dn", "-sn", "-an",
-      "-vf", "yadif=deint=interlaced,thumbnail=48,scale=trunc(min(iw\\,512)/2)*2:-2",
-      "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "4", "-f", "image2",
-      tmp,
-    ];
-    try {
-      for (const seek of seekSec > 0 ? [seekSec, 0] : [0]) {
-        try {
-          await execFileP(FFMPEG_BIN, argsAt(seek), { timeout: THUMB_TIMEOUT_MS, maxBuffer: 4_000_000 });
-          if ((await stat(tmp)).size > 0) {
-            await rename(tmp, out);
-            return out;
-          }
-        } catch {
-          // Retry from the start (a clip shorter than the seek), then give up.
-        }
-      }
-      throw new Error("no frame extracted");
-    } finally {
-      await rm(tmp, { force: true });
-    }
-  });
+  const result = await withBlobFile(sha256, (input) => extractStill(input, out));
   if (result === null) throw new Error("blob missing from store");
   return result;
+}
+
+/** Extract one representative poster still (JPEG) from a local video file
+ *  into `out`. Shared by the asset thumb cache (via the blob store) and the
+ *  media-upload poster path (which still has the uploaded file on disk).
+ *  Throws when ffmpeg is missing or can't find a frame. */
+export async function extractStill(input: string, out: string): Promise<string> {
+  await mkdir(dirname(out), { recursive: true });
+  // A quarter in (bounded) skips studio logos and fade-ins; the thumbnail
+  // filter then picks the most representative of the next frames, dodging
+  // black frames around the seek point. Falls back to the very start for
+  // clips too short to seek into.
+  const durationUs = await probeDurationUs(input);
+  const seekSec = durationUs ? Math.min(Math.max((durationUs / 1e6) * 0.25, 1), 45) : 3;
+  const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
+  const argsAt = (seek: number) => [
+    "-hide_banner", "-loglevel", "error", "-y",
+    ...(seek > 0 ? ["-ss", String(seek)] : []),
+    "-i", input,
+    "-map", "0:v:0", "-dn", "-sn", "-an",
+    "-vf", "yadif=deint=interlaced,thumbnail=48,scale=trunc(min(iw\\,512)/2)*2:-2",
+    "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "4", "-f", "image2",
+    tmp,
+  ];
+  try {
+    for (const seek of seekSec > 0 ? [seekSec, 0] : [0]) {
+      try {
+        await execFileP(FFMPEG_BIN, argsAt(seek), { timeout: THUMB_TIMEOUT_MS, maxBuffer: 4_000_000 });
+        if ((await stat(tmp)).size > 0) {
+          await rename(tmp, out);
+          return out;
+        }
+      } catch {
+        // Retry from the start (a clip shorter than the seek), then give up.
+      }
+    }
+    throw new Error("no frame extracted");
+  } finally {
+    await rm(tmp, { force: true });
+  }
 }

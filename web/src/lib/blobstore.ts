@@ -42,9 +42,12 @@ export function assetStoreDir(): string {
   return process.env.ASSET_STORE_DIR || path.join(process.cwd(), "asset-store");
 }
 
-/** Local path of one blob. Caller must have validated `sha256` (isSha256). */
-export function assetBlobPath(sha256: string): string {
-  return path.join(assetStoreDir(), sha256.slice(0, 2), sha256);
+/** Local path of one blob. Caller must have validated `sha256` (isSha256).
+ *  `ns` selects a store namespace ("" = assets, "media/" = user media); a
+ *  namespace name can't collide with the two-hex-char blob dirs. */
+export function assetBlobPath(sha256: string, ns = ""): string {
+  const parts = ns ? [ns.replace(/\/+$/, "")] : [];
+  return path.join(assetStoreDir(), ...parts, sha256.slice(0, 2), sha256);
 }
 
 /** Staging file for a blob's chunked upload (`.staging` can't collide with the
@@ -72,8 +75,8 @@ function s3Prefix(): string {
   return process.env.ASSET_S3_PREFIX || "";
 }
 
-function s3Key(sha256: string): string {
-  return `${s3Prefix()}${sha256.slice(0, 2)}/${sha256}`;
+function s3Key(sha256: string, ns = ""): string {
+  return `${s3Prefix()}${ns}${sha256.slice(0, 2)}/${sha256}`;
 }
 
 // One client per process; the config is env-fixed for the process lifetime.
@@ -121,10 +124,10 @@ function httpStatus(err: unknown): number | undefined {
 }
 
 /** Byte size of a blob, or null when it is missing from the store. */
-export async function blobSize(sha256: string): Promise<number | null> {
+export async function blobSize(sha256: string, ns = ""): Promise<number | null> {
   if (s3Enabled()) {
     try {
-      const r = await s3().send(new HeadObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
+      const r = await s3().send(new HeadObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256, ns) }));
       return r.ContentLength ?? null;
     } catch (err) {
       if (isMissing(err)) return null;
@@ -132,14 +135,14 @@ export async function blobSize(sha256: string): Promise<number | null> {
     }
   }
   try {
-    return (await fsp.stat(assetBlobPath(sha256))).size;
+    return (await fsp.stat(assetBlobPath(sha256, ns))).size;
   } catch {
     return null;
   }
 }
 
-export async function blobExists(sha256: string): Promise<boolean> {
-  return (await blobSize(sha256)) !== null;
+export async function blobExists(sha256: string, ns = ""): Promise<boolean> {
+  return (await blobSize(sha256, ns)) !== null;
 }
 
 // Bounds concurrent requests in missingBlobs (and nothing else): high enough
@@ -207,14 +210,15 @@ export async function missingBlobs(shas: string[]): Promise<string[]> {
  *  is missing from the store. */
 export async function openBlobStream(
   sha256: string,
-  range?: { start: number; end: number }
+  range?: { start: number; end: number },
+  ns = ""
 ): Promise<Readable | null> {
   if (s3Enabled()) {
     try {
       const r = await s3().send(
         new GetObjectCommand({
           Bucket: s3Bucket(),
-          Key: s3Key(sha256),
+          Key: s3Key(sha256, ns),
           ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
         })
       );
@@ -226,7 +230,7 @@ export async function openBlobStream(
   }
   // open() first so a missing blob is a null, not a later stream error event.
   try {
-    const fh = await fsp.open(assetBlobPath(sha256), "r");
+    const fh = await fsp.open(assetBlobPath(sha256, ns), "r");
     return fh.createReadStream(range ? { start: range.start, end: range.end } : {});
   } catch {
     return null;
@@ -293,13 +297,14 @@ export async function readBlobHead(sha256: string, maxBytes = 2048): Promise<Buf
 export async function storeBlobFromFile(
   sha256: string,
   src: string,
-  opts?: { keepSource?: boolean }
+  opts?: { keepSource?: boolean; ns?: string }
 ): Promise<"stored" | "exists"> {
+  const ns = opts?.ns ?? "";
   const cleanup = async () => {
     if (!opts?.keepSource) await fsp.rm(src, { force: true });
   };
   if (s3Enabled()) {
-    if (await blobExists(sha256)) {
+    if (await blobExists(sha256, ns)) {
       await cleanup();
       return "exists";
     }
@@ -307,12 +312,12 @@ export async function storeBlobFromFile(
     // per-part retries.
     await new Upload({
       client: s3(),
-      params: { Bucket: s3Bucket(), Key: s3Key(sha256), Body: fs.createReadStream(src) },
+      params: { Bucket: s3Bucket(), Key: s3Key(sha256, ns), Body: fs.createReadStream(src) },
     }).done();
     await cleanup();
     return "stored";
   }
-  const dest = assetBlobPath(sha256);
+  const dest = assetBlobPath(sha256, ns);
   if (fs.existsSync(dest)) {
     await cleanup();
     return "exists";

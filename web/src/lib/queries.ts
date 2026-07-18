@@ -499,9 +499,28 @@ export interface BuildListItem {
   /** Hidden from non-moderators (own flag or private lot). Only meaningful
    *  when the list was fetched with includePrivate. */
   private?: boolean;
+  /** Community completeness counts + skip flags (listBuildsPage only; a 0
+   *  renders orange in the browser unless the category is skipped). */
+  notes?: number;
+  screenshots?: number;
+  videos?: number;
+  physical?: number;
+  skip_notes?: boolean;
+  skip_screenshots?: boolean;
+  skip_video?: boolean;
+  skip_physical?: boolean;
 }
 
-export type BuildSortKey = "name" | "system" | "build_date" | "file_count" | "total_size";
+export type BuildSortKey =
+  | "name"
+  | "system"
+  | "build_date"
+  | "file_count"
+  | "total_size"
+  | "notes"
+  | "screenshots"
+  | "video"
+  | "physical";
 
 export interface BuildsPageOpts {
   q?: string;
@@ -524,13 +543,18 @@ export interface BuildsPageResult {
 }
 
 // Whitelist of sortable columns — `sort` is interpolated into ORDER BY, so it
-// must map through this table, never straight from user input.
+// must map through this table, never straight from user input. The community
+// count keys name select-list aliases (Postgres resolves them in ORDER BY).
 const BUILD_SORT: Record<BuildSortKey, string> = {
   name: "lower(name)",
   system: "system",
   build_date: "build_date",
   file_count: "file_count",
   total_size: "total_size",
+  notes: "notes",
+  screenshots: "screenshots",
+  video: "videos",
+  physical: "physical",
 };
 
 /// One page of the /builds index, filtered and sorted in SQL. Replaces the
@@ -566,11 +590,30 @@ export async function listBuildsPage(pool: Pool, opts: BuildsPageOpts = {}): Pro
   const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
   const offset = Math.max(opts.offset ?? 0, 0);
 
+  // The community joins aggregate small user tables (media/notes stay orders
+  // of magnitude below builds), so they don't disturb the <500ms page budget.
   const [rows, count, systems] = await Promise.all([
     pool.query(
       `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot,
-              (private OR EXISTS (SELECT 1 FROM private_lots _pl WHERE _pl.lot = builds.lot)) AS private
-       FROM builds ${where} ORDER BY ${order}
+              (private OR EXISTS (SELECT 1 FROM private_lots _pl WHERE _pl.lot = builds.lot)) AS private,
+              COALESCE(_n.notes, 0)::int        AS notes,
+              COALESCE(_m.screenshots, 0)::int  AS screenshots,
+              COALESCE(_m.videos, 0)::int       AS videos,
+              COALESCE(_m.physical, 0)::int     AS physical,
+              COALESCE(_s.skip_notes, FALSE)       AS skip_notes,
+              COALESCE(_s.skip_screenshots, FALSE) AS skip_screenshots,
+              COALESCE(_s.skip_video, FALSE)       AS skip_video,
+              COALESCE(_s.skip_physical, FALSE)    AS skip_physical
+       FROM builds
+       LEFT JOIN (SELECT build_sha256,
+                         count(*) FILTER (WHERE kind='screenshot') AS screenshots,
+                         count(*) FILTER (WHERE kind='video')      AS videos,
+                         count(*) FILTER (WHERE kind='physical')   AS physical
+                  FROM build_media GROUP BY build_sha256) _m ON _m.build_sha256 = builds.sha256
+       LEFT JOIN (SELECT build_sha256, count(*) AS notes
+                  FROM build_note GROUP BY build_sha256) _n ON _n.build_sha256 = builds.sha256
+       LEFT JOIN build_skip _s ON _s.build_sha256 = builds.sha256
+       ${where} ORDER BY ${order}
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]
     ),
