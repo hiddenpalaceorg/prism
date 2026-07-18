@@ -1,9 +1,9 @@
 import hashlib
 import io
 
-from curator_adapter import viewable
-from curator_adapter.cli import _extract_assets
-from curator_adapter.progress import ProgressManager
+from prism_adapter import viewable
+from prism_adapter.cli import _extract_assets
+from prism_adapter.progress import ProgressManager
 
 
 class FakeReader:

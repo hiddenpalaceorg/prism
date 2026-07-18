@@ -394,47 +394,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "curator-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "curator-core",
- "indicatif",
- "native-tls",
- "serde_json",
- "ureq",
-]
-
-[[package]]
-name = "curator-core"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "chrono",
- "directories",
- "fastcdc",
- "hex",
- "md-5",
- "rusqlite",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "thiserror 1.0.69",
- "zip",
-]
-
-[[package]]
-name = "curator-ffi"
-version = "0.1.0"
-dependencies = [
- "curator-core",
- "thiserror 1.0.69",
- "uniffi",
-]
-
-[[package]]
 name = "derive_arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1122,6 +1081,47 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn",
+]
+
+[[package]]
+name = "prism-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "indicatif",
+ "native-tls",
+ "prism-core",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
+name = "prism-core"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "directories",
+ "fastcdc",
+ "hex",
+ "md-5",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "thiserror 1.0.69",
+ "zip",
+]
+
+[[package]]
+name = "prism-ffi"
+version = "0.1.0"
+dependencies = [
+ "prism-core",
+ "thiserror 1.0.69",
+ "uniffi",
 ]
 
 [[package]]

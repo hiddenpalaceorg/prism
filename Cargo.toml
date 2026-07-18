@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/curator-core",
-    "crates/curator-cli",
-    "crates/curator-ffi",
+    "crates/prism-core",
+    "crates/prism-cli",
+    "crates/prism-ffi",
 ]
-# curator-win is added on Windows only (see crates/curator-win).
-exclude = ["crates/curator-win"]
+# prism-win is added on Windows only (see crates/prism-win).
+exclude = ["crates/prism-win"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,2 +1,0 @@
-#!/bin/sh
-cd curator-cli && poetry -q install && poetry run curator-cli "$@"

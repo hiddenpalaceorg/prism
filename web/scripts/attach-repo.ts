@@ -134,7 +134,7 @@ async function main() {
   }
 
   const pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL || "postgres:///curator_test",
+    connectionString: process.env.DATABASE_URL || "postgres:///prism_test",
   });
   try {
     // Fail fast on identity questions before any repo walking.

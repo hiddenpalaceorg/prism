@@ -1,6 +1,6 @@
 // Syntax highlighting for "source" assets (client-side). highlight.js core
 // with only the grammars the adapter's source kind can emit (see
-// ps2exe-adapter/curator_adapter/viewable.py) — the full hljs build would drag
+// ps2exe-adapter/prism_adapter/viewable.py) — the full hljs build would drag
 // ~190 grammars into the bundle. Colors live in globals.css (.hljs-* rules).
 
 import hljs from "highlight.js/lib/core";

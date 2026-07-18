@@ -49,7 +49,7 @@ export default function Home() {
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
       <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Curator</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Prism</h1>
         <span className="flex gap-4 text-sm text-neutral-500">
           <Link href="/builds" className="hover:underline">Browse builds &rarr;</Link>
           <Link href="/moderate" className="hover:underline">Moderation &rarr;</Link>

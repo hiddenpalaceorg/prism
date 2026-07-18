@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 // publicly proxied.
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.SITE_URL ?? "https://hiddenpalace.org"),
-  title: { default: "Curator", template: "%s · Hidden Palace" },
+  title: { default: "Prism", template: "%s · Hidden Palace" },
   description: "The Hidden Palace build library — browsable, searchable game builds with file listings, similarity matching, and viewable assets.",
   openGraph: { siteName: "Hidden Palace", type: "website" },
 };

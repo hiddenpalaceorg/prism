@@ -2,7 +2,7 @@
 // Usage: npm run ingest -- <bundle.zip | bundle.jsonl>   (env DATABASE_URL)
 //
 // Accepts either a portable `.zip` bundle (manifest.json + builds.jsonl, as
-// produced by `curator export -o foo.zip`) or a raw `.jsonl` file. Either way
+// produced by `prism export -o foo.zip`) or a raw `.jsonl` file. Either way
 // records are streamed line-by-line so a large collection never has to fit in
 // memory. Populates builds (+ text embedding), files, build_fileset,
 // build_chunk_signature, exe_fp, audio_fp. The per-record work lives in
@@ -35,7 +35,7 @@ if (!bundle) {
 }
 
 interface Manifest {
-  curator_bundle?: number;
+  prism_bundle?: number;
   record_schema_version?: number;
   fingerprint_profile?: string;
   count?: number;
@@ -50,7 +50,7 @@ function readManifest(zipPath: string): Manifest {
       maxBuffer: 1 << 20,
     });
   } catch {
-    throw new Error(`could not read manifest.json from ${zipPath} (is it a curator bundle?)`);
+    throw new Error(`could not read manifest.json from ${zipPath} (is it a prism bundle?)`);
   }
   const m = JSON.parse(raw) as Manifest;
   if (m.record_schema_version !== EXPECTED_SCHEMA_VERSION) {
@@ -88,7 +88,7 @@ async function unpackAssets(zipPath: string): Promise<number> {
   const missing = await missingBlobs(shas);
   if (missing.length === 0) return 0;
 
-  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "curator-assets-"));
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "prism-assets-"));
   try {
     execFileSync("unzip", ["-qo", zipPath, "assets/*", "-d", staging], { stdio: "ignore" });
     let n = 0;
@@ -124,7 +124,7 @@ function openRecords(path: string): { lines: Readable; done: Promise<void> } {
 
 async function main() {
   const pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL || "postgres:///curator_test",
+    connectionString: process.env.DATABASE_URL || "postgres:///prism_test",
   });
   let n = 0;
   let lineNo = 0;

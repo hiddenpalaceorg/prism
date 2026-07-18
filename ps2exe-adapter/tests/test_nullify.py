@@ -1,4 +1,4 @@
-"""Tests for _nullify (curator_adapter.cli).
+"""Tests for _nullify (prism_adapter.cli).
 
 _nullify normalizes header/volume/SFO metadata fields to a clean string or None.
 The consumer's schema types these fields as strings, so _nullify must coerce the
@@ -6,7 +6,7 @@ non-string values ps2exe occasionally returns (notably the integer SFO
 parental_level) rather than passing them through — see the regression below.
 """
 
-from curator_adapter.cli import _nullify
+from prism_adapter.cli import _nullify
 
 
 def test_strings_are_stripped_and_emptied_to_none():

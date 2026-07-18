@@ -1,4 +1,4 @@
-# curator-web
+# prism-web
 
 A searchable public listing of known builds and the read-only similarity service the desktop GUIs call.
 
@@ -6,15 +6,15 @@ A searchable public listing of known builds and the read-only similarity service
 
 ```sh
 npm install
-createdb curator && psql curator -f db/schema.sql   # needs pg_trgm, vector, intarray
-DATABASE_URL=postgres:///curator npm run dev
+createdb prism && psql prism -f db/schema.sql   # needs pg_trgm, vector, intarray
+DATABASE_URL=postgres:///prism npm run dev
 ```
 
 ## Ingesting
 
 ```sh
-# from a desktop export bundle (curator export -o builds.zip)
-DATABASE_URL=postgres:///curator npm run ingest -- builds.zip
+# from a desktop export bundle (prism export -o builds.zip)
+DATABASE_URL=postgres:///prism npm run ingest -- builds.zip
 ```
 Populates `builds`, `files`, `build_fileset`, `build_chunk_signature`,
 `build_resemblance`, `exe_fp`, `audio_fp`, and `build_asset`, computing the
@@ -31,7 +31,7 @@ with two backends:
   `./asset-store`.
 - **s3**: any S3-compatible object store, selected by setting
   `ASSET_S3_ENDPOINT`. Keys mirror the local layout under
-  `ASSET_S3_PREFIX` in `ASSET_S3_BUCKET` (default `curator`). Credentials come
+  `ASSET_S3_PREFIX` in `ASSET_S3_BUCKET` (default `prism`). Credentials come
   from `ASSET_S3_ACCESS_KEY_ID`/`ASSET_S3_SECRET_ACCESS_KEY` (or the SDK's
   default chain); `ASSET_S3_REGION` defaults to `us-east-1`, and
   `ASSET_S3_INSECURE_TLS=1` accepts a self-signed endpoint certificate.

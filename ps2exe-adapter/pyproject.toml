@@ -1,7 +1,7 @@
 [project]
-name = "curator-adapter"
+name = "prism-adapter"
 version = "0.1.0"
-description = "Curator's JSON boundary over ps2exe: parse a disc image, emit canonical-raw JSON + NDJSON progress."
+description = "Prism's JSON boundary over ps2exe: parse a disc image, emit canonical-raw JSON + NDJSON progress."
 requires-python = ">=3.10,<3.11"
 dependencies = [
     "pycdlib==1.14.0",
@@ -24,13 +24,13 @@ dependencies = [
 ]
 
 [project.scripts]
-curator-adapter = "curator_adapter.cli:main"
+prism-adapter = "prism_adapter.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "pyinstaller==6.20.0"]
 
 [tool.pytest.ini_options]
-# Put the adapter root on sys.path so `import curator_adapter` resolves from the
+# Put the adapter root on sys.path so `import prism_adapter` resolves from the
 # source tree without installing the project (CI runs numpy-only, --no-project).
 pythonpath = ["."]
 

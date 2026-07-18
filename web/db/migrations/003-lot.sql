@@ -2,7 +2,7 @@
 -- are displayed together — cross-linked on each build page and filterable on
 -- /builds?lot=… . Assigned via PATCH /api/build/<sha256> (moderation token).
 -- Re-ingest never touches it (the builds upsert only refreshes record/build_date).
--- Idempotent — safe to re-run. Apply to every curator DB:
+-- Idempotent — safe to re-run. Apply to every prism DB:
 --   psql -d <db> -f db/migrations/003-lot.sql
 
 ALTER TABLE builds ADD COLUMN IF NOT EXISTS lot TEXT;

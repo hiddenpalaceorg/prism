@@ -1,0 +1,24 @@
+[package]
+name = "prism-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Prism command-line: analyze disc images to DAT/JSON and build the local library."
+
+[lib]
+name = "prism_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "prism"
+path = "src/main.rs"
+
+[dependencies]
+prism-core = { path = "../prism-core" }
+clap = { version = "4", features = ["derive", "env"] }
+indicatif = "0.17"
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+ureq = { version = "2", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"

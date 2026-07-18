@@ -1,4 +1,4 @@
--- Curator web database schema (Postgres).
+-- Prism web database schema (Postgres).
 --
 -- Fed by the desktop export bundle (JSONL of canonical BuildRecords) and the
 -- submissions API. Implements the search + similarity tiers:
