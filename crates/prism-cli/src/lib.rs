@@ -4,8 +4,9 @@
 //! the local library, inspect a build's views, extract assets, and talk to the
 //! web service (Find Similar / Submit).
 
-mod progress;
+pub mod progress;
 mod service;
+mod tetra;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use prism_core::db::{LibraryRow, LibrarySort};
 use prism_core::summary::{self, Section};
 use prism_core::{render, Analysis, Analyzer, Config, Node, Reader};
 
-use crate::progress::IndicatifObserver;
+use crate::progress::LoaderObserver;
 
 #[derive(Parser)]
 #[command(name = "prism", version, about = "Analyze disc images into DAT/JSON and add them to a local library")]
@@ -361,7 +362,7 @@ fn analyze(
 ) -> Result<()> {
     let total = files.len() as u64;
     for (i, path) in files.iter().enumerate() {
-        let observer = Arc::new(IndicatifObserver::new());
+        let observer = Arc::new(LoaderObserver::new());
         observer.batch(i as u64, total, path);
 
         let analysis = if force {
@@ -429,16 +430,17 @@ fn import(analyzer: &Analyzer, paths: &[String]) -> Result<()> {
     let total = files.len() as u64;
     let (mut imported, mut skipped) = (0u64, 0u64);
     for (i, path) in files.iter().enumerate() {
-        let observer = Arc::new(IndicatifObserver::new());
+        let observer = Arc::new(LoaderObserver::new());
         observer.batch(i as u64, total, path);
-        match analyzer.analyze(path, observer.clone()) {
+        let res = analyzer.analyze(path, observer.clone());
+        observer.finish();
+        match res {
             Ok(_) => imported += 1,
             Err(e) => {
                 skipped += 1;
                 eprintln!("  skipped {path}: {e}");
             }
         }
-        observer.finish();
     }
     println!("imported {imported}, skipped {skipped} unsupported");
     Ok(())
@@ -476,7 +478,7 @@ fn load_build(reader: &Reader, sha: &str) -> Result<Analysis> {
 /// treated as a library sha256/prefix.
 fn resolve_target(analyzer: &Analyzer, target: &str, force: bool) -> Result<Analysis> {
     if Path::new(target).exists() {
-        let observer = Arc::new(IndicatifObserver::new());
+        let observer = Arc::new(LoaderObserver::new());
         let analysis = if force {
             analyzer.reanalyze(target, observer.clone())
         } else {
