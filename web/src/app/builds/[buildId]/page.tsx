@@ -8,6 +8,7 @@ import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/f
 import { getBuild, getBuildAssets, getBuildMeta, getBuildRepos, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, listLots, isLotPrivate, resolveBuild } from "@/lib/queries";
 import { shortOid } from "@/lib/repo-manifest";
 import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
+import { getBuildMedia, getBuildNotes, getBuildSkip, mediaView } from "@/lib/media";
 import { buildDescription, displayTitle } from "@/lib/meta";
 import { canonicalBuildId, parseBuildParam } from "@/lib/slug";
 import type { BuildRecord } from "@/lib/types";
@@ -15,7 +16,9 @@ import SimilarBuilds from "./SimilarBuilds";
 import FileTree from "./FileTree";
 import AssetGallery from "./AssetGallery";
 import AssetViewerHost from "./AssetViewerHost";
+import MediaSection from "./MediaSection";
 import ModeratorTools from "./ModeratorTools";
+import NotesSection from "./NotesSection";
 
 // The assets section previews at most this many items per kind; the rest live
 // on /builds/<id>/assets.
@@ -139,13 +142,16 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
   const q = deriveQueryFeatures(build.record);
   // Pull a wide candidate set per tier so the fused top-50 is well-populated.
   // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const [similar, textNeighbors, assets, lots, repos, lotPrivate] = await Promise.all([
+  const [similar, textNeighbors, assets, lots, repos, lotPrivate, media, notes, skips] = await Promise.all([
     findSimilar(pool, q, 100),
     findByEmbeddingOf(pool, sha256, 100),
     getBuildAssets(pool, sha256),
     listLots(pool),
     getBuildRepos(pool, sha256),
     build.lot ? isLotPrivate(pool, build.lot) : Promise.resolve(false),
+    getBuildMedia(pool, sha256),
+    getBuildNotes(pool, sha256),
+    getBuildSkip(pool, sha256),
   ]);
   const fused = fuseSimilar(similar, textNeighbors);
 
@@ -208,13 +214,14 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
       </dl>
 
       <ModeratorTools
-        key={`${build.name}\0${build.lot ?? ""}\0${build.private}\0${lotPrivate}`}
+        key={`${build.name}\0${build.lot ?? ""}\0${build.private}\0${lotPrivate}\0${JSON.stringify(skips)}`}
         sha256={build.sha256}
         name={build.name}
         lot={build.lot}
         lots={lots}
         privateFlag={build.private}
         lotPrivate={lotPrivate}
+        skips={skips}
       />
 
       {meta.length > 0 && (
@@ -273,6 +280,10 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
           <AssetGallery buildHref={href} assets={previewAssets} totals={assetTotals(assets)} excerpts={excerpts} />
         </section>
       )}
+
+      <MediaSection sha256={sha256} items={media.map(mediaView)} />
+
+      <NotesSection sha256={sha256} notes={notes} />
 
       <section className="mt-8">
         <h2 className="text-lg font-medium">

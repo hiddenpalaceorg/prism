@@ -20,6 +20,8 @@ interface Props {
   privateFlag: boolean;
   /** Whether the build's lot is private (hides every build in it). */
   lotPrivate: boolean;
+  /** Completeness categories marked not-applicable for this build. */
+  skips: { skip_notes: boolean; skip_screenshots: boolean; skip_video: boolean; skip_physical: boolean };
 }
 
 // Rename + lot assignment, shown when a moderation token is saved (the
@@ -27,7 +29,7 @@ interface Props {
 // belongs to a moderator group. Purely cosmetic gating — the PATCH route
 // re-checks credentials server-side. The parent keys this component on
 // name+lot, so a router.refresh() after a save remounts it with fresh values.
-export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, lotPrivate }: Props) {
+export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, lotPrivate, skips }: Props) {
   const router = useRouter();
   const token = useSyncExternalStore(noSubscribe, clientToken, serverToken);
   const [wikiModerator, setWikiModerator] = useState(false);
@@ -50,11 +52,16 @@ export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, l
 
   if (!token && !wikiModerator) return null;
 
-  async function save(patch: { name?: string; lot?: string | null; private?: boolean; lotPrivate?: boolean }) {
+  async function saveTo(
+    path: string,
+    patch:
+      | { name?: string; lot?: string | null; private?: boolean; lotPrivate?: boolean }
+      | { notes?: boolean; screenshots?: boolean; video?: boolean; physical?: boolean }
+  ) {
     setBusy(true);
     setNote("");
     try {
-      const res = await fetch(`/api/build/${sha256}`, {
+      const res = await fetch(path, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -75,6 +82,11 @@ export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, l
       setBusy(false);
     }
   }
+
+  const save = (patch: { name?: string; lot?: string | null; private?: boolean; lotPrivate?: boolean }) =>
+    saveTo(`/api/build/${sha256}`, patch);
+  const saveSkip = (patch: { notes?: boolean; screenshots?: boolean; video?: boolean; physical?: boolean }) =>
+    saveTo(`/api/build/${sha256}/skip`, patch);
 
   const nameDirty = nameInput.trim() !== "" && nameInput.trim() !== name;
   const lotDirty = (lotInput.trim() || null) !== lot;
@@ -148,6 +160,49 @@ export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, l
                 onChange={(e) => save({ lotPrivate: e.target.checked })}
               />
               Private lot
+            </label>
+          </div>
+        </div>
+        {/* "Not applicable" markers for the completeness columns on /builds:
+            a skipped category's 0 stops rendering orange there. */}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-neutral-500">Skip (not applicable)</span>
+          <div className="flex h-9 items-center gap-5">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={skips.skip_notes}
+                disabled={busy}
+                onChange={(e) => saveSkip({ notes: e.target.checked })}
+              />
+              Notes
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={skips.skip_screenshots}
+                disabled={busy}
+                onChange={(e) => saveSkip({ screenshots: e.target.checked })}
+              />
+              Screenshots
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={skips.skip_video}
+                disabled={busy}
+                onChange={(e) => saveSkip({ video: e.target.checked })}
+              />
+              Video
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={skips.skip_physical}
+                disabled={busy}
+                onChange={(e) => saveSkip({ physical: e.target.checked })}
+              />
+              Physical
             </label>
           </div>
         </div>
