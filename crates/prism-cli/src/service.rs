@@ -192,10 +192,25 @@ impl Client {
         std::thread::scope(|s| {
             for _ in 0..PARALLEL_UPLOADS.min(total) {
                 s.spawn(|| loop {
-                    let Some(sha) = todo.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(sha) = todo.get(i) else { break };
+                    // Each blob gets its own byte counter, so the loader's
+                    // second bar row tracks the most recently started blob.
+                    let id = UPLOAD_ID - 1 - i as u64;
+                    let size = std::fs::metadata(&local[*sha]).map(|m| m.len()).unwrap_or(0);
+                    obs.on_event(Event::CounterOpen {
+                        id,
+                        label: format!("{}…", &sha[..12.min(sha.len())]),
+                        unit: "B".into(),
+                        total: Some(size as f64),
+                    });
+                    let sent = std::cell::Cell::new(0u64);
                     let ok = self.upload_asset_chunked(&assets_url, sha, &local[*sha], &|delta| {
                         bytes_done.fetch_add(delta as u64, Ordering::Relaxed);
+                        sent.set(sent.get() + delta as u64);
+                        obs.on_event(Event::Progress { id, count: sent.get() as f64 });
                     });
+                    obs.on_event(Event::CounterClose { id });
                     if ok {
                         ok_count.fetch_add(1, Ordering::Relaxed);
                     }
@@ -206,10 +221,10 @@ impl Client {
                         &sha[..12.min(sha.len())],
                         if ok { "uploaded" } else { "FAILED" }
                     );
-                    // Successes tick by inside the loader; failures must
-                    // survive in the scrollback.
+                    // Completions tick by in the counter rows; plain mode logs
+                    // each, and failures must survive in the scrollback.
                     if ok {
-                        obs.transient(line);
+                        obs.plain(line);
                     } else {
                         obs.on_event(Event::Message(line));
                     }
