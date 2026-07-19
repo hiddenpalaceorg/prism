@@ -46,8 +46,8 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: v.error }, { status: 422 });
   }
   try {
-    const sha256 = await enqueueSubmission(getPool(), nickname, v.record);
-    return Response.json({ sha256, status: "queued" }, { status: 202 });
+    const { sha256, kind } = await enqueueSubmission(getPool(), nickname, v.record);
+    return Response.json({ sha256, status: "queued", kind }, { status: 202 });
   } catch {
     return Response.json({ error: "internal error" }, { status: 500 });
   }
