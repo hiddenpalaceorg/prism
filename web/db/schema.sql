@@ -247,8 +247,22 @@ CREATE TABLE submission_queue (
     sha256       TEXT PRIMARY KEY,
     nickname     TEXT NOT NULL,
     status       TEXT NOT NULL DEFAULT 'queued',  -- queued|accepted|rejected
+    -- 'duplicate': the image is already a build under a different name;
+    -- accepting records the name in build_duplicate instead of re-ingesting.
+    kind         TEXT NOT NULL DEFAULT 'build' CHECK (kind IN ('build','duplicate')),
     record       JSONB NOT NULL,
     submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     reviewed_at  TIMESTAMPTZ
 );
 CREATE INDEX idx_subq_status ON submission_queue(status);
+
+-- Names a build's image has circulated under besides its own — accepted
+-- duplicate submissions. PROD-ONLY USER DATA: same never-wipe rules as above.
+CREATE TABLE build_duplicate (
+    id           BIGSERIAL PRIMARY KEY,
+    build_sha256 TEXT NOT NULL REFERENCES builds(sha256) ON DELETE CASCADE,
+    name         TEXT NOT NULL,           -- the name the duplicate was submitted under
+    nickname     TEXT NOT NULL,           -- who submitted it
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (build_sha256, name)
+);

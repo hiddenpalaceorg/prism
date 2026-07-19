@@ -451,18 +451,37 @@ export async function search(
   return { mode: "text", results: r.rows.map((x) => ({ ...x, sim: x.sim == null ? null : Number(x.sim) })) };
 }
 
-/** Enqueue a submission (dedup by sha256). */
-export async function enqueueSubmission(pool: Pool, nickname: string, record: BuildRecord): Promise<string> {
+export type SubmissionKind = "build" | "duplicate";
+
+/** Enqueue a submission (dedup by sha256). A record whose image is already a
+ *  build, under a different name than both the build's display name and its
+ *  stored record's image name, queues as kind='duplicate': accepting records
+ *  the name in build_duplicate instead of re-ingesting (see the moderation
+ *  accept route). Matching either name stays kind='build', so a repair
+ *  resubmission — same file, possibly a moderator-renamed build — still
+ *  replaces the live build wholesale. */
+export async function enqueueSubmission(
+  pool: Pool,
+  nickname: string,
+  record: BuildRecord
+): Promise<{ sha256: string; kind: SubmissionKind }> {
   const sha = record?.image?.sha256;
   if (!sha) throw new Error("record missing image.sha256");
-  await pool.query(
-    `INSERT INTO submission_queue (sha256, nickname, record)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (sha256) DO UPDATE SET nickname=excluded.nickname, record=excluded.record,
-        status='queued', submitted_at=now(), reviewed_at=NULL`,
-    [sha, nickname, record]
+  const name = record?.image?.name ?? "";
+  const existing = await pool.query(
+    `SELECT name, record->'image'->>'name' AS record_name FROM builds WHERE sha256=$1`,
+    [sha]
   );
-  return sha;
+  const b = existing.rows[0] as { name: string; record_name: string | null } | undefined;
+  const kind: SubmissionKind = b && name !== b.name && name !== b.record_name ? "duplicate" : "build";
+  await pool.query(
+    `INSERT INTO submission_queue (sha256, nickname, record, kind)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (sha256) DO UPDATE SET nickname=excluded.nickname, record=excluded.record,
+        kind=excluded.kind, status='queued', submitted_at=now(), reviewed_at=NULL`,
+    [sha, nickname, record, kind]
+  );
+  return { sha256: sha, kind };
 }
 
 export interface BuildRow {
@@ -817,7 +836,7 @@ export async function setLotPrivate(pool: Pool, lot: string, priv: boolean): Pro
 
 export async function submissionStatus(pool: Pool, sha256: string) {
   const r = await pool.query(
-    "SELECT sha256, nickname, status, submitted_at, reviewed_at FROM submission_queue WHERE sha256=$1",
+    "SELECT sha256, nickname, status, kind, submitted_at, reviewed_at FROM submission_queue WHERE sha256=$1",
     [sha256]
   );
   return r.rows[0] || null;
@@ -827,6 +846,8 @@ export interface SubmissionListItem {
   sha256: string;
   nickname: string;
   status: string;
+  /** 'duplicate': accept records the name in build_duplicate, not an ingest. */
+  kind: SubmissionKind;
   submitted_at: string;
   reviewed_at: string | null;
   name: string;
@@ -841,7 +862,7 @@ export async function listSubmissions(pool: Pool, status?: string, limit = 200):
   const where = status ? "WHERE q.status=$1" : "";
   const params = status ? [status, limit] : [limit];
   const r = await pool.query(
-    `SELECT q.sha256, q.nickname, q.status, q.submitted_at, q.reviewed_at,
+    `SELECT q.sha256, q.nickname, q.status, q.kind, q.submitted_at, q.reviewed_at,
             q.record->'image'->>'name'         AS name,
             q.record->'info'->>'system'        AS system,
             (q.record->'structural'->>'file_count')::bigint AS file_count,
@@ -852,6 +873,22 @@ export async function listSubmissions(pool: Pool, status?: string, limit = 200):
     params
   );
   return r.rows as SubmissionListItem[];
+}
+
+/** A name this build's image has circulated under besides its own (an
+ *  accepted duplicate submission). */
+export interface BuildDuplicate {
+  name: string;
+  nickname: string;
+  created_at: string;
+}
+
+export async function getBuildDuplicates(pool: Pool, sha256: string): Promise<BuildDuplicate[]> {
+  const r = await pool.query(
+    "SELECT name, nickname, created_at FROM build_duplicate WHERE build_sha256=$1 ORDER BY created_at, name",
+    [sha256]
+  );
+  return r.rows as BuildDuplicate[];
 }
 
 /// Mark a submission accepted/rejected. Returns the stored record on accept (so the

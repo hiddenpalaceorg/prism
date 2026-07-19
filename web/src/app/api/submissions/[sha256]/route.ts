@@ -51,6 +51,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   // Accept: ingest and flip status to accepted in ONE transaction so a failed
   // ingest never leaves the submission marked accepted.
   let name = "";
+  let kind = "build";
   const c = await pool.connect();
   try {
     await c.query("BEGIN");
@@ -58,27 +59,52 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
     // audio-IDF refresh below outlives the pool's page-query statement_timeout on
     // slower hosts. Page queries keep their cap.
     await c.query("SET LOCAL statement_timeout = 0");
-    const r = await c.query<{ record: BuildRecord }>(
-      "SELECT record FROM submission_queue WHERE sha256=$1 FOR UPDATE",
+    const r = await c.query<{ record: BuildRecord; kind: string; nickname: string }>(
+      "SELECT record, kind, nickname FROM submission_queue WHERE sha256=$1 FOR UPDATE",
       [sha256]
     );
     if (!r.rowCount) {
       await c.query("ROLLBACK");
       return Response.json({ error: "not found" }, { status: 404 });
     }
-    name = r.rows[0].record.image?.name ?? "";
-    // Force: an accept must replace the live build wholesale — record, row
-    // columns, and derived tables — even when the record looks unchanged.
-    // New submissions start private (unlisted) until a moderator publishes
-    // them; re-accepting an existing build keeps its current visibility.
-    await ingestRecord(c, r.rows[0].record, { force: true, asPrivate: true });
+    kind = r.rows[0].kind;
+    if (kind === "duplicate") {
+      // Duplicate-name submission: the image is already a live build. Accepting
+      // records the submitted name as a known duplicate — the build itself
+      // (record, derived tables, any moderator rename) stays untouched.
+      const b = await c.query<{ name: string }>("SELECT name FROM builds WHERE sha256=$1", [sha256]);
+      if (!b.rowCount) {
+        await c.query("ROLLBACK");
+        return Response.json(
+          { error: "original build no longer exists; reject and have it resubmitted" },
+          { status: 409 }
+        );
+      }
+      name = b.rows[0].name;
+      const dupName = r.rows[0].record.image?.name ?? "";
+      if (dupName && dupName !== name) {
+        await c.query(
+          `INSERT INTO build_duplicate (build_sha256, name, nickname) VALUES ($1,$2,$3)
+           ON CONFLICT (build_sha256, name) DO NOTHING`,
+          [sha256, dupName, r.rows[0].nickname]
+        );
+      }
+    } else {
+      name = r.rows[0].record.image?.name ?? "";
+      // Force: an accept must replace the live build wholesale — record, row
+      // columns, and derived tables — even when the record looks unchanged.
+      // New submissions start private (unlisted) until a moderator publishes
+      // them; re-accepting an existing build keeps its current visibility.
+      await ingestRecord(c, r.rows[0].record, { force: true, asPrivate: true });
+    }
     await c.query(
       "UPDATE submission_queue SET status='accepted', reviewed_at=now() WHERE sha256=$1",
       [sha256]
     );
     // Keep the audio-hash corpus frequencies in step with the new build so the
     // similarity tier's IDF weighting stays accurate; atomic with the accept.
-    await refreshAudioIdf(c);
+    // A duplicate accept changes no corpus rows, so it skips the refresh.
+    if (kind !== "duplicate") await refreshAudioIdf(c);
     await c.query("COMMIT");
   } catch (e) {
     console.error(`accept ${sha256}: ingest failed:`, e);
@@ -94,5 +120,5 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   revalidatePath(canonical);
   revalidatePath(`${canonical}/assets`);
   revalidatePath(`/builds/${sha256}`);
-  return Response.json({ sha256, status: "accepted" });
+  return Response.json({ sha256, status: "accepted", kind });
 }

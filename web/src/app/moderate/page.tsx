@@ -8,6 +8,7 @@ interface Submission {
   sha256: string;
   nickname: string;
   status: string;
+  kind: string;
   submitted_at: string;
   reviewed_at: string | null;
   name: string;
@@ -107,6 +108,8 @@ export default function Moderate() {
       <p className="mt-1 text-sm text-neutral-500">
         Review contributor submissions. Accepting ingests the build into the library
         as private (unlisted); publish it from the build page when it is ready.
+        Accepting a <span className="font-medium">duplicate</span> records the submitted
+        name on the existing build instead of replacing it.
         While you are signed in, build pages also show moderator tools (rename, lot).
       </p>
 
@@ -171,6 +174,14 @@ export default function Moderate() {
                   <span>{s.file_count ?? "?"} files</span>
                   <span>by {s.nickname}</span>
                   <span className="font-mono">{s.sha256.slice(0, 12)}…</span>
+                  {s.kind === "duplicate" && (
+                    <span
+                      title="This image is already in the library under a different name. Accept records this name as a duplicate; the existing build is not replaced."
+                      className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200"
+                    >
+                      duplicate
+                    </span>
+                  )}
                   {s.lot && (
                     <Link
                       href={`/builds?lot=${encodeURIComponent(s.lot)}`}

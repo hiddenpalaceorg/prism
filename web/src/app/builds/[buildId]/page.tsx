@@ -5,7 +5,7 @@ import { notFound, permanentRedirect } from "next/navigation";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { buildTree, initialExpanded, pruneToExpanded, treeCounts } from "@/lib/filetree";
-import { getBuild, getBuildAssets, getBuildMeta, getBuildRepos, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, listLots, isLotPrivate, resolveBuild } from "@/lib/queries";
+import { getBuild, getBuildAssets, getBuildDuplicates, getBuildMeta, getBuildRepos, findSimilar, findByEmbeddingOf, fuseSimilar, getCapabilities, listLots, isLotPrivate, resolveBuild } from "@/lib/queries";
 import { shortOid } from "@/lib/repo-manifest";
 import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
 import { getBuildMedia, getBuildNotes, getBuildSkip, mediaView } from "@/lib/media";
@@ -142,7 +142,7 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
   const q = deriveQueryFeatures(build.record);
   // Pull a wide candidate set per tier so the fused top-50 is well-populated.
   // Text neighbors use this build's already-stored embedding — no re-embedding per load.
-  const [similar, textNeighbors, assets, lots, repos, lotPrivate, media, notes, skips] = await Promise.all([
+  const [similar, textNeighbors, assets, lots, repos, lotPrivate, media, notes, skips, duplicates] = await Promise.all([
     findSimilar(pool, q, 100),
     findByEmbeddingOf(pool, sha256, 100),
     getBuildAssets(pool, sha256),
@@ -152,6 +152,7 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
     getBuildMedia(pool, sha256),
     getBuildNotes(pool, sha256),
     getBuildSkip(pool, sha256),
+    getBuildDuplicates(pool, sha256),
   ]);
   const fused = fuseSimilar(similar, textNeighbors);
 
@@ -171,6 +172,9 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
   const expanded = initialExpanded(tree);
   const counts = treeCounts(tree);
   const meta = metaSections(build.record);
+  // A later rename can make the build's own name match a recorded duplicate;
+  // don't list the current name under itself.
+  const dupNames = duplicates.filter((d) => d.name !== build.name);
   const filteredContentHash = build.record.composites?.filtered_content_hash;
   const discTitle = build.record.info?.title as string | undefined;
 
@@ -224,7 +228,7 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
         skips={skips}
       />
 
-      {meta.length > 0 && (
+      {(meta.length > 0 || dupNames.length > 0) && (
         <section className="mt-8">
           <h2 className="text-lg font-medium">Metadata</h2>
           <div className="mt-3 grid gap-x-12 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -241,6 +245,18 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
                 </dl>
               </div>
             ))}
+            {dupNames.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Duplicates</h3>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {dupNames.map((d) => (
+                    <li key={d.name} className="break-all">
+                      {d.name} <span className="text-xs text-neutral-500">by {d.nickname}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </section>
       )}
