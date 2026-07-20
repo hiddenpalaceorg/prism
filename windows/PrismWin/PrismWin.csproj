@@ -59,19 +59,28 @@
 
   <!-- Single-file publish leaves resources.pri (the compiled XAML) out of the
        bundle entirely, so the exe would die silently at InitializeComponent.
-       Add it to the bundle by hand; both item names are covered because the
-       SDK's bundling target has used either across versions. -->
+       Find the generated pri (its location varies by target) and add it to the
+       bundle by hand; both item names are covered because the SDK's bundling
+       target has used either across versions. -->
   <Target Name="BundleXamlResourcesPri" AfterTargets="_ComputeFilesToBundle"
           BeforeTargets="GenerateSingleFileBundle" Condition="'$(PublishSingleFile)' == 'true'">
-    <Error Text="resources.pri not found at $(TargetDir); the bundled app would have no compiled XAML"
-           Condition="!Exists('$(TargetDir)resources.pri')" />
     <ItemGroup>
-      <FilesToBundle Include="$(TargetDir)resources.pri"
-                     Condition="Exists('$(TargetDir)resources.pri')">
+      <_PrismPriCandidate Include="$(TargetDir)resources.pri" Condition="Exists('$(TargetDir)resources.pri')" />
+      <_PrismPriCandidate Include="$(ProjectDir)obj\**\resources.pri" />
+      <_PrismPriCandidate Include="$(ProjectDir)bin\**\resources.pri" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_PrismPriList>@(_PrismPriCandidate)</_PrismPriList>
+      <_PrismPriFile>$(_PrismPriList.Split(';')[0])</_PrismPriFile>
+    </PropertyGroup>
+    <Error Text="resources.pri not found under $(ProjectDir) obj or bin; the bundled app would have no compiled XAML"
+           Condition="'$(_PrismPriFile)' == ''" />
+    <Message Importance="high" Text="Bundling XAML resources from $(_PrismPriFile)" />
+    <ItemGroup Condition="'$(_PrismPriFile)' != ''">
+      <FilesToBundle Include="$(_PrismPriFile)">
         <RelativePath>resources.pri</RelativePath>
       </FilesToBundle>
-      <_FilesToBundle Include="$(TargetDir)resources.pri"
-                      Condition="Exists('$(TargetDir)resources.pri')">
+      <_FilesToBundle Include="$(_PrismPriFile)">
         <RelativePath>resources.pri</RelativePath>
       </_FilesToBundle>
     </ItemGroup>
