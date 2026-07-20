@@ -77,6 +77,7 @@ mod app {
         TVITEMW, TVIF_PARAM, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM, TVM_INSERTITEMW,
         TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
     };
+    use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
     use windows::Win32::UI::Shell::{
         DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, FileOpenDialog,
         IFileOpenDialog, SetWindowSubclass, ShellExecuteW, FOS_FORCEFILESYSTEM,
@@ -313,6 +314,9 @@ mod app {
         exe.exists().then_some(exe)
     }
 
+    /// Icon resource 1, embedded from prism.ico by build.rs via prism.rc.
+    const APP_ICON_ID: PCWSTR = PCWSTR(1 as *const u16);
+
     pub fn run() -> Result<()> {
         unsafe {
             // Apartment-threaded COM for the IFileDialog folder picker.
@@ -332,6 +336,7 @@ mod app {
                 hInstance: hinstance.into(),
                 lpszClassName: class_name,
                 hCursor: LoadCursorW(None, IDC_ARROW)?,
+                hIcon: LoadIconW(hinstance, APP_ICON_ID).unwrap_or_default(),
                 // COLOR_WINDOW (5) + 1, the conventional window-background brush.
                 hbrBackground: HBRUSH(6 as *mut core::ffi::c_void),
                 ..Default::default()
@@ -354,6 +359,21 @@ mod app {
                 hinstance,
                 Some(Box::into_raw(init) as *const core::ffi::c_void),
             )?;
+
+            // The Windows 10 taskbar draws the window's big icon at 24px times the DPI
+            // scale and never picks the matching .ico frame itself, it only shrinks the
+            // 32px HICON, which blurs. Hand it a big icon loaded at exactly that size
+            // (LoadImageW picks the best frame) and a metric-sized small one for the
+            // title bar. Alt-Tab badges get the 24px icon too, which they render fine.
+            let dpi = GetDpiForWindow(hwnd) as i32;
+            let taskbar = 24 * dpi / 96;
+            if let Ok(big) = LoadImageW(hinstance, APP_ICON_ID, IMAGE_ICON, taskbar, taskbar, LR_DEFAULTCOLOR) {
+                let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(big.0 as isize));
+            }
+            let small = GetSystemMetricsForDpi(SM_CXSMICON, dpi as u32);
+            if let Ok(sm) = LoadImageW(hinstance, APP_ICON_ID, IMAGE_ICON, small, small, LR_DEFAULTCOLOR) {
+                let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(sm.0 as isize));
+            }
 
             let _ = ShowWindow(hwnd, SW_SHOW);
 
@@ -1530,6 +1550,7 @@ mod app {
             hInstance: hinstance.into(),
             lpszClassName: class,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hIcon: LoadIconW(hinstance, APP_ICON_ID).unwrap_or_default(),
             hbrBackground: HBRUSH(6 as *mut core::ffi::c_void),
             ..Default::default()
         };
@@ -2289,6 +2310,7 @@ mod app {
             hInstance: hinstance.into(),
             lpszClassName: class,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hIcon: LoadIconW(hinstance, APP_ICON_ID).unwrap_or_default(),
             hbrBackground: HBRUSH(6 as *mut core::ffi::c_void),
             ..Default::default()
         };

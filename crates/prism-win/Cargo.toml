@@ -21,8 +21,11 @@ serde_json = "1"
 # styles work. Cross-toolchain (MSVC + GNU), no external resource compiler needed.
 # Unconditional: build-dep cfg() matches the host, not the target; build.rs gates the
 # actual embed on CARGO_CFG_WINDOWS instead.
+# embed-resource compiles prism.rc (the app icon) with rc.exe, llvm-rc, or windres,
+# and degrades to a warning when none exists (cross-checks from macOS).
 [build-dependencies]
 embed-manifest = "1.4"
+embed-resource = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -34,6 +37,7 @@ windows = { version = "0.58", features = [
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_Networking_WinHttp",
+    "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Controls",

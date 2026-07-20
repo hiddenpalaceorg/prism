@@ -43,6 +43,17 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Prism"
 
+# App icon: Prism.icns for macOS 13-15 (CFBundleIconFile), Assets.car with the
+# layered Liquid Glass icon for macOS 26+ (CFBundleIconName). The car is compiled
+# from icon/Prism.icon by the icon-assets workflow (needs Xcode 26's actool) and
+# committed. Regenerate the icns locally with icon/make-icns.sh.
+cp "$HERE/icon/Prism.icns" "$APP/Contents/Resources/Prism.icns"
+if [ -f "$HERE/icon/Assets.car" ]; then
+  cp "$HERE/icon/Assets.car" "$APP/Contents/Resources/Assets.car"
+else
+  echo "   note: icon/Assets.car missing, macOS 26 falls back to the flat icns"
+fi
+
 # Embed the Rust dylib and repoint the executable at it, so the .app is relocatable
 # (the linker picks libprism_ffi.dylib over the .a; without this it would load from
 # the build machine's $LIBDIR). No-op when the binary linked the static lib instead.
@@ -68,6 +79,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key>      <string>Prism</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>LSMinimumSystemVersion</key>  <string>13.0</string>
+  <key>CFBundleIconFile</key>        <string>Prism</string>
+  <key>CFBundleIconName</key>        <string>Prism</string>
   <key>NSHighResolutionCapable</key> <true/>
 </dict>
 </plist>

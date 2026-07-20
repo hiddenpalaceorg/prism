@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Pre-Tahoe icon background: classic 824px squircle with the background fill
+       from Prism.icon/icon.json (extended-gray 0.25 to 0.0, stop at 70%) and the
+       standard soft drop shadow. make-icns.sh composites the icon layer on top. -->
+  <defs>
+    <linearGradient id="bgGrad" x1="512" y1="100" x2="512" y2="676.8" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#404040"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <filter id="iconShadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="11" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="#000000" filter="url(#iconShadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="url(#bgGrad)"/>
+</svg>

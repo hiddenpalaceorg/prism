@@ -22,5 +22,15 @@ fn main() {
     if env::var_os("CARGO_CFG_WINDOWS").is_some() {
         use embed_manifest::{embed_manifest, new_manifest};
         embed_manifest(new_manifest("Prism.Gui")).expect("unable to embed manifest");
+
+        // App icon (prism.rc: icon resource 1). Explorer and the taskbar read it from
+        // the exe, the window classes load it via LoadIconW. manifest_optional() keeps
+        // cross-checks from a host without a resource compiler working (the exe then
+        // just lacks the icon).
+        println!("cargo:rerun-if-changed=prism.rc");
+        println!("cargo:rerun-if-changed=prism.ico");
+        embed_resource::compile("prism.rc", embed_resource::NONE)
+            .manifest_optional()
+            .expect("unable to embed icon resource");
     }
 }
