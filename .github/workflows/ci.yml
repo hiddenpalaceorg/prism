@@ -83,20 +83,27 @@ jobs:
         # and the adapter. Then actually launch the GUI: if it survives 12
         # seconds it created its window; an early exit means a startup crash.
         run: |
-          $exe = "windows/dist/PrismWin/PrismWin.exe"
+          $out = "windows/dist/PrismWin"
+          $exe = "$out/PrismWin.exe"
           if (-not (Test-Path $exe)) { throw "missing PrismWin.exe in publish output" }
-          Write-Host ("single exe: {0:N1} MB" -f ((Get-Item $exe).Length / 1MB))
+          Write-Host "== publish dir contents:"
+          Get-ChildItem $out | ForEach-Object { Write-Host ("{0,14:N0}  {1}" -f $_.Length, $_.Name) }
+          # Raw byte scan: the bundle manifest stores entry paths uncompressed.
+          $hay = [System.Text.Encoding]::Latin1.GetString([System.IO.File]::ReadAllBytes($exe))
           foreach ($needle in "resources.pri","prism_ffi.dll","prism-adapter.exe") {
-            if (-not (Select-String -Path $exe -Pattern $needle -SimpleMatch -Quiet)) {
-              throw "bundle is missing $needle"
-            }
+            if (-not $hay.Contains($needle)) { throw "bundle is missing $needle" }
           }
-          $cli = Start-Process -FilePath $exe -ArgumentList "--cli","--help" -NoNewWindow -Wait -PassThru
+          $hay = $null
+          # Prove the exe alone suffices: run it from a clean dir, like a user download.
+          New-Item -ItemType Directory -Force windows/dist/solo | Out-Null
+          Copy-Item $exe windows/dist/solo/
+          $solo = "windows/dist/solo/PrismWin.exe"
+          $cli = Start-Process -FilePath $solo -ArgumentList "--cli","--help" -NoNewWindow -Wait -PassThru
           if ($cli.ExitCode -ne 0) { throw "cli smoke test failed with exit code $($cli.ExitCode)" }
-          $gui = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 12
+          $gui = Start-Process -FilePath $solo -PassThru
+          Start-Sleep -Seconds 15
           if ($gui.HasExited) {
-            Get-ChildItem windows/dist/PrismWin,$env:TEMP -Filter prismwin-crash.log -ErrorAction SilentlyContinue |
+            Get-ChildItem windows/dist/solo,$env:TEMP -Filter prismwin-crash.log -ErrorAction SilentlyContinue |
               ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content $_.FullName }
             throw "GUI exited at startup with code $($gui.ExitCode)"
           }
