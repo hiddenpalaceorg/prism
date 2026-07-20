@@ -1,12 +1,8 @@
 <!-- Prism for Windows: WinUI 3 shell over prism-core via UniFFI C# bindings.
-
-     Build (on Windows), from the repo root:
-       cargo build -p prism-ffi --release
-       uniffi-bindgen-cs --library target/release/prism_ffi.dll --out-dir windows/PrismWin/Generated
-       dotnet build windows/PrismWin/PrismWin.csproj -c Release -p:Platform=x64
-
-     Generated/ holds the UniFFI bindings. They are regenerated from the built
-     DLL (never edited) so the binding checksums always match the Rust side. -->
+     Build on Windows with windows/build.ps1 from the repo root (or see
+     windows/README.md for the step-by-step commands). Generated/ holds the
+     UniFFI bindings. They are regenerated from the built DLL (never edited)
+     so the binding checksums always match the Rust side. -->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -24,7 +20,7 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Program.Main handles `--cli` before any XAML spins up. -->
+    <!-- Program.Main handles CLI mode before any XAML spins up. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!-- The Rust core; built by cargo, copied next to the exe for DllImport("prism_ffi"). -->
     <PrismFfiDll>$(MSBuildThisFileDirectory)..\..\target\release\prism_ffi.dll</PrismFfiDll>
