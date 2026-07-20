@@ -33,7 +33,8 @@ public static class Program
     /// when the install dir is read-only). Best-effort by design.
     public static void LogCrash(global::System.Exception? ex, string source)
     {
-        var line = $"[{global::System.DateTime.Now:O}] {source}: {ex}\r\n";
+        var stamp = global::System.DateTime.Now.ToString("O");
+        var line = $"[{stamp}] {source}: {ex}\r\n";
         foreach (var dir in new[] { global::System.AppContext.BaseDirectory, global::System.IO.Path.GetTempPath() })
         {
             try
