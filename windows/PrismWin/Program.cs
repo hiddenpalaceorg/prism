@@ -14,7 +14,7 @@ public static class Program
             return CliMode.Run(args);
         }
         global::WinRT.ComWrappersSupport.InitializeComWrappers();
-        global::Microsoft.UI.Xaml.Application.Start(_ =>
+        global::Microsoft.UI.Xaml.Application.Start(p =>
         {
             var context = new global::Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(
                 global::Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
