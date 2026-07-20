@@ -44,6 +44,50 @@ jobs:
           path: crates/prism-win/target/release/prism-win.exe
           if-no-files-found: error
 
+  windows-winui:
+    name: windows WinUI 3 app (folder artifact)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ps2exe (the adapter freeze needs it)
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+      - name: freeze adapter (PyInstaller one-file)
+        working-directory: ps2exe-adapter
+        run: uv run --group dev pyinstaller --noconfirm prism-adapter.spec
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: windows-ffi
+      - name: build prism_ffi.dll (release)
+        run: cargo build -p prism-ffi --release
+      - name: cache uniffi-bindgen-cs
+        id: bindgen-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/uniffi-bindgen-cs.exe
+          key: uniffi-bindgen-cs-v0.11.0+v0.31.0
+      - name: install uniffi-bindgen-cs (tag matches the uniffi 0.31 dep)
+        if: steps.bindgen-cache.outputs.cache-hit != 'true'
+        run: cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.11.0+v0.31.0 --locked
+      - name: generate C# bindings from the built DLL
+        run: uniffi-bindgen-cs --library target/release/prism_ffi.dll --out-dir windows/PrismWin/Generated
+      - name: publish app (self-contained, unpackaged)
+        run: dotnet publish windows/PrismWin/PrismWin.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -o windows/dist/PrismWin
+      - name: bundle adapter + zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force windows/dist/PrismWin/adapter | Out-Null
+          Copy-Item ps2exe-adapter/dist/prism-adapter.exe windows/dist/PrismWin/adapter/
+          Compress-Archive -Path windows/dist/PrismWin/* -DestinationPath windows/dist/PrismWin-winui.zip
+      - name: upload app folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrismWin-winui-${{ github.sha }}
+          path: windows/dist/PrismWin-winui.zip
+          if-no-files-found: error
+
   macos-build:
     name: macOS app build (.app artifact)
     runs-on: macos-latest
@@ -81,7 +125,7 @@ jobs:
   release:
     name: publish downloadable builds
     runs-on: ubuntu-latest
-    needs: [windows-build, macos-build]
+    needs: [windows-build, windows-winui, macos-build]
     # Pushes only: fork PRs lack (and shouldn't have) release-write permission.
     if: github.event_name == 'push'
     permissions:
@@ -95,8 +139,10 @@ jobs:
           set -euo pipefail
           token=$(openssl rand -hex 6)
           mkdir out
-          # Windows is a single self-contained .exe (adapter embedded); macOS is the .app zip.
+          # Windows classic is a single self-contained .exe (adapter embedded); the WinUI 3
+          # app is a self-contained folder zip; macOS is the .app zip.
           cp dl/prism-win-*/prism-win.exe "out/Prism-win-${token}.exe"
+          cp dl/PrismWin-winui-*/PrismWin-winui.zip "out/Prism-win-winui-${token}.zip"
           cp dl/Prism-macos-*/Prism-app.zip        "out/Prism-mac-${token}.zip"
           ls -la out
       - name: publish per-branch draft release (rolling; hidden from /releases, no git tag)

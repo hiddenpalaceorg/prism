@@ -1,0 +1,5 @@
+# UniFFI bindings are regenerated from the built DLL (see PrismWin.csproj).
+PrismWin/Generated/
+PrismWin/bin/
+PrismWin/obj/
+dist/

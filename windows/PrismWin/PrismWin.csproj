@@ -1,0 +1,45 @@
+<!-- Prism for Windows: WinUI 3 shell over prism-core via UniFFI C# bindings.
+
+     Build (on Windows), from the repo root:
+       cargo build -p prism-ffi --release
+       uniffi-bindgen-cs --library target/release/prism_ffi.dll --out-dir windows/PrismWin/Generated
+       dotnet build windows/PrismWin/PrismWin.csproj -c Release -p:Platform=x64
+
+     Generated/ holds the UniFFI bindings. They are regenerated from the built
+     DLL (never edited) so the binding checksums always match the Rust side. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>PrismWin</RootNamespace>
+    <AssemblyName>PrismWin</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/prism.ico</ApplicationIcon>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <!-- Unpackaged, xcopy-deployable app; the Windows App SDK runtime ships in the folder. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Program.Main handles `--cli` before any XAML spins up. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <!-- The Rust core; built by cargo, copied next to the exe for DllImport("prism_ffi"). -->
+    <PrismFfiDll>$(MSBuildThisFileDirectory)..\..\target\release\prism_ffi.dll</PrismFfiDll>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\prism.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(PrismFfiDll)" Link="prism_ffi.dll" Condition="Exists('$(PrismFfiDll)')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>
