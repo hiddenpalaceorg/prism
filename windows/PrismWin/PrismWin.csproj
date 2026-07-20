@@ -56,4 +56,24 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
+  <!-- Single-file publish leaves resources.pri (the compiled XAML) out of the
+       bundle entirely, so the exe would die silently at InitializeComponent.
+       Add it to the bundle by hand; both item names are covered because the
+       SDK's bundling target has used either across versions. -->
+  <Target Name="BundleXamlResourcesPri" AfterTargets="_ComputeFilesToBundle"
+          BeforeTargets="GenerateSingleFileBundle" Condition="'$(PublishSingleFile)' == 'true'">
+    <Error Text="resources.pri not found at $(TargetDir); the bundled app would have no compiled XAML"
+           Condition="!Exists('$(TargetDir)resources.pri')" />
+    <ItemGroup>
+      <FilesToBundle Include="$(TargetDir)resources.pri"
+                     Condition="Exists('$(TargetDir)resources.pri')">
+        <RelativePath>resources.pri</RelativePath>
+      </FilesToBundle>
+      <_FilesToBundle Include="$(TargetDir)resources.pri"
+                      Condition="Exists('$(TargetDir)resources.pri')">
+        <RelativePath>resources.pri</RelativePath>
+      </_FilesToBundle>
+    </ItemGroup>
+  </Target>
 </Project>

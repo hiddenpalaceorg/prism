@@ -91,7 +91,12 @@ jobs:
           # Raw byte scan: the bundle manifest stores entry paths uncompressed.
           $hay = [System.Text.Encoding]::Latin1.GetString([System.IO.File]::ReadAllBytes($exe))
           foreach ($needle in "resources.pri","prism_ffi.dll","prism-adapter.exe") {
-            if (-not $hay.Contains($needle)) { throw "bundle is missing $needle" }
+            if (-not $hay.Contains($needle)) {
+              Write-Host "== pri activity in the msbuild log:"
+              Select-String -Path publish.log -Pattern "resources\.pri|GenerateProjectPri|MakePri|FilesToBundle" |
+                Select-Object -First 60 | ForEach-Object { Write-Host $_.Line }
+              throw "bundle is missing $needle"
+            }
           }
           $hay = $null
           # Prove the exe alone suffices: run it from a clean dir, like a user download.
