@@ -25,26 +25,17 @@ internal static class DocHighlighter
     public readonly record struct Span(int Start, int Length, byte Kind);
 
     // Indexed by kind; KindDefault is null (inherit the control's foreground).
-    private static readonly Color?[] Light =
+    // The document card is always dark (terminal look), so one vivid palette
+    // in the VS Code Dark+ colors serves both app themes.
+    private static readonly Color?[] Palette =
     {
         null,
-        Color.FromArgb(255, 0x0B, 0x6B, 0xCB),
-        Color.FromArgb(255, 0x7A, 0x4C, 0xB0),
-        Color.FromArgb(255, 0xA3, 0x15, 0x15),
-        Color.FromArgb(255, 0x09, 0x86, 0x58),
-        Color.FromArgb(255, 0x44, 0x80, 0x44),
-        Color.FromArgb(255, 0x6E, 0x6E, 0x6E),
-    };
-
-    private static readonly Color?[] Dark =
-    {
-        null,
-        Color.FromArgb(255, 0x6C, 0xB8, 0xFF),
-        Color.FromArgb(255, 0xC8, 0x9A, 0xE8),
+        Color.FromArgb(255, 0x56, 0x9C, 0xD6),
+        Color.FromArgb(255, 0x9C, 0xDC, 0xFE),
         Color.FromArgb(255, 0xCE, 0x91, 0x78),
         Color.FromArgb(255, 0xB5, 0xCE, 0xA8),
         Color.FromArgb(255, 0x6A, 0x99, 0x55),
-        Color.FromArgb(255, 0x9A, 0x9A, 0x9A),
+        Color.FromArgb(255, 0x80, 0x80, 0x80),
     };
 
     /// Pure compute, safe for Task.Run.
@@ -63,13 +54,12 @@ internal static class DocHighlighter
     }
 
     /// UI thread: replaces `target`'s content with colored runs.
-    public static void Apply(RichTextBlock target, string text, List<Span> spans, bool dark)
+    public static void Apply(RichTextBlock target, string text, List<Span> spans)
     {
-        var palette = dark ? Dark : Light;
-        var brushes = new Brush?[palette.Length];
-        for (var k = 0; k < palette.Length; k++)
+        var brushes = new Brush?[Palette.Length];
+        for (var k = 0; k < Palette.Length; k++)
         {
-            brushes[k] = palette[k] is { } c ? new SolidColorBrush(c) : null;
+            brushes[k] = Palette[k] is { } c ? new SolidColorBrush(c) : null;
         }
         var para = new Paragraph();
         foreach (var span in spans)

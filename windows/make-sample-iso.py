@@ -50,6 +50,16 @@ def main(out):
     entries = {
         "/README.TXT;1": ("/README.txt", b"Sample press kit for CI screenshots.\r\n"),
         "/DATA.BIN;1": ("/DATA.bin", bytes((i * 197 + 13) % 256 for i in range(4096))),
+        # SYSTEM.CNF makes the adapter identify the disc as PS2, so the
+        # screenshots exercise the per-system theming instead of "unknown".
+        "/SYSTEM.CNF;1": (
+            "/SYSTEM.CNF",
+            b"BOOT2 = cdrom0:\\SLUS_203.12;1\r\nVER = 1.00\r\nVMODE = NTSC\r\n",
+        ),
+        "/SLUS_203.12;1": (
+            "/SLUS_203.12",
+            b"\x7fELF" + bytes((i * 89 + 7) % 256 for i in range(2044)),
+        ),
     }
     for name, (top, bottom) in PORTRAITS.items():
         entries[f"/IMAGES/{name}.PNG;1"] = (f"/Images/{name}.png", png(320, 240, top, bottom))

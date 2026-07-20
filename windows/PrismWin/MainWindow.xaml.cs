@@ -11,6 +11,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Media.Core;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
+using Windows.UI;
 using uniffi.prism_ffi;
 
 namespace PrismWin;
@@ -42,7 +43,7 @@ public sealed partial class MainWindow : Window
     private MediaPlayerElement? _activeMedia;
     private string? _previewText;
     private AssetInfo? _previewAsset;
-    private (AnalysisSummary Summary, bool Json, bool Dark)? _docShown;
+    private (AnalysisSummary Summary, bool Json)? _docShown;
     private int _docGen;
     private bool _assetsBuilt;
     private string? _lastError;
@@ -58,11 +59,13 @@ public sealed partial class MainWindow : Window
         BuildLibraryHeader();
         TabBar.SelectedItem = TabOverview;
         DocModeBar.SelectedItem = DocModeXml;
-        // The highlight palette is theme-specific, so recolor if the theme flips.
+        // Wash alpha and badge shades are theme-specific, so reapply on flips.
         Root.ActualThemeChanged += (_, _) =>
         {
-            _docShown = null;
-            EnsureDocText();
+            if (_summary is { } s)
+            {
+                ApplySystemTheme(s);
+            }
         };
         _ = InitializeLibraryAsync();
         MaybeStartScreenshotRun();
@@ -392,14 +395,7 @@ public sealed partial class MainWindow : Window
         TabBar.Visibility = Visibility.Visible;
         DetailEmptyState.Visibility = Visibility.Collapsed;
         HeaderTitle.Text = summary.Title ?? summary.Name;
-        HeaderTags.Children.Clear();
-        HeaderTags.Children.Add(MakeBadge(summary.System, "\uE958", BadgeKind.Accent));
-        HeaderTags.Children.Add(MakeBadge($"{summary.FileCount} files"));
-        HeaderTags.Children.Add(MakeBadge(Format.HumanSize(summary.TotalSize)));
-        if (summary.FromCache)
-        {
-            HeaderTags.Children.Add(MakeBadge("cached", "\uE73E", BadgeKind.Success));
-        }
+        ApplySystemTheme(summary);
         HeaderSha.Text = summary.Sha256;
 
         BuildOverviewPanel();
@@ -476,8 +472,7 @@ public sealed partial class MainWindow : Window
         }
         var summary = _summary;
         var json = DocModeBar.SelectedItem == DocModeJson;
-        var dark = Root.ActualTheme == ElementTheme.Dark;
-        if (_docShown is { } shown && shown.Summary == summary && shown.Json == json && shown.Dark == dark)
+        if (_docShown is { } shown && shown.Summary == summary && shown.Json == json)
         {
             return; // already rendered (highlighting big docs is not free)
         }
@@ -490,12 +485,12 @@ public sealed partial class MainWindow : Window
         {
             return;
         }
-        DocHighlighter.Apply(DocRich, text, spans, dark);
+        DocHighlighter.Apply(DocRich, text, spans);
         DocTruncNote.Text = truncated
             ? $"Showing the first {Format.HumanSize((ulong)text.Length)} of {Format.HumanSize((ulong)full.Length)}. Copy grabs the whole document."
             : "";
         DocTruncNote.Visibility = truncated ? Visibility.Visible : Visibility.Collapsed;
-        _docShown = (summary, json, dark);
+        _docShown = (summary, json);
     }
 
     private void DocCopy_Click(object sender, RoutedEventArgs e)
@@ -535,19 +530,36 @@ public sealed partial class MainWindow : Window
     private static Style? NamedStyle(string key) =>
         Application.Current.Resources.TryGetValue(key, out var v) ? v as Style : null;
 
-    private enum BadgeKind { Neutral, Accent, Success, Caution }
+    private enum BadgeKind { Neutral, Success, Caution }
 
-    /// Tinted pill: neutral gray for counts, accent for identity, semantic
-    /// green/amber for state, so the chips carry meaning, not just text.
+    private static readonly Color SuccessBase = Color.FromArgb(255, 0x16, 0xA3, 0x4A);
+    private static readonly Color CautionBase = Color.FromArgb(255, 0xD9, 0x77, 0x06);
+
+    /// Tinted pill: neutral gray for counts, semantic green/amber for state.
+    /// The tints are hand-mixed because the SystemFillColor*Background
+    /// resources are too pale to read as color at pill size.
     private FrameworkElement MakeBadge(string text, string? glyph = null, BadgeKind kind = BadgeKind.Neutral)
     {
-        var (bg, fg) = kind switch
+        if (kind == BadgeKind.Neutral)
         {
-            BadgeKind.Accent => ("SystemFillColorAttentionBackgroundBrush", "AccentTextFillColorPrimaryBrush"),
-            BadgeKind.Success => ("SystemFillColorSuccessBackgroundBrush", "SystemFillColorSuccessBrush"),
-            BadgeKind.Caution => ("SystemFillColorCautionBackgroundBrush", "SystemFillColorCautionBrush"),
-            _ => ("SubtleFillColorSecondaryBrush", "TextFillColorSecondaryBrush"),
-        };
+            return BadgePill(text, glyph,
+                ThemeBrush("SubtleFillColorSecondaryBrush"),
+                ThemeBrush("TextFillColorSecondaryBrush"));
+        }
+        return MakeTintBadge(text, glyph, kind == BadgeKind.Success ? SuccessBase : CautionBase);
+    }
+
+    /// Pill washed in an arbitrary identity color (system badges and friends).
+    private FrameworkElement MakeTintBadge(string text, string? glyph, Color color)
+    {
+        var dark = Root.ActualTheme == ElementTheme.Dark;
+        return BadgePill(text, glyph,
+            SystemTheme.TintBrush(color, dark ? (byte)0x3C : (byte)0x2E),
+            SystemTheme.SolidBrush(SystemTheme.OnTint(color, dark)));
+    }
+
+    private static FrameworkElement BadgePill(string text, string? glyph, Brush? bg, Brush? fg)
+    {
         var content = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -560,7 +572,7 @@ public sealed partial class MainWindow : Window
             {
                 Glyph = glyph,
                 FontSize = 11,
-                Foreground = ThemeBrush(fg),
+                Foreground = fg,
                 VerticalAlignment = VerticalAlignment.Center,
             });
         }
@@ -569,7 +581,7 @@ public sealed partial class MainWindow : Window
             Text = text,
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
-            Foreground = ThemeBrush(fg),
+            Foreground = fg,
             VerticalAlignment = VerticalAlignment.Center,
         });
         return new Border
@@ -577,30 +589,74 @@ public sealed partial class MainWindow : Window
             Child = content,
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(9, 2, 9, 3),
-            Background = ThemeBrush(bg),
+            Background = bg,
             VerticalAlignment = VerticalAlignment.Center,
         };
     }
 
+    /// Recolors the hero (tile gradient, header wash) and rebuilds the badges
+    /// for the detected system. Runs again on theme flips: the wash alpha and
+    /// tint shades differ per theme.
+    private void ApplySystemTheme(AnalysisSummary summary)
+    {
+        var (a, b) = SystemTheme.For(summary.System);
+        TileStopA.Color = a;
+        TileStopB.Color = b;
+        var dark = Root.ActualTheme == ElementTheme.Dark;
+        WashStopA.Color = Color.FromArgb(dark ? (byte)0x46 : (byte)0x30, a.R, a.G, a.B);
+        WashStopB.Color = Color.FromArgb(0, b.R, b.G, b.B);
+        HeaderTags.Children.Clear();
+        HeaderTags.Children.Add(SystemTheme.IsKnown(summary.System)
+            ? MakeTintBadge(summary.System, "\uE958", a)
+            : MakeBadge(summary.System, "\uE9CE", BadgeKind.Caution));
+        HeaderTags.Children.Add(MakeBadge($"{summary.FileCount} files"));
+        HeaderTags.Children.Add(MakeBadge(Format.HumanSize(summary.TotalSize)));
+        if (summary.FromCache)
+        {
+            HeaderTags.Children.Add(MakeBadge("cached", "\uE73E", BadgeKind.Success));
+        }
+    }
+
+    /// Settings-style icon chip: saturated gradient square with a white glyph,
+    /// one beat of color at the head of every card.
+    private static FrameworkElement IconChip(string glyph, Color color)
+    {
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Windows.Foundation.Point(0, 0),
+            EndPoint = new Windows.Foundation.Point(1, 1),
+        };
+        brush.GradientStops.Add(new GradientStop { Color = SystemTheme.Mix(color, Colors.White, 0.18), Offset = 0 });
+        brush.GradientStops.Add(new GradientStop { Color = SystemTheme.Mix(color, Colors.Black, 0.12), Offset = 1 });
+        return new Border
+        {
+            Width = 28,
+            Height = 28,
+            CornerRadius = new CornerRadius(6),
+            Background = brush,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new FontIcon
+            {
+                Glyph = glyph,
+                FontSize = 14,
+                Foreground = new SolidColorBrush(Colors.White),
+            },
+        };
+    }
+
     private FrameworkElement SectionCard(string title, List<(string Label, string? Value, bool Mono)> rows,
-        string? glyph = null)
+        string? glyph = null, Color? chip = null)
     {
         var content = new StackPanel { Spacing = 7 };
         var head = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            Margin = new Thickness(0, 0, 0, 3),
+            Spacing = 10,
+            Margin = new Thickness(0, 0, 0, 5),
         };
         if (glyph != null)
         {
-            head.Children.Add(new FontIcon
-            {
-                Glyph = glyph,
-                FontSize = 14,
-                Foreground = ThemeBrush("AccentTextFillColorPrimaryBrush"),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
+            head.Children.Add(IconChip(glyph, chip ?? Color.FromArgb(255, 0x64, 0x74, 0x8B)));
         }
         head.Children.Add(new TextBlock
         {
@@ -653,11 +709,11 @@ public sealed partial class MainWindow : Window
     }
 
     private void AddSection(StackPanel panel, string title, List<(string, string?, bool)> rows,
-        string? glyph = null)
+        string? glyph = null, Color? chip = null)
     {
         if (rows.Any(r => !string.IsNullOrEmpty(r.Item2)))
         {
-            panel.Children.Add(SectionCard(title, rows, glyph));
+            panel.Children.Add(SectionCard(title, rows, glyph, chip));
         }
     }
 
@@ -678,7 +734,7 @@ public sealed partial class MainWindow : Window
             ("MD5", img?.Md5, true),
             ("SHA-1", img?.Sha1, true),
             ("SHA-256", img?.Sha256 ?? _summary.Sha256, true),
-        }, "\uE7C3");
+        }, "\uE7C3", Color.FromArgb(255, 0x63, 0x66, 0xF1));
         if (_record?.Info is { } info)
         {
             AddSection(OverviewPanel, "Disc", new List<(string, string?, bool)>
@@ -686,7 +742,7 @@ public sealed partial class MainWindow : Window
                 ("System", info.System ?? _summary.System, false),
                 ("System ID", info.SystemIdentifier, false),
                 ("Disc type", info.DiscType, false),
-            }, "\uE958");
+            }, "\uE958", SystemTheme.For(_summary.System).A);
             if (info.Header is { IsEmpty: false } h)
             {
                 AddSection(OverviewPanel, "Header", new List<(string, string?, bool)>
@@ -698,7 +754,7 @@ public sealed partial class MainWindow : Window
                     ("Maker", h.MakerId, false),
                     ("Device", h.DeviceInfo, false),
                     ("Regions", h.Regions, false),
-                }, "\uE8A5");
+                }, "\uE8A5", Color.FromArgb(255, 0xD9, 0x77, 0x06));
             }
             if (info.Sfo is { IsEmpty: false } s)
             {
@@ -710,7 +766,7 @@ public sealed partial class MainWindow : Window
                     ("Category", s.Category, false),
                     ("Parental level", s.ParentalLevel, false),
                     ("System version", s.SystemVersion, false),
-                }, "\uE946");
+                }, "\uE946", Color.FromArgb(255, 0x8B, 0x5C, 0xF6));
             }
             if (info.Volume is { IsEmpty: false } v)
             {
@@ -722,7 +778,7 @@ public sealed partial class MainWindow : Window
                     ("Modified", Format.PrettyDate(v.ModificationDate), false),
                     ("Expires", Format.PrettyDate(v.ExpirationDate), false),
                     ("Effective", Format.PrettyDate(v.EffectiveDate), false),
-                }, "\uE8B7");
+                }, "\uE8B7", Color.FromArgb(255, 0x08, 0x91, 0xB2));
             }
             if (info.Exe is { } e)
             {
@@ -732,7 +788,7 @@ public sealed partial class MainWindow : Window
                     ("Date", Format.PrettyDate(e.Date), false),
                     ("Signing", e.SigningType, false),
                     ("Symbols", e.NumSymbols?.ToString(), false),
-                }, "\uE756");
+                }, "\uE756", Color.FromArgb(255, 0x25, 0x63, 0xEB));
             }
             if (info.AltExe is { } a)
             {
@@ -741,7 +797,7 @@ public sealed partial class MainWindow : Window
                     ("Filename", a.Filename, false),
                     ("Date", Format.PrettyDate(a.Date), false),
                     ("Decrypted MD5", a.Md5, true),
-                }, "\uE756");
+                }, "\uE756", Color.FromArgb(255, 0x25, 0x63, 0xEB));
             }
         }
         if (_record?.Composites is { } c)
@@ -753,13 +809,13 @@ public sealed partial class MainWindow : Window
                 ("Boot exe hash", c.HashExe, true),
                 ("Most recent file", c.MostRecentFile?.Path, false),
                 ("Incomplete files", c.IncompleteFiles is > 0 ? c.IncompleteFiles.ToString() : null, false),
-            }, "\uE943");
+            }, "\uE943", Color.FromArgb(255, 0x05, 0x96, 0x69));
         }
         AddSection(OverviewPanel, "Structure", new List<(string, string?, bool)>
         {
             ("Files", (_record?.Structural?.FileCount ?? _summary.FileCount).ToString(), false),
             ("Total size", Format.HumanSize(_record?.Structural?.TotalSize ?? _summary.TotalSize), false),
-        }, "\uE8B7");
+        }, "\uE8B7", Color.FromArgb(255, 0x64, 0x74, 0x8B));
     }
 
     private void BuildSelectionPanel(DiscNodeVm? vm)
@@ -787,7 +843,7 @@ public sealed partial class MainWindow : Window
             ("MD5", f.Md5, true),
             ("SHA-1", f.Sha1, true),
             ("SHA-256", f.Sha256, true),
-        }, vm.Glyph));
+        }, vm.Glyph, FileIcon.ColorFor(f)));
     }
 
     private void FsTree_ItemInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
@@ -823,6 +879,17 @@ public sealed partial class MainWindow : Window
         "source" => "\uE943",
         "binary" => "\uE9D9",
         _ => "\uE7C3",
+    };
+
+    private static Color AssetKindColor(string kind) => kind switch
+    {
+        "image" => Color.FromArgb(255, 0x2F, 0xA1, 0x73),
+        "audio" => Color.FromArgb(255, 0x9A, 0x6B, 0xD0),
+        "video" => Color.FromArgb(255, 0xE0, 0x59, 0x6E),
+        "document" => Color.FromArgb(255, 0xC7, 0x5A, 0x3B),
+        "source" => Color.FromArgb(255, 0x4F, 0x97, 0xC4),
+        "binary" => Color.FromArgb(255, 0x64, 0x74, 0x8B),
+        _ => Color.FromArgb(255, 0x8E, 0x8E, 0x93),
     };
 
     /// Builds the panel in yielded batches: hundreds of tiles constructed in
@@ -866,16 +933,10 @@ public sealed partial class MainWindow : Window
             var header = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Spacing = 8,
+                Spacing = 10,
                 Margin = new Thickness(2, 10, 0, 4),
             };
-            header.Children.Add(new FontIcon
-            {
-                Glyph = AssetKindGlyph(kind),
-                FontSize = 14,
-                Foreground = ThemeBrush("AccentTextFillColorPrimaryBrush"),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
+            header.Children.Add(IconChip(AssetKindGlyph(kind), AssetKindColor(kind)));
             header.Children.Add(new TextBlock
             {
                 Text = AssetKindTitle(kind),
@@ -889,8 +950,8 @@ public sealed partial class MainWindow : Window
                 var grid = new VariableSizedWrapGrid
                 {
                     Orientation = Orientation.Horizontal,
-                    ItemWidth = 164,
-                    ItemHeight = 158,
+                    ItemWidth = 172,
+                    ItemHeight = 130,
                 };
                 AssetsPanel.Children.Add(grid);
                 foreach (var asset in group)
@@ -959,16 +1020,17 @@ public sealed partial class MainWindow : Window
 
     private UIElement MakeThumbTile(AssetInfo asset)
     {
-        // Gallery look: the image fills a rounded rect (center-cropped), with
-        // a subtle placeholder behind it until (or unless) the decode lands.
+        // Full-bleed gallery tile: the image covers the whole tile and the
+        // caption sits on a bottom gradient scrim, photo-app style. Rectangles
+        // clip to their radius where Border would not.
         var brush = new ImageBrush { Stretch = Stretch.UniformToFill };
-        var thumb = new Grid { Height = 106 };
-        thumb.Children.Add(new Border
+        var tile = new Grid();
+        tile.Children.Add(new Border
         {
             CornerRadius = new CornerRadius(6),
             Background = ThemeBrush("ControlFillColorSecondaryBrush"),
         });
-        thumb.Children.Add(new FontIcon
+        tile.Children.Add(new FontIcon
         {
             Glyph = "\uE91B",
             FontSize = 20,
@@ -976,34 +1038,44 @@ public sealed partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         });
-        thumb.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle
+        tile.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle
         {
             RadiusX = 6,
             RadiusY = 6,
             Fill = brush,
         });
-        var name = new TextBlock
+        var scrim = new LinearGradientBrush
+        {
+            StartPoint = new Windows.Foundation.Point(0, 0),
+            EndPoint = new Windows.Foundation.Point(0, 1),
+        };
+        scrim.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0, 0, 0, 0), Offset = 0.45 });
+        scrim.GradientStops.Add(new GradientStop { Color = Color.FromArgb(0xB4, 0, 0, 0), Offset = 1 });
+        tile.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle
+        {
+            RadiusX = 6,
+            RadiusY = 6,
+            Fill = scrim,
+        });
+        tile.Children.Add(new TextBlock
         {
             Text = Format.LastComponent(asset.Path),
             FontSize = 11,
+            Foreground = new SolidColorBrush(Colors.White),
             TextTrimming = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        var panel = new Grid { RowSpacing = 5 };
-        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        panel.Children.Add(thumb);
-        Grid.SetRow(name, 1);
-        panel.Children.Add(name);
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(8, 0, 8, 7),
+        });
         var button = new Button
         {
-            Content = panel,
+            Content = tile,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Stretch,
             Margin = new Thickness(0, 0, 8, 8),
-            Padding = new Thickness(5),
+            Padding = new Thickness(3),
         };
         ToolTipService.SetToolTip(button, asset.Path);
         button.Click += (_, _) => OpenAsset(asset);
@@ -1489,6 +1561,12 @@ public sealed partial class MainWindow : Window
                 GetEngine().SearchLibrary(q.Length == 0 ? null : q, system, sort, desc, 10_000, 0));
             LibraryList.ItemsSource = rows.Select(r => new LibraryRowVm(r)).ToList();
             LibCountFooter.Text = $"{rows.Length} build{(rows.Length == 1 ? "" : "s")}";
+            var filtered = q.Length > 0 || idx > 0;
+            LibraryEmptyState.Visibility = rows.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            LibraryEmptyTitle.Text = filtered ? "No matches" : "Library is empty";
+            LibraryEmptyHint.Text = filtered
+                ? "Try a different search or drop the system filter."
+                : "Analyze or drop a disc image and it lands here automatically.";
         }
         catch
         {
@@ -1508,6 +1586,8 @@ public sealed partial class MainWindow : Window
             (LibrarySort.Date, "Analyzed", 120, false),
         };
         LibraryHeaderGrid.ColumnSpacing = 12;
+        // Leading spacer mirrors the rows' system chip column.
+        LibraryHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
         for (var i = 0; i < widths.Length; i++)
         {
             var (sort, title, width, stretch) = widths[i];
@@ -1529,7 +1609,7 @@ public sealed partial class MainWindow : Window
                 HorizontalAlignment = stretch ? HorizontalAlignment.Left : HorizontalAlignment.Right,
             };
             button.Click += (_, _) => SortLibraryBy(sort);
-            Grid.SetColumn(button, i);
+            Grid.SetColumn(button, i + 1);
             LibraryHeaderGrid.Children.Add(button);
             _libHeaders[sort] = (button, icon);
         }
@@ -1712,7 +1792,7 @@ public sealed partial class MainWindow : Window
 
         if (neighbor.System is { } system)
         {
-            var tag = MakeBadge(system, null, BadgeKind.Accent);
+            var tag = MakeTintBadge(system, null, SystemTheme.For(system).A);
             Grid.SetColumn(tag, 1);
             row.Children.Add(tag);
         }

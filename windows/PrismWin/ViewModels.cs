@@ -45,7 +45,10 @@ internal static class FileIcon
         node.IsDir ? Folder.Glyph : Lookup(node.Name).Glyph;
 
     public static Brush BrushFor(FileNode node) =>
-        BrushOf(node.IsDir ? Folder.Color : Lookup(node.Name).Color);
+        BrushOf(ColorFor(node));
+
+    public static Color ColorFor(FileNode node) =>
+        node.IsDir ? Folder.Color : Lookup(node.Name).Color;
 
     private static (string Glyph, Color Color) Lookup(string name)
     {
@@ -108,6 +111,11 @@ public sealed class LibraryRowVm
     public string FilesText => Entry.FileCount.ToString();
     public string SizeText => Format.HumanSize(Entry.TotalSize);
     public string DateText => Format.RelativeDate(Entry.AnalyzedAt);
+
+    // System-colored leading chip (translucent wash + solid glyph). Medium
+    // tones read on both themes, so the brushes are theme-agnostic.
+    public Brush ChipBrush => SystemTheme.TintBrush(SystemTheme.For(Entry.System).A, 0x30);
+    public Brush ChipIconBrush => SystemTheme.SolidBrush(SystemTheme.For(Entry.System).A);
 }
 
 /// A single live progress counter (image hashing, per-archive extraction, …).

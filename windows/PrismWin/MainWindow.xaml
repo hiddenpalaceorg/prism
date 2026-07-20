@@ -122,24 +122,36 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <Grid x:Name="HeaderCard" Grid.Row="0" Margin="20,18,20,6" ColumnSpacing="14"
+                        <!-- System-tinted wash bleeding down from the hero. The
+                             stops are recolored per detected system in code. -->
+                        <Rectangle x:Name="HeaderWash" Grid.Row="0" Grid.RowSpan="2" RadiusX="8" RadiusY="8"
+                                   IsHitTestVisible="False">
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop x:Name="WashStopA" Color="#008B5CF6" Offset="0" />
+                                    <GradientStop x:Name="WashStopB" Color="#003B82F6" Offset="1" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+
+                        <Grid x:Name="HeaderCard" Grid.Row="0" Margin="20,18,20,6" ColumnSpacing="16"
                               Visibility="Collapsed">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Border Width="52" Height="52" CornerRadius="12" VerticalAlignment="Top">
+                            <Border Width="64" Height="64" CornerRadius="14" VerticalAlignment="Top">
                                 <Border.Background>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                        <GradientStop Color="#FF8B5CF6" Offset="0" />
-                                        <GradientStop Color="#FF3B82F6" Offset="1" />
+                                        <GradientStop x:Name="TileStopA" Color="#FF8B5CF6" Offset="0" />
+                                        <GradientStop x:Name="TileStopB" Color="#FF3B82F6" Offset="1" />
                                     </LinearGradientBrush>
                                 </Border.Background>
-                                <FontIcon Glyph="&#xE958;" FontSize="24" Foreground="White" />
+                                <FontIcon Glyph="&#xE958;" FontSize="28" Foreground="White" />
                             </Border>
                             <StackPanel Grid.Column="1" Spacing="7" VerticalAlignment="Center">
                                 <TextBlock x:Name="HeaderTitle" Style="{StaticResource SubtitleTextBlockStyle}"
-                                           FontSize="22" TextTrimming="CharacterEllipsis"
+                                           FontSize="26" TextTrimming="CharacterEllipsis"
                                            IsTextSelectionEnabled="True" />
                                 <StackPanel x:Name="HeaderTags" Orientation="Horizontal" Spacing="6" />
                                 <StackPanel Orientation="Horizontal" Spacing="4">
@@ -208,14 +220,16 @@
                                 <TextBlock x:Name="DocTruncNote" Grid.Row="1" Margin="20,0,20,6"
                                            FontSize="12" Visibility="Collapsed"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <!-- Always-dark terminal card: the vivid palette
+                                     needs the dark surface in both app themes. -->
                                 <Border Grid.Row="2" Margin="20,0,20,16" CornerRadius="8"
-                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1">
+                                        Background="#FF1E1F26" BorderBrush="#26FFFFFF"
+                                        BorderThickness="1" RequestedTheme="Dark">
                                     <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                                  VerticalScrollBarVisibility="Auto" Padding="14,10,14,12">
+                                                  VerticalScrollBarVisibility="Auto" Padding="16,12,16,14">
                                         <RichTextBlock x:Name="DocRich" FontFamily="Cascadia Mono,Consolas"
                                                        FontSize="12" TextWrapping="NoWrap"
+                                                       Foreground="#FFD4D4D4"
                                                        IsTextSelectionEnabled="True" />
                                     </ScrollViewer>
                                 </Border>
@@ -316,25 +330,50 @@
                                 <DataTemplate x:DataType="local:LibraryRowVm">
                                     <Grid ColumnSpacing="12">
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="28" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="130" />
                                             <ColumnDefinition Width="64" />
                                             <ColumnDefinition Width="88" />
                                             <ColumnDefinition Width="120" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind System}"
+                                        <Border Width="28" Height="28" CornerRadius="6"
+                                                Background="{x:Bind ChipBrush}" VerticalAlignment="Center">
+                                            <FontIcon Glyph="&#xE958;" FontSize="13"
+                                                      Foreground="{x:Bind ChipIconBrush}" />
+                                        </Border>
+                                        <TextBlock Grid.Column="1" Text="{x:Bind Name}" FontWeight="SemiBold"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="2" Text="{x:Bind System}" VerticalAlignment="Center"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock Grid.Column="2" Text="{x:Bind FilesText}" TextAlignment="Right"
+                                        <TextBlock Grid.Column="3" Text="{x:Bind FilesText}" TextAlignment="Right"
+                                                   VerticalAlignment="Center"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock Grid.Column="3" Text="{x:Bind SizeText}" TextAlignment="Right"
+                                        <TextBlock Grid.Column="4" Text="{x:Bind SizeText}" TextAlignment="Right"
+                                                   VerticalAlignment="Center"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock Grid.Column="4" Text="{x:Bind DateText}" TextAlignment="Right"
+                                        <TextBlock Grid.Column="5" Text="{x:Bind DateText}" TextAlignment="Right"
+                                                   VerticalAlignment="Center"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
+                        <StackPanel x:Name="LibraryEmptyState" Grid.Row="2" Visibility="Collapsed"
+                                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Spacing="10" Padding="24">
+                            <Border Width="56" Height="56" CornerRadius="28" HorizontalAlignment="Center"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                <FontIcon Glyph="&#xE8F1;" FontSize="22"
+                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                            </Border>
+                            <TextBlock x:Name="LibraryEmptyTitle" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                       HorizontalAlignment="Center" />
+                            <TextBlock x:Name="LibraryEmptyHint"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" TextAlignment="Center" MaxWidth="360" />
+                        </StackPanel>
                         <Border Grid.Row="3" BorderThickness="0,1,0,0"
                                 BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
                             <TextBlock x:Name="LibCountFooter" Margin="20,6,20,8" FontSize="12"
