@@ -43,6 +43,8 @@ public sealed partial class MainWindow : Window
     private string? _previewText;
     private AssetInfo? _previewAsset;
     private (AnalysisSummary Summary, bool Json, bool Dark)? _docShown;
+    private int _docGen;
+    private bool _assetsBuilt;
     private string? _lastError;
 
     public MainWindow()
@@ -216,12 +218,14 @@ public sealed partial class MainWindow : Window
         SetStatus($"{(force ? "Re-analyzing" : "Analyzing")} {path}…");
         try
         {
-            var summary = await Task.Run(() =>
+            // Decode the record JSON on the worker too: it can be megabytes.
+            var (summary, record) = await Task.Run(() =>
             {
                 var engine = GetEngine();
-                return force ? engine.Reanalyze(path, listener, cancel) : engine.Analyze(path, listener, cancel);
+                var s = force ? engine.Reanalyze(path, listener, cancel) : engine.Analyze(path, listener, cancel);
+                return (s, RecordDoc.Decode(s.Json));
             });
-            ShowBuild(summary);
+            ShowBuild(summary, record);
             SetStatus($"[{(summary.FromCache ? "cached" : "analyzed")}] {summary.Sha256} — {summary.System}, {summary.FileCount} files");
         }
         catch (PrismException.Cancelled)
@@ -371,10 +375,10 @@ public sealed partial class MainWindow : Window
 
     // ---- build display ----
 
-    private void ShowBuild(AnalysisSummary summary)
+    private void ShowBuild(AnalysisSummary summary, RecordDoc? record)
     {
         _summary = summary;
-        _record = RecordDoc.Decode(summary.Json);
+        _record = record;
         _assets = summary.Assets?.ToList() ?? new List<AssetInfo>();
         _similarity = null;
         ServiceText.Text = "";
@@ -400,10 +404,15 @@ public sealed partial class MainWindow : Window
 
         BuildOverviewPanel();
         BuildSelectionPanel(null);
-        BuildAssetsPanel();
-        DocText.Text = "";
+        // Assets and DAT/JSON build lazily on first tab visit: both can be
+        // heavy (hundreds of tiles, tens of thousands of runs) and most build
+        // opens never leave Overview.
+        _assetsBuilt = false;
+        AssetsPanel.Children.Clear();
         DocRich.Blocks.Clear();
+        DocTruncNote.Visibility = Visibility.Collapsed;
         _docShown = null;
+        _docGen++;
         BuildSimilarPanel();
         TabBar.SelectedItem = TabOverview;
         ApplyMode();
@@ -437,45 +446,56 @@ public sealed partial class MainWindow : Window
         {
             EnsureDocText();
         }
-        if (sel == TabAssets && _assets.Count > 0)
+        if (sel == TabAssets)
         {
-            SetStatus("Click an asset to view it.");
+            if (!_assetsBuilt)
+            {
+                _assetsBuilt = true;
+                _ = BuildAssetsPanelAsync();
+            }
+            if (_assets.Count > 0)
+            {
+                SetStatus("Click an asset to view it.");
+            }
         }
     }
 
     private void DocModeBar_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args) =>
         EnsureDocText();
 
-    private void EnsureDocText()
+    /// Tokenizes off-thread and applies capped, colored runs; reentry during
+    /// the await (tab flips, new build) is cut off by the generation counter.
+    private async void EnsureDocText()
     {
         if (_summary == null)
         {
-            DocText.Text = "";
             DocRich.Blocks.Clear();
+            DocTruncNote.Visibility = Visibility.Collapsed;
             _docShown = null;
             return;
         }
+        var summary = _summary;
         var json = DocModeBar.SelectedItem == DocModeJson;
         var dark = Root.ActualTheme == ElementTheme.Dark;
-        if (_docShown is { } shown && shown.Summary == _summary && shown.Json == json && shown.Dark == dark)
+        if (_docShown is { } shown && shown.Summary == summary && shown.Json == json && shown.Dark == dark)
         {
             return; // already rendered (highlighting big docs is not free)
         }
-        var text = json ? _summary.Json : _summary.Xml;
-        if (DocHighlighter.TryHighlight(DocRich, text, json, dark))
+        var gen = ++_docGen;
+        var full = json ? summary.Json : summary.Xml;
+        var truncated = full.Length > DocHighlighter.MaxChars;
+        var text = truncated ? full[..DocHighlighter.MaxChars] : full;
+        var spans = await Task.Run(() => DocHighlighter.Tokenize(text, json));
+        if (gen != _docGen)
         {
-            DocText.Text = "";
-            DocScroll.Visibility = Visibility.Visible;
-            DocText.Visibility = Visibility.Collapsed;
+            return;
         }
-        else
-        {
-            DocRich.Blocks.Clear();
-            DocText.Text = text;
-            DocScroll.Visibility = Visibility.Collapsed;
-            DocText.Visibility = Visibility.Visible;
-        }
-        _docShown = (_summary, json, dark);
+        DocHighlighter.Apply(DocRich, text, spans, dark);
+        DocTruncNote.Text = truncated
+            ? $"Showing the first {Format.HumanSize((ulong)text.Length)} of {Format.HumanSize((ulong)full.Length)}. Copy grabs the whole document."
+            : "";
+        DocTruncNote.Visibility = truncated ? Visibility.Visible : Visibility.Collapsed;
+        _docShown = (summary, json, dark);
     }
 
     private void DocCopy_Click(object sender, RoutedEventArgs e)
@@ -805,7 +825,10 @@ public sealed partial class MainWindow : Window
         _ => "\uE7C3",
     };
 
-    private void BuildAssetsPanel()
+    /// Builds the panel in yielded batches: hundreds of tiles constructed in
+    /// one go would hold the UI thread for seconds. A build switch mid-flight
+    /// abandons the pass (the guard re-checks _summary after every yield).
+    private async Task BuildAssetsPanelAsync()
     {
         AssetsPanel.Children.Clear();
         if (_summary == null)
@@ -831,6 +854,8 @@ public sealed partial class MainWindow : Window
             });
             return;
         }
+        var summary = _summary;
+        var added = 0;
         foreach (var kind in AssetKindOrder)
         {
             var group = _assets.Where(a => a.Kind == kind).ToList();
@@ -867,15 +892,36 @@ public sealed partial class MainWindow : Window
                     ItemWidth = 164,
                     ItemHeight = 158,
                 };
+                AssetsPanel.Children.Add(grid);
                 foreach (var asset in group)
                 {
                     grid.Children.Add(MakeThumbTile(asset));
+                    if (++added % 24 == 0)
+                    {
+                        await Task.Yield();
+                        if (_summary != summary)
+                        {
+                            return;
+                        }
+                    }
                 }
-                AssetsPanel.Children.Add(grid);
             }
             else
             {
-                AssetsPanel.Children.Add(MakeRowCard(group.Select(MakeAssetRow)));
+                var rows = new List<UIElement>();
+                foreach (var asset in group)
+                {
+                    rows.Add(MakeAssetRow(asset));
+                    if (++added % 48 == 0)
+                    {
+                        await Task.Yield();
+                        if (_summary != summary)
+                        {
+                            return;
+                        }
+                    }
+                }
+                AssetsPanel.Children.Add(MakeRowCard(rows));
             }
         }
     }
@@ -1068,12 +1114,17 @@ public sealed partial class MainWindow : Window
         return menu;
     }
 
+    /// Bounds concurrent thumbnail reads/decodes: a build with hundreds of
+    /// images would otherwise flood the IO pool and the UI queue at once.
+    private static readonly SemaphoreSlim ThumbGate = new(4);
+
     private async void LoadThumb(ImageBrush target, AssetInfo asset)
     {
         if (asset.BlobPath == null)
         {
             return;
         }
+        await ThumbGate.WaitAsync();
         try
         {
             var bytes = await Task.Run(() =>
@@ -1091,6 +1142,10 @@ public sealed partial class MainWindow : Window
         catch
         {
             // Undecodable image: the placeholder tile stays, opening still works.
+        }
+        finally
+        {
+            ThumbGate.Release();
         }
     }
 
@@ -1129,7 +1184,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OpenExternally(AssetInfo asset)
+    private async void OpenExternally(AssetInfo asset)
     {
         if (asset.BlobPath == null)
         {
@@ -1138,9 +1193,12 @@ public sealed partial class MainWindow : Window
         }
         try
         {
-            var staged = asset.Mime == "image/x-tga"
+            SetStatus($"Staging {Format.LastComponent(asset.Path)}…");
+            // Staging copies the blob (and converts TGA); a big video would
+            // freeze the window if done on the UI thread.
+            var staged = await Task.Run(() => asset.Mime == "image/x-tga"
                 ? AssetStaging.MaterializeTga(asset, asset.BlobPath)
-                : AssetStaging.Materialize(asset, asset.BlobPath);
+                : AssetStaging.Materialize(asset, asset.BlobPath));
             Process.Start(new ProcessStartInfo(staged) { UseShellExecute = true });
             SetStatus($"Opened {asset.Path}.");
         }
@@ -1222,7 +1280,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var stream = File.OpenRead(asset.BlobPath!);
+            var stream = await Task.Run(() => File.OpenRead(asset.BlobPath!));
             var media = new MediaPlayerElement
             {
                 AreTransportControlsEnabled = true,
@@ -1245,21 +1303,36 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// Free-selection TextBlock for small files; one virtualized line per row
+    /// beyond that (a single quarter-megabyte TextBlock freezes layout for
+    /// seconds; the Copy button still grabs the whole text either way).
+    private const int TextBlockPreviewCap = 32 * 1024;
+
     private UIElement MakeTextPreviewControl(string text)
     {
-        var block = new TextBlock
+        if (text.Length <= TextBlockPreviewCap)
         {
-            Text = text,
-            FontFamily = new FontFamily("Cascadia Mono,Consolas"),
-            FontSize = 12,
-            IsTextSelectionEnabled = true,
-        };
-        return new ScrollViewer
+            var block = new TextBlock
+            {
+                Text = text,
+                FontFamily = new FontFamily("Cascadia Mono,Consolas"),
+                FontSize = 12,
+                IsTextSelectionEnabled = true,
+            };
+            return new ScrollViewer
+            {
+                Content = block,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Padding = new Thickness(8),
+            };
+        }
+        return new ListView
         {
-            Content = block,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Padding = new Thickness(8),
+            ItemsSource = text.Split('\n'),
+            SelectionMode = ListViewSelectionMode.None,
+            ItemTemplate = (DataTemplate)Root.Resources["MonoLineTemplate"],
+            ItemContainerStyle = (Style)Root.Resources["MonoLineContainer"],
         };
     }
 
@@ -1514,13 +1587,17 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var summary = await Task.Run(() => GetEngine().LoadBuild(sha));
+            var (summary, record) = await Task.Run(() =>
+            {
+                var s = GetEngine().LoadBuild(sha);
+                return (s, s == null ? null : RecordDoc.Decode(s.Json));
+            });
             if (summary == null)
             {
                 SetStatus("Build not in cache anymore.");
                 return;
             }
-            ShowBuild(summary);
+            ShowBuild(summary, record);
             if (!_working)
             {
                 SetStatus($"Loaded from cache — {summary.System}, {summary.FileCount} files, {Format.HumanSize(summary.TotalSize)}.");

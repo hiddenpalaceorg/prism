@@ -10,15 +10,19 @@ public sealed class DiscNodeVm
     // FFI types are internal (same assembly as the generated bindings); the
     // class stays public so the XAML compiler can resolve x:DataType.
     internal FileNode Node { get; }
-    public List<DiscNodeVm> Children { get; }
     public bool IsRoot { get; }
+    private List<DiscNodeVm>? _children;
 
     internal DiscNodeVm(FileNode node, bool isRoot = false)
     {
         Node = node;
         IsRoot = isRoot;
-        Children = node.Children.Select(c => new DiscNodeVm(c)).ToList();
     }
+
+    /// Materialized on first bind (when the TreeView realizes the item), so
+    /// opening a 50k-file build doesn't build 50k view-models up front.
+    public List<DiscNodeVm> Children =>
+        _children ??= Node.Children.Select(c => new DiscNodeVm(c)).ToList();
 
     public string Name => Node.Name;
 
