@@ -65,8 +65,7 @@ mod app {
         OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
     use windows::Win32::UI::Controls::{
-        InitCommonControlsEx, LoadIconMetric, LIM_LARGE, LIM_SMALL,
-        ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_PROGRESS_CLASS,
+        InitCommonControlsEx, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_PROGRESS_CLASS,
         ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCOLUMNW, LVGA_HEADER_LEFT,
         LVGF_ALIGN, LVGF_GROUPID, LVGF_HEADER, LVGROUP, LVITEMW, LVCF_SUBITEM, LVCF_TEXT,
         LVCF_WIDTH, LVIF_GROUPID, LVIF_TEXT, LVM_DELETEALLITEMS, LVM_ENABLEGROUPVIEW,
@@ -78,6 +77,7 @@ mod app {
         TVITEMW, TVIF_PARAM, TVIF_TEXT, TVI_LAST, TVI_ROOT, TVM_DELETEITEM, TVM_INSERTITEMW,
         TVN_SELCHANGEDW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
     };
+    use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
     use windows::Win32::UI::Shell::{
         DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, FileOpenDialog,
         IFileOpenDialog, SetWindowSubclass, ShellExecuteW, FOS_FORCEFILESYSTEM,
@@ -360,14 +360,19 @@ mod app {
                 Some(Box::into_raw(init) as *const core::ffi::c_void),
             )?;
 
-            // The taskbar and Alt-Tab use the window icons, not the exe resource, and
-            // upscale whatever they get (the 32px class icon turns blurry on Windows 10).
-            // LoadIconMetric picks the DPI-correct frame from the icon resource.
-            if let Ok(big) = LoadIconMetric(hinstance, APP_ICON_ID, LIM_LARGE) {
+            // The Windows 10 taskbar draws the window's big icon at 24px times the DPI
+            // scale and never picks the matching .ico frame itself, it only shrinks the
+            // 32px HICON, which blurs. Hand it a big icon loaded at exactly that size
+            // (LoadImageW picks the best frame) and a metric-sized small one for the
+            // title bar. Alt-Tab badges get the 24px icon too, which they render fine.
+            let dpi = GetDpiForWindow(hwnd) as i32;
+            let taskbar = 24 * dpi / 96;
+            if let Ok(big) = LoadImageW(hinstance, APP_ICON_ID, IMAGE_ICON, taskbar, taskbar, LR_DEFAULTCOLOR) {
                 let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(big.0 as isize));
             }
-            if let Ok(small) = LoadIconMetric(hinstance, APP_ICON_ID, LIM_SMALL) {
-                let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(small.0 as isize));
+            let small = GetSystemMetricsForDpi(SM_CXSMICON, dpi as u32);
+            if let Ok(sm) = LoadImageW(hinstance, APP_ICON_ID, IMAGE_ICON, small, small, LR_DEFAULTCOLOR) {
+                let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(sm.0 as isize));
             }
 
             let _ = ShowWindow(hwnd, SW_SHOW);
