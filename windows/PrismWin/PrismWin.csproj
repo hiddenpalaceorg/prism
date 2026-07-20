@@ -18,6 +18,9 @@
     <!-- Unpackaged, xcopy-deployable app; the Windows App SDK runtime ships in the folder. -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Required for dotnet-CLI publish to generate and copy resources.pri (the
+         compiled XAML); without it the app dies silently at InitializeComponent. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- The generated UniFFI bindings use LibraryImport, which emits unsafe stubs. -->
@@ -30,6 +33,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.8249" />
   </ItemGroup>
 
   <ItemGroup>

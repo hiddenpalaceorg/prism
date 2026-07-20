@@ -9,6 +9,7 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
+        UnhandledException += (_, e) => Program.LogCrash(e.Exception, "xaml");
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

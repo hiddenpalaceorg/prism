@@ -75,6 +75,19 @@ jobs:
         run: uniffi-bindgen-cs --library target/release/prism_ffi.dll --out-dir windows/PrismWin/Generated
       - name: publish app (self-contained, unpackaged)
         run: dotnet publish windows/PrismWin/PrismWin.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -o windows/dist/PrismWin
+      - name: verify publish output is launchable
+        shell: pwsh
+        # resources.pri carries the compiled XAML; when dotnet publish drops it
+        # the app dies silently at InitializeComponent (seen 2026-07-20).
+        run: |
+          $out = "windows/dist/PrismWin"
+          if (-not (Test-Path "$out/resources.pri")) {
+            $pri = Get-ChildItem windows/PrismWin/bin -Recurse -Filter resources.pri | Select-Object -First 1
+            if ($pri) { Copy-Item $pri.FullName "$out/resources.pri" }
+          }
+          foreach ($f in "PrismWin.exe","PrismWin.dll","prism_ffi.dll","resources.pri","Assets/prism.ico") {
+            if (-not (Test-Path "$out/$f")) { throw "missing $f in publish output" }
+          }
       - name: bundle adapter + zip
         shell: pwsh
         run: |
