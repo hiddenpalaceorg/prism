@@ -73,42 +73,39 @@ jobs:
         run: cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.11.0+v0.31.0 --locked
       - name: generate C# bindings from the built DLL
         run: uniffi-bindgen-cs --library target/release/prism_ffi.dll --out-dir windows/PrismWin/Generated
-      - name: publish app (self-contained, unpackaged)
+      - name: publish app (single self-extracting exe)
         shell: pwsh
-        run: dotnet publish windows/PrismWin/PrismWin.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -o windows/dist/PrismWin "-flp:LogFile=publish.log;Verbosity=detailed"
-      - name: verify publish output is launchable
+        run: dotnet publish windows/PrismWin/PrismWin.csproj -c Release -r win-x64 -p:Platform=x64 -p:PublishSingleFile=true --self-contained true -o windows/dist/PrismWin "-flp:LogFile=publish.log;Verbosity=detailed"
+      - name: verify the exe bundle and smoke-test launch
         shell: pwsh
-        # resources.pri carries the compiled XAML; when dotnet publish drops it
-        # the app dies silently at InitializeComponent (seen 2026-07-20).
+        # The bundle must carry resources.pri (compiled XAML; a build without it
+        # dies silently at InitializeComponent, seen 2026-07-20), the Rust core,
+        # and the adapter. Then actually launch the GUI: if it survives 12
+        # seconds it created its window; an early exit means a startup crash.
         run: |
-          $out = "windows/dist/PrismWin"
-          if (-not (Test-Path "$out/resources.pri")) {
-            $pri = Get-ChildItem windows/PrismWin -Recurse -Include *.pri -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -in @("resources.pri", "PrismWin.pri") } | Select-Object -First 1
-            if ($pri) { Copy-Item $pri.FullName "$out/resources.pri" }
-          }
-          foreach ($f in "PrismWin.exe","PrismWin.dll","prism_ffi.dll","resources.pri","Assets/prism.ico") {
-            if (-not (Test-Path "$out/$f")) {
-              Write-Host "== pri/xbf files under the project:"
-              Get-ChildItem windows/PrismWin -Recurse -Include *.pri,*.xbf -ErrorAction SilentlyContinue |
-                ForEach-Object { Write-Host $_.FullName }
-              Write-Host "== PRI activity in the msbuild log:"
-              Select-String -Path publish.log -Pattern "GenerateProjectPri|makepri|MakePri|resources\.pri|PriFile" |
-                Select-Object -First 60 | ForEach-Object { Write-Host $_.Line }
-              throw "missing $f in publish output"
+          $exe = "windows/dist/PrismWin/PrismWin.exe"
+          if (-not (Test-Path $exe)) { throw "missing PrismWin.exe in publish output" }
+          Write-Host ("single exe: {0:N1} MB" -f ((Get-Item $exe).Length / 1MB))
+          foreach ($needle in "resources.pri","prism_ffi.dll","prism-adapter.exe") {
+            if (-not (Select-String -Path $exe -Pattern $needle -SimpleMatch -Quiet)) {
+              throw "bundle is missing $needle"
             }
           }
-      - name: bundle adapter + zip
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force windows/dist/PrismWin/adapter | Out-Null
-          Copy-Item ps2exe-adapter/dist/prism-adapter.exe windows/dist/PrismWin/adapter/
-          Compress-Archive -Path windows/dist/PrismWin/* -DestinationPath windows/dist/PrismWin-winui.zip
-      - name: upload app folder
+          $cli = Start-Process -FilePath $exe -ArgumentList "--cli","--help" -NoNewWindow -Wait -PassThru
+          if ($cli.ExitCode -ne 0) { throw "cli smoke test failed with exit code $($cli.ExitCode)" }
+          $gui = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 12
+          if ($gui.HasExited) {
+            Get-ChildItem windows/dist/PrismWin,$env:TEMP -Filter prismwin-crash.log -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host "== $($_.FullName)"; Get-Content $_.FullName }
+            throw "GUI exited at startup with code $($gui.ExitCode)"
+          }
+          Stop-Process -Id $gui.Id -Force
+      - name: upload single exe
         uses: actions/upload-artifact@v4
         with:
           name: PrismWin-winui-${{ github.sha }}
-          path: windows/dist/PrismWin-winui.zip
+          path: windows/dist/PrismWin/PrismWin.exe
           if-no-files-found: error
 
   macos-build:
@@ -162,10 +159,10 @@ jobs:
           set -euo pipefail
           token=$(openssl rand -hex 6)
           mkdir out
-          # Windows classic is a single self-contained .exe (adapter embedded); the WinUI 3
-          # app is a self-contained folder zip; macOS is the .app zip.
+          # Both Windows apps are single self-contained .exes (adapter embedded);
+          # macOS is the .app zip.
           cp dl/prism-win-*/prism-win.exe "out/Prism-win-${token}.exe"
-          cp dl/PrismWin-winui-*/PrismWin-winui.zip "out/Prism-win-winui-${token}.zip"
+          cp dl/PrismWin-winui-*/PrismWin.exe "out/Prism-win-winui-${token}.exe"
           cp dl/Prism-macos-*/Prism-app.zip        "out/Prism-mac-${token}.zip"
           ls -la out
       - name: publish per-branch draft release (rolling; hidden from /releases, no git tag)

@@ -14,6 +14,8 @@
     <ApplicationIcon>Assets/prism.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
     <UseWinUI>true</UseWinUI>
     <!-- Unpackaged, xcopy-deployable app; the Windows App SDK runtime ships in the folder. -->
     <WindowsPackageType>None</WindowsPackageType>
@@ -21,6 +23,10 @@
     <!-- Required for dotnet-CLI publish to generate and copy resources.pri (the
          compiled XAML); without it the app dies silently at InitializeComponent. -->
     <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- Single-exe publish (CI passes PublishSingleFile=true): the whole app,
+         content and native DLLs included, self-extracts at first launch. -->
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- The generated UniFFI bindings use LibraryImport, which emits unsafe stubs. -->
@@ -29,6 +35,9 @@
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!-- The Rust core; built by cargo, copied next to the exe for DllImport("prism_ffi"). -->
     <PrismFfiDll>$(MSBuildThisFileDirectory)..\..\target\release\prism_ffi.dll</PrismFfiDll>
+    <!-- The frozen Python adapter (when present) rides along under adapter\,
+         where AdapterLocator looks for it. -->
+    <PrismAdapterExe>$(MSBuildThisFileDirectory)..\..\ps2exe-adapter\dist\prism-adapter.exe</PrismAdapterExe>
   </PropertyGroup>
 
   <ItemGroup>
@@ -41,6 +50,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="$(PrismFfiDll)" Link="prism_ffi.dll" Condition="Exists('$(PrismFfiDll)')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(PrismAdapterExe)" Link="adapter\prism-adapter.exe" Condition="Exists('$(PrismAdapterExe)')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
