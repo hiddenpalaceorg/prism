@@ -65,7 +65,8 @@ mod app {
         OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
     use windows::Win32::UI::Controls::{
-        InitCommonControlsEx, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_PROGRESS_CLASS,
+        InitCommonControlsEx, LoadIconMetric, LIM_LARGE, LIM_SMALL,
+        ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_PROGRESS_CLASS,
         ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, LVCFMT_LEFT, LVCOLUMNW, LVGA_HEADER_LEFT,
         LVGF_ALIGN, LVGF_GROUPID, LVGF_HEADER, LVGROUP, LVITEMW, LVCF_SUBITEM, LVCF_TEXT,
         LVCF_WIDTH, LVIF_GROUPID, LVIF_TEXT, LVM_DELETEALLITEMS, LVM_ENABLEGROUPVIEW,
@@ -358,6 +359,16 @@ mod app {
                 hinstance,
                 Some(Box::into_raw(init) as *const core::ffi::c_void),
             )?;
+
+            // The taskbar and Alt-Tab use the window icons, not the exe resource, and
+            // upscale whatever they get (the 32px class icon turns blurry on Windows 10).
+            // LoadIconMetric picks the DPI-correct frame from the icon resource.
+            if let Ok(big) = LoadIconMetric(hinstance, APP_ICON_ID, LIM_LARGE) {
+                let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(big.0 as isize));
+            }
+            if let Ok(small) = LoadIconMetric(hinstance, APP_ICON_ID, LIM_SMALL) {
+                let _ = SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_SMALL as usize), LPARAM(small.0 as isize));
+            }
 
             let _ = ShowWindow(hwnd, SW_SHOW);
 
