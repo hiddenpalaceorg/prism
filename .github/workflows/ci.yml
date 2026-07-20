@@ -74,7 +74,8 @@ jobs:
       - name: generate C# bindings from the built DLL
         run: uniffi-bindgen-cs --library target/release/prism_ffi.dll --out-dir windows/PrismWin/Generated
       - name: publish app (self-contained, unpackaged)
-        run: dotnet publish windows/PrismWin/PrismWin.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -o windows/dist/PrismWin
+        shell: pwsh
+        run: dotnet publish windows/PrismWin/PrismWin.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -o windows/dist/PrismWin "-flp:LogFile=publish.log;Verbosity=detailed"
       - name: verify publish output is launchable
         shell: pwsh
         # resources.pri carries the compiled XAML; when dotnet publish drops it
@@ -82,11 +83,20 @@ jobs:
         run: |
           $out = "windows/dist/PrismWin"
           if (-not (Test-Path "$out/resources.pri")) {
-            $pri = Get-ChildItem windows/PrismWin/bin -Recurse -Filter resources.pri | Select-Object -First 1
+            $pri = Get-ChildItem windows/PrismWin -Recurse -Include *.pri -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -in @("resources.pri", "PrismWin.pri") } | Select-Object -First 1
             if ($pri) { Copy-Item $pri.FullName "$out/resources.pri" }
           }
           foreach ($f in "PrismWin.exe","PrismWin.dll","prism_ffi.dll","resources.pri","Assets/prism.ico") {
-            if (-not (Test-Path "$out/$f")) { throw "missing $f in publish output" }
+            if (-not (Test-Path "$out/$f")) {
+              Write-Host "== pri/xbf files under the project:"
+              Get-ChildItem windows/PrismWin -Recurse -Include *.pri,*.xbf -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host $_.FullName }
+              Write-Host "== PRI activity in the msbuild log:"
+              Select-String -Path publish.log -Pattern "GenerateProjectPri|makepri|MakePri|resources\.pri|PriFile" |
+                Select-Object -First 60 | ForEach-Object { Write-Host $_.Line }
+              throw "missing $f in publish output"
+            }
           }
       - name: bundle adapter + zip
         shell: pwsh
