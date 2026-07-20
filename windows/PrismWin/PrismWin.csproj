@@ -65,7 +65,12 @@
   <Target Name="BundleXamlResourcesPri" AfterTargets="_ComputeFilesToBundle"
           BeforeTargets="GenerateSingleFileBundle" Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
+      <!-- makepri names the file after the index (PrismWin.pri); folder
+           publishes ship it renamed to resources.pri, which is the name the
+           resource loader looks for, so bundle it under that name. -->
       <_PrismPriCandidate Include="$(TargetDir)resources.pri" Condition="Exists('$(TargetDir)resources.pri')" />
+      <_PrismPriCandidate Include="$(TargetDir)$(AssemblyName).pri" Condition="Exists('$(TargetDir)$(AssemblyName).pri')" />
+      <_PrismPriCandidate Include="$(ProjectDir)bin\**\$(AssemblyName).pri" />
       <_PrismPriCandidate Include="$(ProjectDir)obj\**\resources.pri" />
       <_PrismPriCandidate Include="$(ProjectDir)bin\**\resources.pri" />
     </ItemGroup>
