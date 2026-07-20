@@ -20,6 +20,8 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- The generated UniFFI bindings use LibraryImport, which emits unsafe stubs. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Program.Main handles CLI mode before any XAML spins up. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!-- The Rust core; built by cargo, copied next to the exe for DllImport("prism_ffi"). -->

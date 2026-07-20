@@ -5,11 +5,13 @@ namespace PrismWin;
 /// UI wrapper over the FFI `FileNode` for the TreeView (name, icon, children).
 public sealed class DiscNodeVm
 {
-    public FileNode Node { get; }
+    // FFI types are internal (same assembly as the generated bindings); the
+    // class stays public so the XAML compiler can resolve x:DataType.
+    internal FileNode Node { get; }
     public List<DiscNodeVm> Children { get; }
     public bool IsRoot { get; }
 
-    public DiscNodeVm(FileNode node, bool isRoot = false)
+    internal DiscNodeVm(FileNode node, bool isRoot = false)
     {
         Node = node;
         IsRoot = isRoot;
@@ -25,9 +27,9 @@ public sealed class DiscNodeVm
 /// One library row, preformatted for the browser list.
 public sealed class LibraryRowVm
 {
-    public LibraryEntry Entry { get; }
+    internal LibraryEntry Entry { get; }
 
-    public LibraryRowVm(LibraryEntry entry)
+    internal LibraryRowVm(LibraryEntry entry)
     {
         Entry = entry;
     }
