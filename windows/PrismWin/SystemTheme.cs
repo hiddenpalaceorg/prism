@@ -46,7 +46,9 @@ internal static class SystemTheme
 
     /// Text/icon shade that stays legible on the matching tint: darker on the
     /// light theme, lighter on the dark theme.
-    public static Color OnTint(Color c, bool dark) => dark ? Mix(c, Colors.White, 0.45) : Mix(c, Colors.Black, 0.30);
+    public static Color OnTint(Color c, bool dark) => dark
+        ? Mix(c, Microsoft.UI.Colors.White, 0.45)
+        : Mix(c, Microsoft.UI.Colors.Black, 0.30);
 
     public static Color Mix(Color c, Color toward, double f) => Color.FromArgb(255,
         (byte)(c.R + (toward.R - c.R) * f),

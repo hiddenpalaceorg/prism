@@ -626,8 +626,8 @@ public sealed partial class MainWindow : Window
             StartPoint = new Windows.Foundation.Point(0, 0),
             EndPoint = new Windows.Foundation.Point(1, 1),
         };
-        brush.GradientStops.Add(new GradientStop { Color = SystemTheme.Mix(color, Colors.White, 0.18), Offset = 0 });
-        brush.GradientStops.Add(new GradientStop { Color = SystemTheme.Mix(color, Colors.Black, 0.12), Offset = 1 });
+        brush.GradientStops.Add(new GradientStop { Color = SystemTheme.Mix(color, Microsoft.UI.Colors.White, 0.18), Offset = 0 });
+        brush.GradientStops.Add(new GradientStop { Color = SystemTheme.Mix(color, Microsoft.UI.Colors.Black, 0.12), Offset = 1 });
         return new Border
         {
             Width = 28,
@@ -639,7 +639,7 @@ public sealed partial class MainWindow : Window
             {
                 Glyph = glyph,
                 FontSize = 14,
-                Foreground = new SolidColorBrush(Colors.White),
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
             },
         };
     }
@@ -1061,7 +1061,7 @@ public sealed partial class MainWindow : Window
         {
             Text = Format.LastComponent(asset.Path),
             FontSize = 11,
-            Foreground = new SolidColorBrush(Colors.White),
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
             TextTrimming = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Bottom,
