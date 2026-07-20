@@ -41,7 +41,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+    <!-- The WinUI component package (not the Microsoft.WindowsAppSDK meta
+         package): the meta drags the AI/ML payload (DirectML, OnnxRuntime,
+         imaging models) into self-contained output, tens of MB we never use. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.2.1" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.8249" />
   </ItemGroup>
 
