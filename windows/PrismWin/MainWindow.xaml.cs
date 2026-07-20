@@ -43,6 +43,7 @@ public sealed partial class MainWindow : Window
     private string? _previewText;
     private AssetInfo? _previewAsset;
     private (AnalysisSummary Summary, bool Json, bool Dark)? _docShown;
+    private string? _lastError;
 
     public MainWindow()
     {
@@ -1813,6 +1814,7 @@ public sealed partial class MainWindow : Window
     /// selectable text plus a Copy button lets the user grab the message.
     private async Task ShowErrorAsync(string message)
     {
+        _lastError = message; // screenshot mode reports it (dialogs don't render in captures)
         var text = new TextBlock
         {
             Text = message,

@@ -36,6 +36,11 @@ public sealed partial class MainWindow
                     await Task.Delay(500);
                 }
                 await Task.Delay(1000);
+                if (_summary == null)
+                {
+                    File.WriteAllText(Path.Combine(dir, "error.txt"),
+                        $"status: {StatusText.Text}\nlast error: {_lastError ?? "(none)"}\n");
+                }
             }
             await CaptureAsync(dir, "1-overview.png");
             if (_summary != null)

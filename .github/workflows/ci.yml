@@ -113,38 +113,20 @@ jobs:
         shell: pwsh
         # PRISM_SHOT_DIR makes the app render its main views to PNGs and exit
         # (see ScreenshotMode.cs), so design changes are reviewable from the
-        # artifact without a Windows machine. A tiny generated "press kit"
-        # folder gives the shots a real build to display.
+        # artifact without a Windows machine. A tiny generated press-kit ISO
+        # gives the shots a real build to display (the analyzer needs a
+        # readable disc volume; a loose folder of files has none).
         run: |
-          Add-Type -AssemblyName System.Drawing
-          $sample = Join-Path $env:RUNNER_TEMP "Press Kit Sample (1999)"
-          New-Item -ItemType Directory -Force "$sample/Images" | Out-Null
-          $names = "AJANTIS","BGSC1","BGSC2","SAFANA","baldr000","baldr001"
-          for ($i = 0; $i -lt $names.Length; $i++) {
-            $bmp = New-Object System.Drawing.Bitmap 320, 240
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $c1 = [System.Drawing.Color]::FromArgb(255, (43 * $i + 40) % 256, 90, (210 - 30 * $i + 256) % 256)
-            $c2 = [System.Drawing.Color]::FromArgb(255, 235, (37 * $i + 70) % 256, 130)
-            $rect = New-Object System.Drawing.Rectangle 0, 0, 320, 240
-            $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $c1, $c2, 45)
-            $g.FillRectangle($brush, $rect)
-            $g.Dispose()
-            $ext = if ($i % 2) { "png" } else { "jpg" }
-            $fmt = if ($i % 2) { [System.Drawing.Imaging.ImageFormat]::Png } else { [System.Drawing.Imaging.ImageFormat]::Jpeg }
-            $bmp.Save("$sample/Images/$($names[$i]).$ext", $fmt)
-            $bmp.Dispose()
-          }
-          Set-Content "$sample/README.TXT" "Sample press kit`r`nExercises the Prism UI for CI screenshots."
-          $rng = New-Object Random 42
-          $bytes = New-Object byte[] 4096
-          $rng.NextBytes($bytes)
-          [IO.File]::WriteAllBytes("$sample/DATA.BIN", $bytes)
+          $iso = Join-Path $env:RUNNER_TEMP "press-kit.iso"
+          uv run --with pycdlib --no-project python windows/make-sample-iso.py $iso
           $env:PRISM_DATA_DIR = Join-Path $env:RUNNER_TEMP "prism-shot-data"
           $env:PRISM_SHOT_DIR = Join-Path $env:RUNNER_TEMP "prism-shots"
-          $env:PRISM_SHOT_OPEN = $sample
+          $env:PRISM_SHOT_OPEN = $iso
           $proc = Start-Process -FilePath "windows/dist/solo/PrismWin.exe" -PassThru
           if (-not $proc.WaitForExit(240000)) { $proc.Kill(); Write-Host "screenshot run timed out" }
           Get-ChildItem $env:PRISM_SHOT_DIR | ForEach-Object { Write-Host $_.Name }
+          $err = Join-Path $env:PRISM_SHOT_DIR "error.txt"
+          if (Test-Path $err) { Get-Content $err }
           Copy-Item -Recurse $env:PRISM_SHOT_DIR windows/dist/shots
       - name: upload screenshots
         continue-on-error: true
