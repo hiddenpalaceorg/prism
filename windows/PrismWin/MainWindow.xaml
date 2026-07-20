@@ -60,23 +60,23 @@
         </MenuBar>
 
         <Grid Grid.Row="2">
-            <!-- Build mode: filesystem tree + detail tabs. -->
+            <!-- Build mode: filesystem tree on Mica at left, detail views in a
+                 rounded layer card at right (the Windows 11 Settings layout). -->
             <Grid x:Name="BuildPane">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" MinWidth="220" />
                     <ColumnDefinition Width="3*" />
                 </Grid.ColumnDefinitions>
 
-                <Grid Grid.Column="0" BorderThickness="0,0,1,0"
-                      BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                <Grid Grid.Column="0" Margin="8,0,0,8">
                     <TreeView x:Name="FsTree" SelectionMode="Single" ItemInvoked="FsTree_ItemInvoked"
-                              Margin="4,4,0,0">
+                              Margin="0,4,4,0">
                         <TreeView.ItemTemplate>
                             <DataTemplate x:DataType="local:DiscNodeVm">
                                 <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsRoot}">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="13"
-                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="9">
+                                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="14"
+                                                  Foreground="{x:Bind IconBrush}" />
                                         <TextBlock Text="{x:Bind Name}" />
                                     </StackPanel>
                                 </TreeViewItem>
@@ -85,137 +85,258 @@
                     </TreeView>
                     <StackPanel x:Name="TreeEmptyState" VerticalAlignment="Center" HorizontalAlignment="Center"
                                 Spacing="10" Padding="24">
-                        <FontIcon Glyph="&#xE958;" FontSize="40"
-                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                        <Border Width="56" Height="56" CornerRadius="28" HorizontalAlignment="Center"
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                            <FontIcon Glyph="&#xE958;" FontSize="24"
+                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                        </Border>
                         <TextBlock Text="No image loaded" Style="{StaticResource BodyStrongTextBlockStyle}"
                                    HorizontalAlignment="Center" />
-                        <TextBlock Text="Open — or drag in — a disc image, container, or folder."
+                        <TextBlock Text="The build's filesystem shows here."
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                    TextWrapping="Wrap" TextAlignment="Center" />
                     </StackPanel>
                 </Grid>
 
-                <Grid Grid.Column="1">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                <Border Grid.Column="1" Margin="4,4,16,8" CornerRadius="8"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-                    <StackPanel x:Name="HeaderCard" Grid.Row="0" Margin="16,10,16,6" Spacing="6"
-                                Visibility="Collapsed">
-                        <TextBlock x:Name="HeaderTitle" Style="{StaticResource SubtitleTextBlockStyle}"
-                                   IsTextSelectionEnabled="True" />
-                        <StackPanel x:Name="HeaderTags" Orientation="Horizontal" Spacing="8" />
-                        <TextBlock x:Name="HeaderSha" FontFamily="Consolas" FontSize="12"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   IsTextSelectionEnabled="True" />
-                    </StackPanel>
-
-                    <SelectorBar x:Name="TabBar" Grid.Row="1" Margin="12,0,12,0"
-                                 SelectionChanged="TabBar_SelectionChanged">
-                        <SelectorBarItem x:Name="TabOverview" Text="Overview" />
-                        <SelectorBarItem x:Name="TabSelection" Text="Selection" />
-                        <SelectorBarItem x:Name="TabAssets" Text="Assets" />
-                        <SelectorBarItem x:Name="TabDocument" Text="DAT / JSON" />
-                        <SelectorBarItem x:Name="TabSimilar" Text="Similar" />
-                    </SelectorBar>
-
-                    <Grid Grid.Row="2">
-                        <ScrollViewer x:Name="OverviewScroll">
-                            <StackPanel x:Name="OverviewPanel" Margin="16,10,16,16" Spacing="12" />
-                        </ScrollViewer>
-                        <ScrollViewer x:Name="SelectionScroll" Visibility="Collapsed">
-                            <StackPanel x:Name="SelectionPanel" Margin="16,10,16,16" Spacing="12" />
-                        </ScrollViewer>
-                        <ScrollViewer x:Name="AssetsScroll" Visibility="Collapsed">
-                            <StackPanel x:Name="AssetsPanel" Margin="16,10,16,16" Spacing="8" />
-                        </ScrollViewer>
-                        <Grid x:Name="DocPane" Visibility="Collapsed">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-                            <SelectorBar x:Name="DocModeBar" Margin="16,8,16,0"
-                                         SelectionChanged="DocModeBar_SelectionChanged">
-                                <SelectorBarItem x:Name="DocModeXml" Text="XML" />
-                                <SelectorBarItem x:Name="DocModeJson" Text="JSON" />
-                            </SelectorBar>
-                            <TextBox x:Name="DocText" Grid.Row="1" IsReadOnly="True" AcceptsReturn="True"
-                                     TextWrapping="NoWrap" FontFamily="Consolas" FontSize="12"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                     BorderThickness="0" Background="Transparent" Margin="8" />
-                        </Grid>
-                        <Grid x:Name="SimilarPane" Visibility="Collapsed">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="16,10,16,4">
-                                <Button x:Name="FindSimilarBtn" Content="Find Similar" Click="MenuSimilar_Click" />
-                                <Button x:Name="SubmitBtn" Content="Submit..." Click="MenuSubmit_Click" />
-                                <ProgressRing x:Name="QueryRing" IsActive="False" Width="18" Height="18" />
+                        <Grid x:Name="HeaderCard" Grid.Row="0" Margin="20,18,20,6" ColumnSpacing="14"
+                              Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Width="52" Height="52" CornerRadius="12" VerticalAlignment="Top">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#FF8B5CF6" Offset="0" />
+                                        <GradientStop Color="#FF3B82F6" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <FontIcon Glyph="&#xE958;" FontSize="24" Foreground="White" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="7" VerticalAlignment="Center">
+                                <TextBlock x:Name="HeaderTitle" Style="{StaticResource SubtitleTextBlockStyle}"
+                                           FontSize="22" TextTrimming="CharacterEllipsis"
+                                           IsTextSelectionEnabled="True" />
+                                <StackPanel x:Name="HeaderTags" Orientation="Horizontal" Spacing="6" />
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock x:Name="HeaderSha" FontFamily="Cascadia Mono,Consolas" FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               IsTextSelectionEnabled="True" VerticalAlignment="Center" />
+                                    <Button x:Name="HeaderShaCopy" Click="HeaderShaCopy_Click" Padding="5,2"
+                                            Background="Transparent" BorderThickness="0"
+                                            ToolTipService.ToolTip="Copy SHA-256">
+                                        <FontIcon Glyph="&#xE8C8;" FontSize="12"
+                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Button>
+                                </StackPanel>
                             </StackPanel>
-                            <ScrollViewer Grid.Row="1">
-                                <StackPanel x:Name="SimilarPanel" Margin="16,6,16,16" Spacing="12" />
+                        </Grid>
+
+                        <SelectorBar x:Name="TabBar" Grid.Row="1" Margin="16,2,16,0" Visibility="Collapsed"
+                                     SelectionChanged="TabBar_SelectionChanged">
+                            <SelectorBarItem x:Name="TabOverview" Text="Overview" />
+                            <SelectorBarItem x:Name="TabSelection" Text="Selection" />
+                            <SelectorBarItem x:Name="TabAssets" Text="Assets" />
+                            <SelectorBarItem x:Name="TabDocument" Text="DAT / JSON" />
+                            <SelectorBarItem x:Name="TabSimilar" Text="Similar" />
+                        </SelectorBar>
+
+                        <Grid Grid.Row="2">
+                            <ScrollViewer x:Name="OverviewScroll">
+                                <StackPanel x:Name="OverviewPanel" Margin="20,12,20,20" Spacing="12">
+                                    <StackPanel.ChildrenTransitions>
+                                        <TransitionCollection>
+                                            <EntranceThemeTransition IsStaggeringEnabled="True" FromVerticalOffset="24" />
+                                        </TransitionCollection>
+                                    </StackPanel.ChildrenTransitions>
+                                </StackPanel>
                             </ScrollViewer>
+                            <ScrollViewer x:Name="SelectionScroll" Visibility="Collapsed">
+                                <StackPanel x:Name="SelectionPanel" Margin="20,12,20,20" Spacing="12" />
+                            </ScrollViewer>
+                            <ScrollViewer x:Name="AssetsScroll" Visibility="Collapsed">
+                                <StackPanel x:Name="AssetsPanel" Margin="20,8,20,20" Spacing="8" />
+                            </ScrollViewer>
+                            <Grid x:Name="DocPane" Visibility="Collapsed">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Margin="20,10,20,8" ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <SelectorBar x:Name="DocModeBar"
+                                                 SelectionChanged="DocModeBar_SelectionChanged">
+                                        <SelectorBarItem x:Name="DocModeXml" Text="XML" />
+                                        <SelectorBarItem x:Name="DocModeJson" Text="JSON" />
+                                    </SelectorBar>
+                                    <Button x:Name="DocCopyBtn" Grid.Column="1" Click="DocCopy_Click"
+                                            Padding="9,5" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE8C8;" FontSize="12" />
+                                            <TextBlock Text="Copy" FontSize="12" />
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+                                <Border Grid.Row="1" Margin="20,0,20,16" CornerRadius="8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1">
+                                    <Grid>
+                                        <ScrollViewer x:Name="DocScroll" HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Auto" Padding="14,10,14,12">
+                                            <RichTextBlock x:Name="DocRich" FontFamily="Cascadia Mono,Consolas"
+                                                           FontSize="12" TextWrapping="NoWrap"
+                                                           IsTextSelectionEnabled="True" />
+                                        </ScrollViewer>
+                                        <TextBox x:Name="DocText" Visibility="Collapsed" IsReadOnly="True"
+                                                 AcceptsReturn="True" TextWrapping="NoWrap"
+                                                 FontFamily="Cascadia Mono,Consolas" FontSize="12"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                 BorderThickness="0" Background="Transparent" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                            <Grid x:Name="SimilarPane" Visibility="Collapsed">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="20,12,20,4">
+                                    <Button x:Name="FindSimilarBtn" Style="{StaticResource AccentButtonStyle}"
+                                            Click="MenuSimilar_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="7">
+                                            <FontIcon Glyph="&#xE721;" FontSize="13" />
+                                            <TextBlock Text="Find Similar" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="SubmitBtn" Content="Submit..." Click="MenuSubmit_Click" />
+                                    <ProgressRing x:Name="QueryRing" IsActive="False" Width="18" Height="18" />
+                                </StackPanel>
+                                <ScrollViewer Grid.Row="1">
+                                    <StackPanel x:Name="SimilarPanel" Margin="20,6,20,20" Spacing="8">
+                                        <StackPanel.ChildrenTransitions>
+                                            <TransitionCollection>
+                                                <EntranceThemeTransition IsStaggeringEnabled="True" FromVerticalOffset="24" />
+                                            </TransitionCollection>
+                                        </StackPanel.ChildrenTransitions>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Grid>
+                            <StackPanel x:Name="DetailEmptyState" VerticalAlignment="Center"
+                                        HorizontalAlignment="Center" Spacing="12" Padding="32">
+                                <Border Width="88" Height="88" CornerRadius="44" HorizontalAlignment="Center"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                    <Image Source="ms-appx:///Assets/prism.ico" Width="44" Height="44" />
+                                </Border>
+                                <TextBlock Text="Drop a disc image to get started"
+                                           Style="{StaticResource SubtitleTextBlockStyle}"
+                                           HorizontalAlignment="Center" Margin="0,6,0,0" />
+                                <TextBlock Text="Prism analyzes disc images, containers, and folders, extracts their assets, and matches them against the library."
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap" TextAlignment="Center" MaxWidth="400" />
+                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center"
+                                            Margin="0,8,0,0">
+                                    <Button Style="{StaticResource AccentButtonStyle}" Click="MenuOpen_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE8E5;" FontSize="14" />
+                                            <TextBlock Text="Open Image" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Click="MenuBrowseLibrary_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE8F1;" FontSize="14" />
+                                            <TextBlock Text="Browse Library" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
                         </Grid>
                     </Grid>
-                </Grid>
+                </Border>
             </Grid>
 
-            <!-- Library mode: searchable, sortable list of every analyzed build. -->
-            <Grid x:Name="LibraryPane" Visibility="Collapsed" Margin="12,8,12,4">
+            <!-- Library mode: search row on Mica, the list in a layer card. -->
+            <Grid x:Name="LibraryPane" Visibility="Collapsed" Margin="16,6,16,8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Grid Grid.Row="0" ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBox x:Name="SearchBox" PlaceholderText="Search title or system"
-                             TextChanged="SearchBox_TextChanged" />
+                    <AutoSuggestBox x:Name="SearchBox" QueryIcon="Find"
+                                    PlaceholderText="Search title or system"
+                                    TextChanged="SearchBox_TextChanged" />
                     <ComboBox x:Name="SystemFilter" Grid.Column="1" MinWidth="180"
                               SelectionChanged="SystemFilter_SelectionChanged" />
                 </Grid>
-                <Grid x:Name="LibraryHeaderGrid" Grid.Row="1" Margin="12,10,12,2" />
-                <ListView x:Name="LibraryList" Grid.Row="2" IsItemClickEnabled="True"
-                          SelectionMode="None" ItemClick="LibraryList_ItemClick">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="local:LibraryRowVm">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="130" />
-                                    <ColumnDefinition Width="64" />
-                                    <ColumnDefinition Width="88" />
-                                    <ColumnDefinition Width="120" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="1" Text="{x:Bind System}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Grid.Column="2" Text="{x:Bind FilesText}" TextAlignment="Right"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Grid.Column="3" Text="{x:Bind SizeText}" TextAlignment="Right"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Grid.Column="4" Text="{x:Bind DateText}" TextAlignment="Right"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-                <TextBlock x:Name="LibCountFooter" Grid.Row="3" Margin="12,4,12,4" FontSize="12"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Border Grid.Row="1" Margin="0,10,0,0" CornerRadius="8"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid x:Name="LibraryHeaderGrid" Grid.Row="0" Margin="20,10,20,8" />
+                        <Border Grid.Row="1" Height="1"
+                                Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                        <ListView x:Name="LibraryList" Grid.Row="2" Padding="8,6,8,6"
+                                  IsItemClickEnabled="True" SelectionMode="None"
+                                  ItemClick="LibraryList_ItemClick">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="local:LibraryRowVm">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="130" />
+                                            <ColumnDefinition Width="64" />
+                                            <ColumnDefinition Width="88" />
+                                            <ColumnDefinition Width="120" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind System}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Grid.Column="2" Text="{x:Bind FilesText}" TextAlignment="Right"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Grid.Column="3" Text="{x:Bind SizeText}" TextAlignment="Right"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Grid.Column="4" Text="{x:Bind DateText}" TextAlignment="Right"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <Border Grid.Row="3" BorderThickness="0,1,0,0"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                            <TextBlock x:Name="LibCountFooter" Margin="20,6,20,8" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </Border>
+                    </Grid>
+                </Border>
             </Grid>
         </Grid>
 
         <!-- Status bar: live counters + status line. -->
-        <Grid Grid.Row="3" BorderThickness="0,1,0,0" Padding="12,6,12,8"
+        <Grid Grid.Row="3" BorderThickness="0,1,0,0" Padding="16,7,16,9"
               BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
               Background="{ThemeResource LayerFillColorDefaultBrush}">
             <Grid.RowDefinitions>
@@ -244,8 +365,8 @@
 
         <!-- In-app asset viewer overlay (image / media / text / hex). -->
         <Grid x:Name="PreviewOverlay" Grid.Row="0" Grid.RowSpan="4" Visibility="Collapsed"
-              Background="#A0000000">
-            <Border MaxWidth="960" MaxHeight="720" Margin="40" Padding="16" CornerRadius="8"
+              Background="{ThemeResource SmokeFillColorDefaultBrush}">
+            <Border MaxWidth="980" MaxHeight="740" Margin="40" Padding="20" CornerRadius="12"
                     Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
                     BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}" BorderThickness="1">
                 <Grid RowSpacing="10">
@@ -261,7 +382,8 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="PreviewTitle" Style="{StaticResource BodyStrongTextBlockStyle}"
                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                        <Button Grid.Column="1" Click="PreviewClose_Click" Padding="6">
+                        <Button Grid.Column="1" Click="PreviewClose_Click" Padding="6"
+                                Background="Transparent" BorderThickness="0">
                             <FontIcon Glyph="&#xE711;" FontSize="12" />
                         </Button>
                     </Grid>

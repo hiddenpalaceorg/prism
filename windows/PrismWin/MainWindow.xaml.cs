@@ -42,6 +42,7 @@ public sealed partial class MainWindow : Window
     private MediaPlayerElement? _activeMedia;
     private string? _previewText;
     private AssetInfo? _previewAsset;
+    private (AnalysisSummary Summary, bool Json, bool Dark)? _docShown;
 
     public MainWindow()
     {
@@ -50,11 +51,18 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "prism.ico"));
-        AppWindow.Resize(new Windows.Graphics.SizeInt32 { Width = 1100, Height = 740 });
+        AppWindow.Resize(new Windows.Graphics.SizeInt32 { Width = 1200, Height = 800 });
         BuildLibraryHeader();
         TabBar.SelectedItem = TabOverview;
         DocModeBar.SelectedItem = DocModeXml;
+        // The highlight palette is theme-specific, so recolor if the theme flips.
+        Root.ActualThemeChanged += (_, _) =>
+        {
+            _docShown = null;
+            EnsureDocText();
+        };
         _ = InitializeLibraryAsync();
+        MaybeStartScreenshotRun();
     }
 
     // ---- engine ----
@@ -376,14 +384,16 @@ public sealed partial class MainWindow : Window
         TreeEmptyState.Visibility = roots.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         HeaderCard.Visibility = Visibility.Visible;
+        TabBar.Visibility = Visibility.Visible;
+        DetailEmptyState.Visibility = Visibility.Collapsed;
         HeaderTitle.Text = summary.Title ?? summary.Name;
         HeaderTags.Children.Clear();
-        HeaderTags.Children.Add(MakeTag(summary.System));
-        HeaderTags.Children.Add(MakeTag($"{summary.FileCount} files"));
-        HeaderTags.Children.Add(MakeTag(Format.HumanSize(summary.TotalSize)));
+        HeaderTags.Children.Add(MakeBadge(summary.System, "\uE958", BadgeKind.Accent));
+        HeaderTags.Children.Add(MakeBadge($"{summary.FileCount} files"));
+        HeaderTags.Children.Add(MakeBadge(Format.HumanSize(summary.TotalSize)));
         if (summary.FromCache)
         {
-            HeaderTags.Children.Add(MakeTag("cached"));
+            HeaderTags.Children.Add(MakeBadge("cached", "\uE73E", BadgeKind.Success));
         }
         HeaderSha.Text = summary.Sha256;
 
@@ -391,6 +401,8 @@ public sealed partial class MainWindow : Window
         BuildSelectionPanel(null);
         BuildAssetsPanel();
         DocText.Text = "";
+        DocRich.Blocks.Clear();
+        _docShown = null;
         BuildSimilarPanel();
         TabBar.SelectedItem = TabOverview;
         ApplyMode();
@@ -438,9 +450,50 @@ public sealed partial class MainWindow : Window
         if (_summary == null)
         {
             DocText.Text = "";
+            DocRich.Blocks.Clear();
+            _docShown = null;
             return;
         }
-        DocText.Text = DocModeBar.SelectedItem == DocModeJson ? _summary.Json : _summary.Xml;
+        var json = DocModeBar.SelectedItem == DocModeJson;
+        var dark = Root.ActualTheme == ElementTheme.Dark;
+        if (_docShown is { } shown && shown.Summary == _summary && shown.Json == json && shown.Dark == dark)
+        {
+            return; // already rendered (highlighting big docs is not free)
+        }
+        var text = json ? _summary.Json : _summary.Xml;
+        if (DocHighlighter.TryHighlight(DocRich, text, json, dark))
+        {
+            DocText.Text = "";
+            DocScroll.Visibility = Visibility.Visible;
+            DocText.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            DocRich.Blocks.Clear();
+            DocText.Text = text;
+            DocScroll.Visibility = Visibility.Collapsed;
+            DocText.Visibility = Visibility.Visible;
+        }
+        _docShown = (_summary, json, dark);
+    }
+
+    private void DocCopy_Click(object sender, RoutedEventArgs e)
+    {
+        if (_summary == null)
+        {
+            return;
+        }
+        CopyToClipboard(DocModeBar.SelectedItem == DocModeJson ? _summary.Json : _summary.Xml);
+        SetStatus("Copied document to clipboard.");
+    }
+
+    private void HeaderShaCopy_Click(object sender, RoutedEventArgs e)
+    {
+        if (_summary is { } summary)
+        {
+            CopyToClipboard(summary.Sha256);
+            SetStatus("Copied SHA-256 to clipboard.");
+        }
     }
 
     private void SelectTab(SelectorBarItem tab)
@@ -461,32 +514,80 @@ public sealed partial class MainWindow : Window
     private static Style? NamedStyle(string key) =>
         Application.Current.Resources.TryGetValue(key, out var v) ? v as Style : null;
 
-    private UIElement MakeTag(string text)
+    private enum BadgeKind { Neutral, Accent, Success, Caution }
+
+    /// Tinted pill: neutral gray for counts, accent for identity, semantic
+    /// green/amber for state, so the chips carry meaning, not just text.
+    private FrameworkElement MakeBadge(string text, string? glyph = null, BadgeKind kind = BadgeKind.Neutral)
     {
-        var block = new TextBlock { Text = text, FontSize = 12, FontWeight = FontWeights.SemiBold };
-        var accent = ThemeBrush("AccentTextFillColorPrimaryBrush");
-        if (accent != null)
+        var (bg, fg) = kind switch
         {
-            block.Foreground = accent;
+            BadgeKind.Accent => ("SystemFillColorAttentionBackgroundBrush", "AccentTextFillColorPrimaryBrush"),
+            BadgeKind.Success => ("SystemFillColorSuccessBackgroundBrush", "SystemFillColorSuccessBrush"),
+            BadgeKind.Caution => ("SystemFillColorCautionBackgroundBrush", "SystemFillColorCautionBrush"),
+            _ => ("SubtleFillColorSecondaryBrush", "TextFillColorSecondaryBrush"),
+        };
+        var content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (glyph != null)
+        {
+            content.Children.Add(new FontIcon
+            {
+                Glyph = glyph,
+                FontSize = 11,
+                Foreground = ThemeBrush(fg),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
         }
+        content.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ThemeBrush(fg),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
         return new Border
         {
-            Child = block,
+            Child = content,
             CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(8, 2, 8, 3),
-            Background = ThemeBrush("SubtleFillColorSecondaryBrush"),
+            Padding = new Thickness(9, 2, 9, 3),
+            Background = ThemeBrush(bg),
+            VerticalAlignment = VerticalAlignment.Center,
         };
     }
 
-    private FrameworkElement SectionCard(string title, List<(string Label, string? Value, bool Mono)> rows)
+    private FrameworkElement SectionCard(string title, List<(string Label, string? Value, bool Mono)> rows,
+        string? glyph = null)
     {
-        var content = new StackPanel { Spacing = 6 };
-        content.Children.Add(new TextBlock
+        var content = new StackPanel { Spacing = 7 };
+        var head = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 0, 0, 3),
+        };
+        if (glyph != null)
+        {
+            head.Children.Add(new FontIcon
+            {
+                Glyph = glyph,
+                FontSize = 14,
+                Foreground = ThemeBrush("AccentTextFillColorPrimaryBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+        head.Children.Add(new TextBlock
         {
             Text = title,
             Style = NamedStyle("BodyStrongTextBlockStyle"),
-            Margin = new Thickness(0, 0, 0, 2),
+            VerticalAlignment = VerticalAlignment.Center,
         });
+        content.Children.Add(head);
         foreach (var (label, value, mono) in rows)
         {
             if (string.IsNullOrEmpty(value))
@@ -505,7 +606,7 @@ public sealed partial class MainWindow : Window
             };
             if (mono)
             {
-                val.FontFamily = new FontFamily("Consolas");
+                val.FontFamily = new FontFamily("Cascadia Mono,Consolas");
                 val.FontSize = 12;
             }
             // Double-click a value to copy it (parity with the Win32 list view).
@@ -525,16 +626,17 @@ public sealed partial class MainWindow : Window
             Background = ThemeBrush("CardBackgroundFillColorDefaultBrush"),
             BorderBrush = ThemeBrush("CardStrokeColorDefaultBrush"),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(14, 10, 14, 12),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16, 12, 16, 14),
         };
     }
 
-    private void AddSection(StackPanel panel, string title, List<(string, string?, bool)> rows)
+    private void AddSection(StackPanel panel, string title, List<(string, string?, bool)> rows,
+        string? glyph = null)
     {
         if (rows.Any(r => !string.IsNullOrEmpty(r.Item2)))
         {
-            panel.Children.Add(SectionCard(title, rows));
+            panel.Children.Add(SectionCard(title, rows, glyph));
         }
     }
 
@@ -555,7 +657,7 @@ public sealed partial class MainWindow : Window
             ("MD5", img?.Md5, true),
             ("SHA-1", img?.Sha1, true),
             ("SHA-256", img?.Sha256 ?? _summary.Sha256, true),
-        });
+        }, "\uE7C3");
         if (_record?.Info is { } info)
         {
             AddSection(OverviewPanel, "Disc", new List<(string, string?, bool)>
@@ -563,7 +665,7 @@ public sealed partial class MainWindow : Window
                 ("System", info.System ?? _summary.System, false),
                 ("System ID", info.SystemIdentifier, false),
                 ("Disc type", info.DiscType, false),
-            });
+            }, "\uE958");
             if (info.Header is { IsEmpty: false } h)
             {
                 AddSection(OverviewPanel, "Header", new List<(string, string?, bool)>
@@ -575,7 +677,7 @@ public sealed partial class MainWindow : Window
                     ("Maker", h.MakerId, false),
                     ("Device", h.DeviceInfo, false),
                     ("Regions", h.Regions, false),
-                });
+                }, "\uE8A5");
             }
             if (info.Sfo is { IsEmpty: false } s)
             {
@@ -587,7 +689,7 @@ public sealed partial class MainWindow : Window
                     ("Category", s.Category, false),
                     ("Parental level", s.ParentalLevel, false),
                     ("System version", s.SystemVersion, false),
-                });
+                }, "\uE946");
             }
             if (info.Volume is { IsEmpty: false } v)
             {
@@ -599,7 +701,7 @@ public sealed partial class MainWindow : Window
                     ("Modified", Format.PrettyDate(v.ModificationDate), false),
                     ("Expires", Format.PrettyDate(v.ExpirationDate), false),
                     ("Effective", Format.PrettyDate(v.EffectiveDate), false),
-                });
+                }, "\uE8B7");
             }
             if (info.Exe is { } e)
             {
@@ -609,7 +711,7 @@ public sealed partial class MainWindow : Window
                     ("Date", Format.PrettyDate(e.Date), false),
                     ("Signing", e.SigningType, false),
                     ("Symbols", e.NumSymbols?.ToString(), false),
-                });
+                }, "\uE756");
             }
             if (info.AltExe is { } a)
             {
@@ -618,7 +720,7 @@ public sealed partial class MainWindow : Window
                     ("Filename", a.Filename, false),
                     ("Date", Format.PrettyDate(a.Date), false),
                     ("Decrypted MD5", a.Md5, true),
-                });
+                }, "\uE756");
             }
         }
         if (_record?.Composites is { } c)
@@ -630,13 +732,13 @@ public sealed partial class MainWindow : Window
                 ("Boot exe hash", c.HashExe, true),
                 ("Most recent file", c.MostRecentFile?.Path, false),
                 ("Incomplete files", c.IncompleteFiles is > 0 ? c.IncompleteFiles.ToString() : null, false),
-            });
+            }, "\uE943");
         }
         AddSection(OverviewPanel, "Structure", new List<(string, string?, bool)>
         {
             ("Files", (_record?.Structural?.FileCount ?? _summary.FileCount).ToString(), false),
             ("Total size", Format.HumanSize(_record?.Structural?.TotalSize ?? _summary.TotalSize), false),
-        });
+        }, "\uE8B7");
     }
 
     private void BuildSelectionPanel(DiscNodeVm? vm)
@@ -664,7 +766,7 @@ public sealed partial class MainWindow : Window
             ("MD5", f.Md5, true),
             ("SHA-1", f.Sha1, true),
             ("SHA-256", f.Sha256, true),
-        }));
+        }, vm.Glyph));
     }
 
     private void FsTree_ItemInvoked(TreeView sender, TreeViewItemInvokedEventArgs args)
@@ -735,19 +837,34 @@ public sealed partial class MainWindow : Window
             {
                 continue;
             }
-            AssetsPanel.Children.Add(new TextBlock
+            var header = new StackPanel
             {
-                Text = $"{AssetKindTitle(kind)} ({group.Count})",
-                Style = NamedStyle("BodyStrongTextBlockStyle"),
-                Margin = new Thickness(0, 8, 0, 2),
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Margin = new Thickness(2, 10, 0, 4),
+            };
+            header.Children.Add(new FontIcon
+            {
+                Glyph = AssetKindGlyph(kind),
+                FontSize = 14,
+                Foreground = ThemeBrush("AccentTextFillColorPrimaryBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
             });
+            header.Children.Add(new TextBlock
+            {
+                Text = AssetKindTitle(kind),
+                Style = NamedStyle("BodyStrongTextBlockStyle"),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            header.Children.Add(MakeBadge(group.Count.ToString()));
+            AssetsPanel.Children.Add(header);
             if (kind == "image")
             {
                 var grid = new VariableSizedWrapGrid
                 {
                     Orientation = Orientation.Horizontal,
-                    ItemWidth = 156,
-                    ItemHeight = 156,
+                    ItemWidth = 164,
+                    ItemHeight = 158,
                 };
                 foreach (var asset in group)
                 {
@@ -757,17 +874,67 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                foreach (var asset in group)
-                {
-                    AssetsPanel.Children.Add(MakeAssetRow(asset));
-                }
+                AssetsPanel.Children.Add(MakeRowCard(group.Select(MakeAssetRow)));
             }
         }
     }
 
+    /// Settings-style group card: rows separated by hairlines inside one
+    /// rounded surface, instead of loose buttons floating on the page.
+    private FrameworkElement MakeRowCard(IEnumerable<UIElement> rows)
+    {
+        var list = new StackPanel();
+        var first = true;
+        foreach (var row in rows)
+        {
+            if (!first)
+            {
+                list.Children.Add(new Border
+                {
+                    Height = 1,
+                    Background = ThemeBrush("DividerStrokeColorDefaultBrush"),
+                    Margin = new Thickness(40, 0, 0, 0),
+                });
+            }
+            first = false;
+            list.Children.Add(row);
+        }
+        return new Border
+        {
+            Child = list,
+            Background = ThemeBrush("CardBackgroundFillColorDefaultBrush"),
+            BorderBrush = ThemeBrush("CardStrokeColorDefaultBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(4),
+        };
+    }
+
     private UIElement MakeThumbTile(AssetInfo asset)
     {
-        var img = new Image { Stretch = Stretch.Uniform, MaxHeight = 104 };
+        // Gallery look: the image fills a rounded rect (center-cropped), with
+        // a subtle placeholder behind it until (or unless) the decode lands.
+        var brush = new ImageBrush { Stretch = Stretch.UniformToFill };
+        var thumb = new Grid { Height = 106 };
+        thumb.Children.Add(new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Background = ThemeBrush("ControlFillColorSecondaryBrush"),
+        });
+        thumb.Children.Add(new FontIcon
+        {
+            Glyph = "\uE91B",
+            FontSize = 20,
+            Foreground = ThemeBrush("TextFillColorTertiaryBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        thumb.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle
+        {
+            RadiusX = 6,
+            RadiusY = 6,
+            Fill = brush,
+        });
         var name = new TextBlock
         {
             Text = Format.LastComponent(asset.Path),
@@ -775,10 +942,10 @@ public sealed partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Center,
         };
-        var panel = new Grid { RowSpacing = 4 };
+        var panel = new Grid { RowSpacing = 5 };
         panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        panel.Children.Add(img);
+        panel.Children.Add(thumb);
         Grid.SetRow(name, 1);
         panel.Children.Add(name);
         var button = new Button
@@ -789,12 +956,12 @@ public sealed partial class MainWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Stretch,
             Margin = new Thickness(0, 0, 8, 8),
-            Padding = new Thickness(6),
+            Padding = new Thickness(5),
         };
         ToolTipService.SetToolTip(button, asset.Path);
         button.Click += (_, _) => OpenAsset(asset);
         button.ContextFlyout = MakeAssetMenu(asset);
-        LoadThumb(img, asset);
+        LoadThumb(brush, asset);
         return button;
     }
 
@@ -835,12 +1002,8 @@ public sealed partial class MainWindow : Window
         var col = 2;
         if (asset.BlobPath == null)
         {
-            var tag = MakeTag("not local");
-            if (tag is Border b)
-            {
-                b.VerticalAlignment = VerticalAlignment.Center;
-            }
-            Grid.SetColumn((FrameworkElement)tag, col);
+            var tag = MakeBadge("not local", null, BadgeKind.Caution);
+            Grid.SetColumn(tag, col);
             row.Children.Add(tag);
         }
         col++;
@@ -904,7 +1067,7 @@ public sealed partial class MainWindow : Window
         return menu;
     }
 
-    private async void LoadThumb(Image target, AssetInfo asset)
+    private async void LoadThumb(ImageBrush target, AssetInfo asset)
     {
         if (asset.BlobPath == null)
         {
@@ -922,11 +1085,11 @@ public sealed partial class MainWindow : Window
             await stream.WriteAsync(bytes.AsBuffer());
             stream.Seek(0);
             await bmp.SetSourceAsync(stream);
-            target.Source = bmp;
+            target.ImageSource = bmp;
         }
         catch
         {
-            // Undecodable image: the tile stays blank, opening still works.
+            // Undecodable image: the placeholder tile stays, opening still works.
         }
     }
 
@@ -1086,7 +1249,7 @@ public sealed partial class MainWindow : Window
         var block = new TextBlock
         {
             Text = text,
-            FontFamily = new FontFamily("Consolas"),
+            FontFamily = new FontFamily("Cascadia Mono,Consolas"),
             FontSize = 12,
             IsTextSelectionEnabled = true,
         };
@@ -1325,7 +1488,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void SearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
+    private async void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args) =>
         await RefreshLibraryAsync();
 
     private async void SystemFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1428,16 +1591,21 @@ public sealed partial class MainWindow : Window
         }
         foreach (var (title, neighbors) in _similarity.Sections)
         {
-            SimilarPanel.Children.Add(new TextBlock
+            var header = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Margin = new Thickness(2, 8, 0, 4),
+            };
+            header.Children.Add(new TextBlock
             {
                 Text = title,
                 Style = NamedStyle("BodyStrongTextBlockStyle"),
-                Margin = new Thickness(0, 6, 0, 2),
+                VerticalAlignment = VerticalAlignment.Center,
             });
-            foreach (var n in neighbors)
-            {
-                SimilarPanel.Children.Add(MakeNeighborRow(n));
-            }
+            header.Children.Add(MakeBadge(neighbors.Count.ToString()));
+            SimilarPanel.Children.Add(header);
+            SimilarPanel.Children.Add(MakeRowCard(neighbors.Select(MakeNeighborRow)));
         }
     }
 
@@ -1457,7 +1625,7 @@ public sealed partial class MainWindow : Window
         names.Children.Add(new TextBlock
         {
             Text = neighbor.Sha256,
-            FontFamily = new FontFamily("Consolas"),
+            FontFamily = new FontFamily("Cascadia Mono,Consolas"),
             FontSize = 11,
             Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -1466,12 +1634,8 @@ public sealed partial class MainWindow : Window
 
         if (neighbor.System is { } system)
         {
-            var tag = MakeTag(system);
-            if (tag is Border b)
-            {
-                b.VerticalAlignment = VerticalAlignment.Center;
-            }
-            Grid.SetColumn((FrameworkElement)tag, 1);
+            var tag = MakeBadge(system, null, BadgeKind.Accent);
+            Grid.SetColumn(tag, 1);
             row.Children.Add(tag);
         }
         if (neighbor.ScoreText is { } score)
@@ -1479,7 +1643,7 @@ public sealed partial class MainWindow : Window
             var scoreBlock = new TextBlock
             {
                 Text = score,
-                FontFamily = new FontFamily("Consolas"),
+                FontFamily = new FontFamily("Cascadia Mono,Consolas"),
                 FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = ThemeBrush("AccentTextFillColorPrimaryBrush"),
@@ -1652,7 +1816,7 @@ public sealed partial class MainWindow : Window
         var text = new TextBlock
         {
             Text = message,
-            FontFamily = new FontFamily("Consolas"),
+            FontFamily = new FontFamily("Cascadia Mono,Consolas"),
             FontSize = 12,
             IsTextSelectionEnabled = true,
             TextWrapping = TextWrapping.Wrap,
