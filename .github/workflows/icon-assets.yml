@@ -1,0 +1,40 @@
+name: Icon assets
+
+# Compiles macos/icon/Prism.icon (Icon Composer document) into an Assets.car
+# holding the macOS 26 Liquid Glass icon. Needs Xcode 26's actool, which the
+# dev machines don't have yet. Download the artifact and commit it as
+# macos/icon/Assets.car. Runs when the icon document changes (the car should
+# be regenerated then) or on manual dispatch.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - macos/icon/Prism.icon/**
+      - .github/workflows/icon-assets.yml
+
+jobs:
+  compile-icon:
+    name: compile Prism.icon with actool
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: macos/icon
+      - name: actool compile + verify
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          mkdir -p out
+          xcrun actool macos/icon/Prism.icon --compile out \
+            --output-format human-readable-text --notices --warnings --errors \
+            --app-icon Prism --include-all-app-icons \
+            --enable-on-demand-resources NO --development-region en \
+            --target-device mac --platform macosx \
+            --minimum-deployment-target 26.0 \
+            --output-partial-info-plist out/partial.plist
+          xcrun assetutil --info out/Assets.car
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prism-assets-car
+          path: out/Assets.car
+          if-no-files-found: error
