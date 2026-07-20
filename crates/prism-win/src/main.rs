@@ -313,6 +313,9 @@ mod app {
         exe.exists().then_some(exe)
     }
 
+    /// Icon resource 1, embedded from prism.ico by build.rs via prism.rc.
+    const APP_ICON_ID: PCWSTR = PCWSTR(1 as *const u16);
+
     pub fn run() -> Result<()> {
         unsafe {
             // Apartment-threaded COM for the IFileDialog folder picker.
@@ -332,6 +335,7 @@ mod app {
                 hInstance: hinstance.into(),
                 lpszClassName: class_name,
                 hCursor: LoadCursorW(None, IDC_ARROW)?,
+                hIcon: LoadIconW(hinstance, APP_ICON_ID).unwrap_or_default(),
                 // COLOR_WINDOW (5) + 1, the conventional window-background brush.
                 hbrBackground: HBRUSH(6 as *mut core::ffi::c_void),
                 ..Default::default()
@@ -1530,6 +1534,7 @@ mod app {
             hInstance: hinstance.into(),
             lpszClassName: class,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hIcon: LoadIconW(hinstance, APP_ICON_ID).unwrap_or_default(),
             hbrBackground: HBRUSH(6 as *mut core::ffi::c_void),
             ..Default::default()
         };
@@ -2289,6 +2294,7 @@ mod app {
             hInstance: hinstance.into(),
             lpszClassName: class,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hIcon: LoadIconW(hinstance, APP_ICON_ID).unwrap_or_default(),
             hbrBackground: HBRUSH(6 as *mut core::ffi::c_void),
             ..Default::default()
         };
