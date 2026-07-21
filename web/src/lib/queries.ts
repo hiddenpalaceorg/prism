@@ -675,6 +675,45 @@ export async function getBuildAssets(pool: Pool, sha256: string): Promise<BuildA
   return r.rows as BuildAsset[];
 }
 
+/** An asset in the game-wide combined gallery: `path` is namespaced as
+ *  "/<build name>/<path within the build>" so paths stay unique across the
+ *  game's builds and the viewer title shows which build a file came from. */
+export interface GameAsset extends BuildAsset {
+  build_sha256: string;
+  build_name: string;
+  /** The file's own timestamp ("YYYY-MM-DD HH:MM:SS"), for the month timeline. */
+  file_date: string | null;
+}
+
+/// Every visible build's assets for one game, builds in the game page's
+/// order (oldest first), paths namespaced by build name. Public surface —
+/// private builds stay hidden (visibleSql). Two builds sharing a display
+/// name get the second's short sha appended so namespaces never collide.
+export async function getGameAssets(pool: Pool, gameId: number, includePrivate = false): Promise<GameAsset[]> {
+  const r = await pool.query(
+    `SELECT b.sha256 AS build_sha256, b.name AS build_name,
+            a.path, a.sha256, a.size::float8 AS size, a.mime, a.kind, a.file_date
+     FROM build_asset a JOIN builds b ON b.sha256 = a.build_sha256
+     WHERE b.game_id=$1 AND ${includePrivate ? "TRUE" : visibleSql("b")}
+     ORDER BY b.build_date NULLS LAST, lower(b.name), a.path`,
+    [gameId]
+  );
+  const rows = r.rows as GameAsset[];
+  const nsBySha = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const a of rows) {
+    if (!nsBySha.has(a.build_sha256)) {
+      const ns = taken.has(a.build_name) ? `${a.build_name} (${a.build_sha256.slice(0, 10)})` : a.build_name;
+      taken.add(ns);
+      nsBySha.set(a.build_sha256, ns);
+    }
+  }
+  return rows.map((a) => ({
+    ...a,
+    path: `/${nsBySha.get(a.build_sha256)}/${a.path.replace(/^\/+/, "")}`,
+  }));
+}
+
 /** One attached source repository of a build (see db build_repo; the bytes —
  *  manifest + git blobs — live in the asset store). */
 export interface BuildRepoRow {
@@ -861,10 +900,12 @@ export async function getGameBySlug(pool: Pool, slug: string): Promise<GameRow |
 }
 
 /// All visible builds of a game, oldest prototype first (missing dates last).
-/// Public surface — private builds stay hidden (visibleSql).
+/// The game pages render per-request (no shared cache), so moderators pass
+/// includePrivate and see private builds marked via the `private` field.
 export async function getGameBuilds(pool: Pool, gameId: number, includePrivate = false): Promise<BuildListItem[]> {
   const r = await pool.query(
-    `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot
+    `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot,
+            (private OR EXISTS (SELECT 1 FROM private_lots _pl WHERE _pl.lot = builds.lot)) AS private
      FROM builds WHERE game_id=$1 AND ${includePrivate ? "TRUE" : visibleSql("builds")}
      ORDER BY build_date NULLS LAST, lower(name)`,
     [gameId]
@@ -891,6 +932,17 @@ async function ensureGameSlug(pool: Pool, row: GameRow): Promise<GameRow> {
   return { ...row, slug: (u2.rows[0]?.slug as string) ?? row.slug };
 }
 
+/** Get-or-create a game by (name, system), slug filled. */
+export async function upsertGame(pool: Pool, name: string, system = ""): Promise<GameRow> {
+  const g = await pool.query(
+    `INSERT INTO games(name, system) VALUES ($1, $2)
+     ON CONFLICT (name, system) DO UPDATE SET name=excluded.name
+     RETURNING id::int AS id, name, system, slug`,
+    [name, system]
+  );
+  return ensureGameSlug(pool, g.rows[0] as GameRow);
+}
+
 /// Moderator game assignment: null clears; a (name, system) upserts into
 /// games (so typing a new title creates it) and points the build at it.
 /// Returns the resulting game, or undefined when the build doesn't exist.
@@ -904,15 +956,41 @@ export async function setBuildGame(
     const r = await pool.query("UPDATE builds SET game_id=NULL WHERE sha256=$1 RETURNING sha256", [sha256]);
     return r.rows.length ? null : undefined;
   }
-  const g = await pool.query(
-    `INSERT INTO games(name, system) VALUES ($1, $2)
-     ON CONFLICT (name, system) DO UPDATE SET name=excluded.name
-     RETURNING id::int AS id, name, system, slug`,
-    [game, system]
-  );
-  const row = await ensureGameSlug(pool, g.rows[0] as GameRow);
+  const row = await upsertGame(pool, game, system);
   const r = await pool.query("UPDATE builds SET game_id=$2 WHERE sha256=$1 RETURNING sha256", [sha256, row.id]);
   return r.rows.length ? row : undefined;
+}
+
+/// Bulk moderator edit over a set of builds: assign/clear game and/or move
+/// between lots in one statement each. Returns the affected builds (sha256 +
+/// name, for page revalidation) and the game when one was assigned.
+export async function bulkUpdateBuilds(
+  pool: Pool,
+  sha256s: string[],
+  fields: { game?: string | null; gameSystem?: string; lot?: string | null }
+): Promise<{ updated: { sha256: string; name: string }[]; game: GameRow | null }> {
+  let game: GameRow | null = null;
+  const sets: string[] = [];
+  const params: unknown[] = [sha256s];
+  if (fields.game !== undefined) {
+    if (fields.game === null) {
+      sets.push("game_id=NULL");
+    } else {
+      game = await upsertGame(pool, fields.game, fields.gameSystem ?? "");
+      params.push(game.id);
+      sets.push(`game_id=$${params.length}`);
+    }
+  }
+  if (fields.lot !== undefined) {
+    params.push(fields.lot);
+    sets.push(`lot=$${params.length}`);
+  }
+  if (!sets.length) throw new Error("bulkUpdateBuilds: no fields to update");
+  const r = await pool.query(
+    `UPDATE builds SET ${sets.join(", ")} WHERE sha256 = ANY($1::text[]) RETURNING sha256, name`,
+    params
+  );
+  return { updated: r.rows as { sha256: string; name: string }[], game };
 }
 
 /** Whether a lot is hidden from non-moderators. */

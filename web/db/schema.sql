@@ -99,6 +99,7 @@ CREATE TABLE build_asset (
     size         BIGINT NOT NULL,         -- stored blob size (a head snippet's, not the file's)
     mime         TEXT NOT NULL,           -- as served; text is always text/plain
     kind         TEXT NOT NULL,           -- image|audio|video|source|text|binary
+    file_date    TEXT,                    -- the file's own timestamp from the record contents (month timeline)
     PRIMARY KEY (build_sha256, path)
 );
 CREATE INDEX idx_build_asset_sha256 ON build_asset(sha256);

@@ -1,10 +1,19 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { getModeratorFromHeaders } from "@/lib/auth";
 import { getPool } from "@/lib/db";
-import { getGameBySlug, getGameBuilds } from "@/lib/queries";
-import { humanSize } from "@/lib/meta";
-import { buildHref } from "@/lib/slug";
+import { getGameAssets, getGameBySlug, getGameBuilds } from "@/lib/queries";
+import { assetExcerpts, assetMonths, assetTotals, orderAssets } from "@/lib/assets";
+import AssetGallery from "../../builds/[buildId]/AssetGallery";
+import AssetViewerHost from "../../builds/[buildId]/AssetViewerHost";
+import GameBuilds from "./GameBuilds";
+
+// The timeline shows at most this many items per kind per month; the rest
+// live on /games/<slug>/assets. Excerpt reads stay bounded regardless.
+const MONTH_PREVIEW_PER_KIND = 200;
+const MAX_EXCERPT_READS = 200;
 
 export const runtime = "nodejs";
 // Assignments change through moderation, not ingest; render fresh each time
@@ -19,11 +28,12 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { slug } = await params;
   const game = await getGameBySlug(getPool(), decodeURIComponent(slug));
   if (!game) return {};
-  const title = game.system ? `${game.name} (${game.system})` : game.name;
-  return { title: `${title} · Hidden Palace` };
+  return { title: game.system ? `${game.name} (${game.system})` : game.name };
 }
 
-// /games/<slug> — every visible build of one game, oldest first. The slug is
+// /games/<slug> — every visible build of one game, oldest first, plus one
+// combined asset gallery across all of those builds (paths namespaced by
+// build name, so the lightbox shows where each file came from). The slug is
 // <name>--<system> (name alone when the system is unknown); private builds
 // stay hidden, exactly like the /builds browser.
 export default async function GamePage({ params }: Params) {
@@ -31,46 +41,71 @@ export default async function GamePage({ params }: Params) {
   const pool = getPool();
   const game = await getGameBySlug(pool, decodeURIComponent(slug));
   if (!game) notFound();
+  const href = `/games/${game.slug}`;
 
-  const builds = await getGameBuilds(pool, game.id);
+  // The page renders per-request (force-dynamic), so a wiki-moderator's
+  // cookies reveal private builds here — badged, exactly like /builds.
+  const includePrivate = !!(await getModeratorFromHeaders(await headers()));
+  const [builds, assets] = await Promise.all([
+    getGameBuilds(pool, game.id, includePrivate),
+    getGameAssets(pool, game.id, includePrivate),
+  ]);
+  // Timeline: one bucket per month of the assets' own file dates. The viewer
+  // steps through the whole timeline in order; each month's gallery shows a
+  // capped preview, with the full set on /games/<slug>/assets.
+  const months = assetMonths(assets).map((m) => ({
+    ...m,
+    preview: orderAssets(m.assets, MONTH_PREVIEW_PER_KIND),
+    totals: assetTotals(m.assets),
+  }));
+  // The lightbox steps through exactly what the galleries show, so the
+  // serialized asset list stays bounded with the same per-kind cap.
+  const ordered = months.flatMap((m) => m.preview);
+  const excerpts = await assetExcerpts(ordered, MAX_EXCERPT_READS);
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-10 sm:px-8">
-      <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight">{game.name}</h1>
-      <div className="mt-2 flex flex-wrap gap-2 text-xs">
-        {game.system && (
-          <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-            {game.system}
-          </span>
-        )}
-        <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200">
-          {builds.length} {builds.length === 1 ? "build" : "builds"}
-        </span>
-      </div>
+    <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
+      <AssetViewerHost assets={ordered} buildHref={href} returnHref={href}>
+        <div className="mx-auto max-w-4xl">
+          <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight">{game.name}</h1>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+            {game.system && (
+              <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                {game.system}
+              </span>
+            )}
+            <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200">
+              {builds.length} {builds.length === 1 ? "build" : "builds"}
+            </span>
+          </div>
 
-      {builds.length === 0 ? (
-        <p className="mt-8 text-sm text-neutral-500">No public builds for this game.</p>
-      ) : (
-        <ul className="mt-6 divide-y divide-neutral-200 dark:divide-neutral-800">
-          {builds.map((b) => (
-            <li key={b.sha256}>
-              <Link
-                href={buildHref(b.sha256, b.name)}
-                className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-2.5 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-              >
-                <span className="min-w-0 flex-1 break-words font-medium">{b.name}</span>
-                <span className="shrink-0 text-xs tabular-nums text-neutral-500">
-                  {b.build_date ? b.build_date.slice(0, 10) : "—"}
-                </span>
-                <span className="w-20 shrink-0 text-right text-xs tabular-nums text-neutral-500">
-                  {humanSize(b.total_size)}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
+          <GameBuilds builds={builds} />
+        </div>
+
+        {assets.length > 0 && (
+          <section className="mt-10">
+            <h2 className="text-lg font-medium">Assets</h2>
+            <p className="mt-1 text-xs text-neutral-500">
+              Extracted from every build of this game, by the files&apos; own dates.
+            </p>
+            {months.map((m) => (
+              <div key={m.key} className="mt-8 first:mt-4">
+                {/* Sticky per-month header; the page background keeps the
+                    scrolled cards from showing through. Below the lightbox
+                    overlay, above the cards. */}
+                <h3 className="sticky top-0 z-10 border-b border-neutral-200 bg-[var(--background)] pb-1 pt-2 text-sm font-semibold dark:border-neutral-800">
+                  {m.label}
+                  <span className="ml-2 font-normal text-neutral-400">
+                    {m.assets.length} {m.assets.length === 1 ? "file" : "files"}
+                  </span>
+                </h3>
+                <AssetGallery buildHref={href} assets={m.preview} totals={m.totals} excerpts={excerpts} />
+              </div>
+            ))}
+          </section>
+        )}
+      </AssetViewerHost>
     </main>
   );
 }

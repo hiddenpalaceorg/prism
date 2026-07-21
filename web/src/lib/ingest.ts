@@ -5,7 +5,23 @@
 import type { Pool } from "pg";
 import { hexToId63, toSigned64, lshBands, flattenFiles, arrayLit, parseU64, semanticDoc } from "./fingerprint";
 import { embed, toPgVector } from "./embed";
-import type { BuildRecord } from "./types";
+import type { BuildRecord, Node } from "./types";
+
+/** path ("/DIR/FILE", nested archives included) -> the file's own timestamp,
+ *  from the record's contents tree. Feeds build_asset.file_date (the game
+ *  pages' month timeline); scripts/backfill-asset-dates.ts reuses it. */
+export function assetFileDates(nodes: Node[]): Map<string, string> {
+  const map = new Map<string, string>();
+  const walk = (ns: Node[], prefix: string) => {
+    for (const n of ns) {
+      const p = `${prefix}/${n.name}`;
+      if (n.date) map.set(p, n.date);
+      if (n.type === "dir") walk(n.children, p);
+    }
+  };
+  walk(nodes, "");
+  return map;
+}
 
 /** Anything with a pg-style `query` (Pool, Client, or PoolClient). */
 export interface Queryable {
@@ -166,17 +182,18 @@ export async function ingestRecord(
         typeof a.kind === "string" &&
         Number.isFinite(a.size)
     );
+    const fileDates = assetFileDates(rec.contents);
     for (let off = 0; off < assets.length; off += ROWS_PER_INSERT) {
       const chunk = assets.slice(off, off + ROWS_PER_INSERT);
       const rows: string[] = [];
       const params: unknown[] = [];
       for (const a of chunk) {
         const i = params.length;
-        rows.push(`($${i + 1},$${i + 2},$${i + 3},$${i + 4},$${i + 5},$${i + 6})`);
-        params.push(sha, a.path, a.sha256, a.size, a.mime, a.kind);
+        rows.push(`($${i + 1},$${i + 2},$${i + 3},$${i + 4},$${i + 5},$${i + 6},$${i + 7})`);
+        params.push(sha, a.path, a.sha256, a.size, a.mime, a.kind, fileDates.get(a.path) ?? null);
       }
       await db.query(
-        `INSERT INTO build_asset (build_sha256,path,sha256,size,mime,kind) VALUES ${rows.join(",")}
+        `INSERT INTO build_asset (build_sha256,path,sha256,size,mime,kind,file_date) VALUES ${rows.join(",")}
          ON CONFLICT (build_sha256,path) DO NOTHING`,
         params
       );

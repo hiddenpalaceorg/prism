@@ -10,6 +10,7 @@
 // which deep-links the asset in the URL; audio and video play inline, so for
 // those it's the filename that opens the viewer.
 
+import { useState } from "react";
 import Link from "next/link";
 import { assetUrl, humanSize, imageSrc, VideoPlayer, type ViewableAsset } from "./AssetViewer";
 import { useOpenAsset } from "./AssetViewerHost";
@@ -48,6 +49,9 @@ export default function AssetGallery({
   const openAsset = useOpenAsset();
   const open = (a: ViewableAsset) => openAsset(a.path);
   const allHref = `${buildHref}/assets`;
+  // The unidentified-bytes section is noise most of the time: collapsed to a
+  // one-line count until asked for.
+  const [showBinary, setShowBinary] = useState(false);
 
   return (
     <>
@@ -56,6 +60,18 @@ export default function AssetGallery({
         if (group.length === 0) return null;
         const total = totals[kind] ?? group.length;
         const more = total - group.length;
+        if (kind === "binary" && !showBinary) {
+          return (
+            <div key={kind} className="mt-5 first:mt-3">
+              <button
+                onClick={() => setShowBinary(true)}
+                className="text-xs text-neutral-400 hover:text-sky-700 hover:underline dark:hover:text-sky-400"
+              >
+                {total} unidentified file{total === 1 ? "" : "s"}…
+              </button>
+            </div>
+          );
+        }
         return (
           <div key={kind} className="mt-5 first:mt-3">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
@@ -160,8 +176,13 @@ export default function AssetGallery({
                       </span>
                       <span className="shrink-0 text-[10px] text-neutral-400">{humanSize(a.size)}</span>
                     </div>
-                    {/* Binary cards preview the head snippet as spaced hex pairs. */}
-                    <pre className="mt-1.5 line-clamp-4 whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-neutral-500">
+                    {/* Binary cards preview the head snippet as spaced hex
+                        pairs, elided to a single line; text wraps to a few. */}
+                    <pre
+                      className={`mt-1.5 font-mono text-[11px] leading-4 text-neutral-500 ${
+                        kind === "binary" ? "truncate" : "line-clamp-4 whitespace-pre-wrap break-words"
+                      }`}
+                    >
                       {kind === "source" ? (
                         <SourceCode path={a.path} text={excerpts[a.path] ?? ""} />
                       ) : (

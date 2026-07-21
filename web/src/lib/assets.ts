@@ -43,6 +43,34 @@ export function orderAssets<T extends { kind: string }>(
   return ASSET_KIND_ORDER.flatMap((k) => assets.filter((a) => a.kind === k).slice(0, cap(k)));
 }
 
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** Month buckets for the game pages' asset timeline: chronological
+ *  "YYYY-MM" keys (labelled "March 2003"), assets without a parseable
+ *  file date last under "Undated". Order within a bucket is preserved. */
+export function assetMonths<T extends { file_date: string | null }>(
+  assets: T[]
+): { key: string; label: string; assets: T[] }[] {
+  const by = new Map<string, T[]>();
+  for (const a of assets) {
+    const m = a.file_date?.match(/^(\d{4})-(\d{2})/);
+    const key = m && Number(m[2]) >= 1 && Number(m[2]) <= 12 ? `${m[1]}-${m[2]}` : "undated";
+    let bucket = by.get(key);
+    if (!bucket) by.set(key, (bucket = []));
+    bucket.push(a);
+  }
+  const keys = [...by.keys()].filter((k) => k !== "undated").sort();
+  if (by.has("undated")) keys.push("undated");
+  return keys.map((key) => ({
+    key,
+    label: key === "undated" ? "Undated" : `${MONTH_NAMES[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`,
+    assets: by.get(key)!,
+  }));
+}
+
 /** Leading bytes of a blob, or null when it is missing from the store. */
 export async function readAssetBytes(sha256: string, maxBytes = 2048): Promise<Buffer | null> {
   return readBlobHead(sha256, maxBytes);
