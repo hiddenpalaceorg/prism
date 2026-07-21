@@ -16,15 +16,17 @@ export const runtime = "nodejs";
 const CACHE = "public, max-age=3600";
 
 // Expanding folder after folder of the same build would otherwise re-fetch and
-// re-parse the full record (8MB+ for the biggest builds) per click.
-const getTree = unstable_cache(
-  async (sha256: string): Promise<TreeNode[] | null> => {
-    const build = await getBuild(getPool(), sha256);
-    return build ? buildTree(build.record.contents) : null;
-  },
-  ["build-tree"],
-  { revalidate: 3600 }
-);
+// re-parse the full record (8MB+ for the biggest builds) per click. Tagged
+// per build so a re-ingest can revalidate one build's tree (see /api/refresh).
+const getTree = (sha256: string) =>
+  unstable_cache(
+    async (): Promise<TreeNode[] | null> => {
+      const build = await getBuild(getPool(), sha256);
+      return build ? buildTree(build.record.contents) : null;
+    },
+    ["build-tree", sha256],
+    { revalidate: 3600, tags: [`build-tree:${sha256}`] }
+  )();
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await ctx.params;
