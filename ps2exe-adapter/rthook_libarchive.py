@@ -12,14 +12,16 @@
 #
 # Setting $LIBARCHIVE here, before the first import, makes the load deterministic and
 # sidesteps the swallowed-exception dance entirely. The spec bundles the matching DLL
-# at lib/libarchive/<osdir>/ under sys._MEIPASS.
+# at lib/libarchive/<osdir>/ under sys._MEIPASS. The bundled library is preferred
+# unconditionally: an inherited $LIBARCHIVE must not be able to redirect a frozen
+# build to an arbitrary native library.
 import os
 import sys
 
 # macOS is intentionally absent: it ships a native libarchive that libarchive-c loads via
 # find_library('archive'), so no env var is needed — and the spec doesn't bundle one there
 # (the vendored macosx dylib is x86_64-only and would crash on Apple Silicon).
-if hasattr(sys, "_MEIPASS") and not os.environ.get("LIBARCHIVE"):
+if hasattr(sys, "_MEIPASS"):
     if sys.platform == "win32":
         _osdir = "win64" if sys.maxsize > 2**32 else "win32"
         _oslib = "libarchive.dll"
