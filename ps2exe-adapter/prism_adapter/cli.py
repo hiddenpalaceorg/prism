@@ -32,6 +32,10 @@ _CDC_MAX = 256 * 1024
 _CHUNK_FLUSH = 8 * 1024 * 1024
 _HASH63 = (1 << 63) - 1
 
+# Streaming read size for whole-file/asset reads (a tuning knob, not a format
+# constant).
+_READ_CHUNK = 64 * 1024
+
 # Byte-shingle resemblance — One Permutation Hashing over w-byte shingles.
 # Where exact CDC chunk hashes collapse under many small *scattered* edits, this stays
 # high: each edit only perturbs the ~w shingles spanning it. A new RawBytes component
@@ -547,6 +551,23 @@ def _close_handle(fh):
         fh.__exit__(None, None, None) if hasattr(fh, "__exit__") else fh.close()
 
 
+# ps2exe's open_file returns handles with inconsistent lifecycles: some are
+# context managers, some are bare file objects. This normalizes the open →
+# maybe-enter → read → suppress-exit dance that every reader of a member would
+# otherwise hand-copy.
+@contextlib.contextmanager
+def _member_handle(reader, entry):
+    fh = reader.open_file(entry)
+    is_ctx = hasattr(fh, "__enter__")
+    if is_ctx:
+        fh.__enter__()
+    try:
+        yield fh
+    finally:
+        with contextlib.suppress(Exception):
+            fh.__exit__(None, None, None) if is_ctx else fh.close()
+
+
 def _close_member_archive(child):
     with contextlib.suppress(Exception):
         child.close()
@@ -1028,18 +1049,11 @@ def _read_capped(reader, f, cap):
     the directory record understated must not smuggle an oversized asset in)."""
     buf = bytearray()
     try:
-        fh = reader.open_file(f)
-        is_ctx = hasattr(fh, "__enter__")
-        if is_ctx:
-            fh.__enter__()
-        try:
-            while chunk := fh.read(65536):
+        with _member_handle(reader, f) as fh:
+            while chunk := fh.read(_READ_CHUNK):
                 buf.extend(chunk)
                 if len(buf) > cap:
                     return None
-        finally:
-            with contextlib.suppress(Exception):
-                fh.__exit__(None, None, None) if is_ctx else fh.close()
     except Exception as e:  # noqa: BLE001
         logging.getLogger("prism-adapter").debug("asset read failed: %s", e)
         return None
@@ -1059,11 +1073,7 @@ def _stream_to_store(reader, f, out_dir, mime, cap):
     digest = hashlib.sha256()
     size = 0
     try:
-        fh = reader.open_file(f)
-        is_ctx = hasattr(fh, "__enter__")
-        if is_ctx:
-            fh.__enter__()
-        try:
+        with _member_handle(reader, f) as fh:
             head = fh.read(viewable.SNIFF_BYTES)
             if not head:
                 return None
@@ -1079,9 +1089,6 @@ def _stream_to_store(reader, f, out_dir, mime, cap):
                     digest.update(chunk)
                     spool.write(chunk)
                     chunk = fh.read(1 << 20)
-        finally:
-            with contextlib.suppress(Exception):
-                fh.__exit__(None, None, None) if is_ctx else fh.close()
         sha = digest.hexdigest()
         final = os.path.join(out_dir, sha[:2], sha)
         if not os.path.exists(final):
@@ -1101,16 +1108,9 @@ def _read_head(reader, f, n):
     unreadable or empty."""
     buf = bytearray()
     try:
-        fh = reader.open_file(f)
-        is_ctx = hasattr(fh, "__enter__")
-        if is_ctx:
-            fh.__enter__()
-        try:
-            while len(buf) < n and (chunk := fh.read(min(65536, n - len(buf)))):
+        with _member_handle(reader, f) as fh:
+            while len(buf) < n and (chunk := fh.read(min(_READ_CHUNK, n - len(buf)))):
                 buf.extend(chunk)
-        finally:
-            with contextlib.suppress(Exception):
-                fh.__exit__(None, None, None) if is_ctx else fh.close()
     except Exception as e:  # noqa: BLE001
         logging.getLogger("prism-adapter").debug("asset head read failed: %s", e)
         return None
@@ -1217,15 +1217,8 @@ _CUE_MAX_BYTES = 1 * 1024 * 1024
 
 
 def _read_entry(reader, entry, length=None):
-    fh = reader.open_file(entry)
-    is_ctx = hasattr(fh, "__enter__")
-    if is_ctx:
-        fh.__enter__()
-    try:
+    with _member_handle(reader, entry) as fh:
         return fh.read() if length is None else fh.read(length)
-    finally:
-        with contextlib.suppress(Exception):
-            fh.__exit__(None, None, None) if is_ctx else fh.close()
 
 
 _NATURAL_SPLIT = re.compile(r"(\d+)")
