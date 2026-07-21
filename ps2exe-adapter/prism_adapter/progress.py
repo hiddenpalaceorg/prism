@@ -89,7 +89,6 @@ class ProgressManager:
 
     def __init__(self):
         self._id = 0
-        self.counters = {}
 
     def _next_id(self):
         self._id += 1
