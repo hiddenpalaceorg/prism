@@ -4,7 +4,13 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
-import { assetStagingPath, blobExists, storeBlobFromFile } from "@/lib/blobstore";
+import {
+  assetStagingPath,
+  blobExists,
+  hasStagingHeadroom,
+  reapStaleAssetStaging,
+  storeBlobFromFile,
+} from "@/lib/blobstore";
 import { referencedAssets, MAX_BUILD_ASSET_BYTES } from "@/lib/submission-assets";
 import { rateLimitCheck, clientKey } from "@/lib/ratelimit";
 import { isSha256 } from "@/lib/validate";
@@ -65,6 +71,15 @@ export async function PUT(
     return Response.json({ error: "invalid offset" }, { status: 400 });
   }
   if (!request.body) return Response.json({ error: "missing body" }, { status: 400 });
+
+  // Reap abandoned staging, then refuse to grow it when the disk is low: the
+  // endpoint is unauthenticated, so a partial-upload flood must never fill the
+  // store out from under Postgres and the transcode caches. The reserve is kept
+  // regardless of how many distinct blobs are in flight.
+  await reapStaleAssetStaging();
+  if (!(await hasStagingHeadroom(claimed - offset))) {
+    return Response.json({ error: "insufficient storage" }, { status: 507 });
+  }
 
   // A non-zero offset must continue exactly where the staging file ends.
   const part = assetStagingPath(assetSha);

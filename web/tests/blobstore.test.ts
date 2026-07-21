@@ -1,17 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   assetBlobPath,
   blobExists,
   blobSize,
+  hasStagingHeadroom,
   missingBlobs,
   openBlobStream,
   readBlob,
   readBlobHead,
+  reapStaleAssetStaging,
   storeBlobBytes,
   storeBlobFromFile,
   withBlobFile,
@@ -93,6 +95,39 @@ test("withBlobFile hands the local blob path through and null when missing", asy
     return (await readFile(p)).toString();
   });
   assert.equal(got, "payload");
+});
+
+test("reapStaleAssetStaging drops old .part files, keeps fresh and media ones", async () => {
+  const dir = await tempStore();
+  const staging = join(dir, ".staging");
+  await mkdir(staging, { recursive: true });
+  const old = join(staging, `${SHA_A}.part`);
+  const fresh = join(staging, `${SHA_B}.part`);
+  const media = join(staging, "media-deadbeef.part");
+  for (const p of [old, fresh, media]) await writeFile(p, "x");
+  const stale = new Date(Date.now() - 48 * 3600_000);
+  await utimes(old, stale, stale);
+  await utimes(media, stale, stale); // stale but not ours to reap
+
+  await reapStaleAssetStaging();
+  assert.equal(existsSync(old), false); // reaped
+  assert.equal(existsSync(fresh), true); // too new
+  assert.equal(existsSync(media), true); // media sessions reap themselves
+});
+
+test("hasStagingHeadroom refuses below the configured reserve", async () => {
+  await tempStore();
+  const prev = process.env.ASSET_STORE_MIN_FREE_BYTES;
+  try {
+    process.env.ASSET_STORE_MIN_FREE_BYTES = "0";
+    assert.equal(await hasStagingHeadroom(0), true);
+    // A reserve larger than any real disk forces a refusal.
+    process.env.ASSET_STORE_MIN_FREE_BYTES = String(2 ** 62);
+    assert.equal(await hasStagingHeadroom(0), false);
+  } finally {
+    if (prev === undefined) delete process.env.ASSET_STORE_MIN_FREE_BYTES;
+    else process.env.ASSET_STORE_MIN_FREE_BYTES = prev;
+  }
 });
 
 test("readBlobHead of an empty blob answers empty, not missing", async () => {
