@@ -77,7 +77,6 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showingError = false
     @Published var libraryCount: UInt64 = 0
-    @Published var recent: [LibraryEntry] = []
 
     // Library browser (searchable + sortable list of every analyzed build).
     @Published var libraryResults: [LibraryEntry] = []
@@ -138,7 +137,6 @@ final class AppModel: ObservableObject {
 
     func refreshLibraryCount() {
         libraryCount = (try? engine?.librarySize()) ?? libraryCount
-        recent = (try? engine?.recentBuilds(limit: 25)) ?? recent
     }
 
     /// Build the engine, then load the systems filter + current result page.
@@ -173,12 +171,6 @@ final class AppModel: ObservableObject {
             librarySortDescending = !(column == .name || column == .system)
         }
         refreshLibrary()
-    }
-
-    /// Populate the recent list at launch (builds the engine lazily).
-    func loadRecentAtLaunch() {
-        guard recent.isEmpty, engine == nil else { return }
-        if let e = try? makeEngine() { recent = (try? e.recentBuilds(limit: 25)) ?? [] }
     }
 
     /// Reopen a stored build from cache (no re-analysis).
