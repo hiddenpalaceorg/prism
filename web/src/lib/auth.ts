@@ -13,7 +13,7 @@ export function moderationEnabled(): boolean {
 }
 
 /** Constant-time string compare (avoids timingSafeEqual's unequal-length throw). */
-function safeEqual(a: string | null | undefined, b: string): boolean {
+export function safeEqual(a: string | null | undefined, b: string): boolean {
   if (a == null) return false;
   const ab = Buffer.from(a, "utf8");
   const bb = Buffer.from(b, "utf8");
@@ -55,4 +55,17 @@ export async function getModeratorFromHeaders(h: Headers, method = "GET"): Promi
     return null;
   }
   return { name: user.name, via: "wiki" };
+}
+
+/** Gate a moderator-only route: null when the caller is a moderator, else the
+ *  error Response to return (401 when moderation is configured, 403 when it's
+ *  disabled entirely). Collapses the guard copy-pasted across the mod routes. */
+export async function requireModerator(request: NextRequest): Promise<Response | null> {
+  if (await getModerator(request)) return null;
+  return moderationEnabled()
+    ? Response.json({ error: "unauthorized" }, { status: 401 })
+    : Response.json(
+        { error: "moderation disabled (set MODERATION_TOKEN or WIKI_API_URL)" },
+        { status: 403 }
+      );
 }

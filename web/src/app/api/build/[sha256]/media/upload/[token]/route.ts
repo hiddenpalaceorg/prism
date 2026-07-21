@@ -1,7 +1,7 @@
 import fsp from "node:fs/promises";
 import type { NextRequest } from "next/server";
 import { storeBlobFromFile } from "@/lib/blobstore";
-import { getContributor, contributionTarget, revalidateBuildPages } from "@/lib/contrib";
+import { requireContributor, revalidateBuildPages } from "@/lib/contrib";
 import { getPool } from "@/lib/db";
 import { extractStill } from "@/lib/ffmpeg";
 import {
@@ -39,16 +39,10 @@ export async function PUT(
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
   if (!isMediaToken(token)) return Response.json({ error: "invalid token" }, { status: 400 });
 
-  const contributor = await getContributor(request);
-  if (!contributor) {
-    return Response.json({ error: "log in to the wiki to contribute" }, { status: 401 });
-  }
   const pool = getPool();
-  const target = await contributionTarget(pool, sha256);
-  if (!target) return Response.json({ error: "not found" }, { status: 404 });
-  if (!target.visible && !contributor.moderator) {
-    return Response.json({ error: "this build is not open for contributions" }, { status: 403 });
-  }
+  const gate = await requireContributor(request, pool, sha256);
+  if (!gate.ok) return gate.response;
+  const { target } = gate;
 
   const session = await readMediaSession(token);
   if (!session || session.build !== sha256) {

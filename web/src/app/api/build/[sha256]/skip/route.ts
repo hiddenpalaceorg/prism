@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { getModerator, moderationEnabled } from "@/lib/auth";
+import { requireModerator } from "@/lib/auth";
 import { contributionTarget, revalidateBuildPages } from "@/lib/contrib";
 import { getPool } from "@/lib/db";
 import { upsertSkip, type SkipFlags } from "@/lib/media";
@@ -13,11 +13,8 @@ export const dynamic = "force-dynamic";
 // to this build (its 0 in the /builds columns stops rendering orange).
 // Omitted fields keep their stored value.
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
-  if (!(await getModerator(request))) {
-    return moderationEnabled()
-      ? Response.json({ error: "unauthorized" }, { status: 401 })
-      : Response.json({ error: "moderation disabled (set MODERATION_TOKEN or WIKI_API_URL)" }, { status: 403 });
-  }
+  const denied = await requireModerator(request);
+  if (denied) return denied;
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
 

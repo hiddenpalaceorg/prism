@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
-import { Readable } from "node:stream";
 import type { NextRequest } from "next/server";
+import { getAssetMeta } from "@/lib/assets";
 import { readBlobHead } from "@/lib/blobstore";
-import { getPool } from "@/lib/db";
 import { ensureAudioTranscode } from "@/lib/ffmpeg";
+import { IMMUTABLE_CACHE, SANDBOX_CSP, contentDisposition, streamResponse } from "@/lib/http";
 import { parseRange } from "@/lib/range";
 import { isSha256 } from "@/lib/validate";
 import { wavBrowserPlayable } from "@/lib/wav";
@@ -20,18 +20,11 @@ export const runtime = "nodejs";
 // to 16-bit PCM WAV, cached on disk, and streamed with Range support. The URL
 // is content-addressed, so responses cache hard.
 
-const CACHE = "public, max-age=31536000, immutable";
-const CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
-
 export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
 
-  const r = await getPool().query(
-    "SELECT path, mime FROM build_asset WHERE sha256=$1 LIMIT 1",
-    [sha256]
-  );
-  const meta = r.rows[0] as { path: string; mime: string } | undefined;
+  const meta = await getAssetMeta(sha256);
   if (!meta) return Response.json({ error: "not found" }, { status: 404 });
 
   // Relative Location: request.url behind the reverse proxy is the internal
@@ -39,7 +32,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   const toRaw = () =>
     new Response(null, {
       status: 308,
-      headers: { Location: `/api/asset/${sha256}`, "Cache-Control": CACHE },
+      headers: { Location: `/api/asset/${sha256}`, "Cache-Control": IMMUTABLE_CACHE },
     });
 
   if (meta.mime !== "audio/wav") {
@@ -54,7 +47,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   if (request.headers.get("if-none-match") === `"${sha256}-audio"`) {
     return new Response(null, {
       status: 304,
-      headers: { "Cache-Control": CACHE, ETag: `"${sha256}-audio"` },
+      headers: { "Cache-Control": IMMUTABLE_CACHE, ETag: `"${sha256}-audio"` },
     });
   }
 
@@ -76,27 +69,18 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   const stat = await fsp.stat(audioPath);
 
   const name = meta.path.split("/").pop() || `${sha256}.wav`;
-  const asciiName = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   const headers: Record<string, string> = {
     "Content-Type": "audio/wav",
-    "Content-Disposition": `inline; filename="${asciiName}"`,
-    "Cache-Control": CACHE,
+    "Content-Disposition": contentDisposition(name, true),
+    "Cache-Control": IMMUTABLE_CACHE,
     ETag: `"${sha256}-audio"`,
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": CSP,
+    "Content-Security-Policy": SANDBOX_CSP,
     "Accept-Ranges": "bytes",
   };
 
   // Single-range support so <audio> can seek.
   const range = parseRange(request.headers.get("range"), stat.size);
-  if (range) {
-    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${stat.size}`;
-    headers["Content-Length"] = String(range.end - range.start + 1);
-    const stream = fs.createReadStream(audioPath, { start: range.start, end: range.end });
-    return new Response(Readable.toWeb(stream) as ReadableStream, { status: 206, headers });
-  }
-
-  headers["Content-Length"] = String(stat.size);
-  const stream = fs.createReadStream(audioPath);
-  return new Response(Readable.toWeb(stream) as ReadableStream, { status: 200, headers });
+  const stream = fs.createReadStream(audioPath, range ? { start: range.start, end: range.end } : {});
+  return streamResponse(stream, stat.size, range, headers);
 }

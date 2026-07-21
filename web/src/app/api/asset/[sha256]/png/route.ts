@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
+import { getAssetMeta } from "@/lib/assets";
 import { readBlob } from "@/lib/blobstore";
-import { getPool } from "@/lib/db";
 import { gsAvailable, gsRenderable, gsToPng } from "@/lib/gs";
+import { IMMUTABLE_CACHE, contentDisposition } from "@/lib/http";
 import { pngConvertible, toPng, WEB_SAFE_IMAGE } from "@/lib/imgpng";
 import { isSha256 } from "@/lib/validate";
 
@@ -13,8 +14,6 @@ export const runtime = "nodejs";
 // pages through Ghostscript when the server has it). Web-safe formats
 // redirect to the raw asset route; content-addressed, so responses cache hard.
 
-const CACHE = "public, max-age=31536000, immutable";
-
 // Bound what the in-process decoder will chew on (decoded size is capped
 // separately by the converters' MAX_PIXELS). Matches the adapter's
 // MAX_ASSET_SIZE so any stored image asset is convertible.
@@ -24,11 +23,7 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
 
-  const r = await getPool().query(
-    "SELECT path, mime, size::float8 AS size FROM build_asset WHERE sha256=$1 LIMIT 1",
-    [sha256]
-  );
-  const meta = r.rows[0] as { path: string; mime: string; size: number } | undefined;
+  const meta = await getAssetMeta(sha256);
   if (!meta) return Response.json({ error: "not found" }, { status: 404 });
 
   if (WEB_SAFE_IMAGE.test(meta.mime)) {
@@ -52,12 +47,11 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
   }
 
   const base = (meta.path.split("/").pop() || sha256).replace(/\.[^.]*$/, "");
-  const asciiName = base.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   return new Response(new Uint8Array(png), {
     headers: {
       "Content-Type": "image/png",
-      "Content-Disposition": `inline; filename="${asciiName}.png"`,
-      "Cache-Control": CACHE,
+      "Content-Disposition": contentDisposition(`${base}.png`, true),
+      "Cache-Control": IMMUTABLE_CACHE,
       ETag: `"${sha256}-png"`,
       "X-Content-Type-Options": "nosniff",
     },

@@ -36,6 +36,32 @@ export interface ContributionTarget {
   visible: boolean;
 }
 
+/** Gate a contribute-to-build route: the caller must be a logged-in contributor
+ *  and the build must exist and be visible (or the caller a moderator). Returns
+ *  the resolved contributor + target, or the error Response to return. Collapses
+ *  the 401/404/403 preamble copy-pasted across notes/media-upload routes. */
+export async function requireContributor(
+  request: NextRequest,
+  pool: Pool,
+  sha256: string
+): Promise<
+  | { ok: true; contributor: Contributor; target: ContributionTarget }
+  | { ok: false; response: Response }
+> {
+  const contributor = await getContributor(request);
+  if (!contributor) {
+    return { ok: false, response: Response.json({ error: "log in to the wiki to contribute" }, { status: 401 }) };
+  }
+  const target = await contributionTarget(pool, sha256);
+  if (!target) {
+    return { ok: false, response: Response.json({ error: "not found" }, { status: 404 }) };
+  }
+  if (!target.visible && !contributor.moderator) {
+    return { ok: false, response: Response.json({ error: "this build is not open for contributions" }, { status: 403 }) };
+  }
+  return { ok: true, contributor, target };
+}
+
 /** The build a contribution targets: its display name (for revalidation) and
  *  whether the public can see it, or null when it doesn't exist. Writes to a
  *  hidden build require a moderator. */

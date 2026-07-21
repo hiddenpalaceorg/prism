@@ -50,7 +50,10 @@ export async function POST(request: NextRequest) {
     }
 
     return Response.json({ query: { sha256: q.sha256, name: q.name }, ...result, text_neighbors });
-  } catch {
+  } catch (e) {
+    // This path does embedding inference + multi-tier SQL; a silent 500 is very
+    // hard to diagnose in production, so log server-side (generic to the client).
+    console.error("similarity check failed:", e);
     return Response.json({ error: "internal error" }, { status: 500 });
   }
 }

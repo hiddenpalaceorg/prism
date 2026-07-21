@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { getBuild, findSimilar, findByEmbeddingOf, getLotBuilds, updateBuildMeta, setLotPrivate, setBuildGame } from "@/lib/queries";
-import { getModerator, moderationEnabled } from "@/lib/auth";
+import { getModerator, requireModerator } from "@/lib/auth";
 import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
 
@@ -45,11 +45,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
 // (current and future members); `game` (+ optional `gameSystem`) names the
 // game the build belongs to (created if new; "" or null clears).
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
-  if (!(await getModerator(request))) {
-    return moderationEnabled()
-      ? Response.json({ error: "unauthorized" }, { status: 401 })
-      : Response.json({ error: "moderation disabled (set MODERATION_TOKEN or WIKI_API_URL)" }, { status: 403 });
-  }
+  const denied = await requireModerator(request);
+  if (denied) return denied;
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
 
