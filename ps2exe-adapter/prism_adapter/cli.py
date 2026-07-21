@@ -80,8 +80,18 @@ _VOLUME_PRIORITY = {
 _VERSION_SUFFIX = re.compile(r";\d+$")
 
 
+# Fixed-width disc-header fields are NUL/garbage-padded: ps2exe decodes the
+# whole field, so trailing (or embedded) control bytes ride along. Strip C0
+# controls and DEL — they carry no meaning here and a literal NUL cannot even
+# be stored in the downstream Postgres jsonb/text columns. Archive member names
+# get the same scrub (see _clean_component): a crafted name must not smuggle a
+# control byte into a `path` and abort the whole record's insert.
+_CONTROL_CHARS = {c: None for c in range(0x20)}
+_CONTROL_CHARS[0x7F] = None
+
+
 def _clean_component(c):
-    return _VERSION_SUFFIX.sub("", c)
+    return _VERSION_SUFFIX.sub("", c.translate(_CONTROL_CHARS))
 
 
 def _clean_path(p):
@@ -90,14 +100,6 @@ def _clean_path(p):
     # parent components.
     parts = [_clean_component(c) for c in p.strip("/").split("/") if c and c not in (".", "..")]
     return "/" + "/".join(parts)
-
-
-# Fixed-width disc-header fields are NUL/garbage-padded: ps2exe decodes the
-# whole field, so trailing (or embedded) control bytes ride along. Strip C0
-# controls and DEL — they carry no meaning here and a literal NUL cannot even
-# be stored in the downstream Postgres jsonb/text columns.
-_CONTROL_CHARS = {c: None for c in range(0x20)}
-_CONTROL_CHARS[0x7F] = None
 
 
 def _nullify(v):
@@ -552,8 +554,64 @@ def _close_member_archive(child):
         _close_handle(child.fp)
 
 
-def _hash_files(reader, manager, prefix="", depth=0):
+# Ceiling on decompressed bytes read from *nested archive members* across one
+# analyze/extract pass. The top-level volume is bounded by its own file size;
+# this bounds the amplification a decompression bomb (or a wide archive fan-out)
+# can inflict, so a small hostile input can't pin the CPU streaming terabytes.
+# Generous by default — real nested archives stay well under it. Env override:
+# PRISM_ARCHIVE_BYTE_BUDGET (bytes).
+_ARCHIVE_BYTE_BUDGET = 16 * 1024 * 1024 * 1024
+
+
+def _archive_byte_budget():
+    raw = os.environ.get("PRISM_ARCHIVE_BYTE_BUDGET")
+    if raw:
+        try:
+            n = int(raw)
+            if n >= 0:
+                return n
+        except ValueError:
+            pass
+    return _ARCHIVE_BYTE_BUDGET
+
+
+class _ByteBudget:
+    """Shared, mutable remaining-bytes counter for the nested-archive walk."""
+
+    def __init__(self, remaining):
+        self.remaining = remaining
+
+    def take(self, n):
+        """Charge `n` bytes; True while the budget still holds."""
+        self.remaining -= n
+        return self.remaining >= 0
+
+    @property
+    def exhausted(self):
+        return self.remaining <= 0
+
+
+def _dir_member_escapes(reader, entry, mods):
+    """True when a directory-container member resolves (through a symlink or
+    junction) outside the container root. A folder opened as one build must not
+    let a member link out to arbitrary host files, whose bytes would otherwise
+    be hashed and copied into the served asset store. Only directory readers
+    have a host path to escape; archive/ISO readers never do (mods is passed
+    only at the top level, where a directory source can appear)."""
+    if mods is None or not isinstance(reader, mods["directory"]):
+        return False
+    try:
+        root = os.path.realpath(str(reader.get_root_dir()))
+        target = os.path.realpath(str(reader.get_file_path(entry)))
+    except Exception:  # noqa: BLE001
+        return True  # can't resolve it safely -> treat as an escape
+    return os.path.commonpath([root, target]) != root
+
+
+def _hash_files(reader, manager, mods=None, prefix="", depth=0, budget=None):
     files = []
+    if budget is None and depth == 0:
+        budget = _ByteBudget(_archive_byte_budget())
     file_list = list(reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=True))
     with manager.counter(total=len(file_list), desc="Hashing files", unit="files") as pbar, \
             manager.counter(total=0, unit="B", file_name="") as hbar:
@@ -561,6 +619,11 @@ def _hash_files(reader, manager, prefix="", depth=0):
             path = prefix + _clean_path(reader.get_file_path(f).replace("\\", "/"))
             is_dir = bool(reader.is_directory(f))
             rec = {"path": path, "is_dir": is_dir}
+            if _dir_member_escapes(reader, f, mods):
+                rec["unreadable"] = True
+                files.append(rec)
+                pbar.update()
+                continue
             if depth:
                 rec["in_archive"] = True
             date = None
@@ -582,23 +645,33 @@ def _hash_files(reader, manager, prefix="", depth=0):
             if not is_dir:
                 # Members skip the chunk/shingle fingerprints: build-level
                 # similarity must keep seeing the archive as one opaque file.
-                head = _hash_one(reader, f, rec, size, hbar, fingerprints=depth == 0)
+                # Nested members (depth > 0) draw on the shared byte budget.
+                head = _hash_one(
+                    reader, f, rec, size, hbar,
+                    fingerprints=depth == 0,
+                    budget=budget if depth > 0 else None,
+                )
 
             files.append(rec)
-            if head is not None and depth < _ARCHIVE_MAX_DEPTH and _looks_like_archive(head):
-                files.extend(_archive_member_files(reader, f, path, manager, depth, head))
+            if (
+                head is not None
+                and depth < _ARCHIVE_MAX_DEPTH
+                and _looks_like_archive(head)
+                and (budget is None or not budget.exhausted)
+            ):
+                files.extend(_archive_member_files(reader, f, path, manager, depth, head, budget))
             pbar.update()
     return files
 
 
-def _archive_member_files(reader, entry, path, manager, depth, head=b""):
+def _archive_member_files(reader, entry, path, manager, depth, head=b"", budget=None):
     """Hash an archive member's own members as `<path>/...` records. Best-effort:
     an archive that can't be opened or dies mid-listing just stays a plain file."""
     child = _open_member_archive(reader, entry, path, manager, head)
     if child is None:
         return []
     try:
-        return _hash_files(child, manager, prefix=path, depth=depth + 1)
+        return _hash_files(child, manager, prefix=path, depth=depth + 1, budget=budget)
     except Exception as e:  # noqa: BLE001 — passworded/unsupported/corrupt
         logging.getLogger("prism-adapter").warning("archive listing failed for %s: %s", path, e)
         return []
@@ -606,9 +679,11 @@ def _archive_member_files(reader, entry, path, manager, depth, head=b""):
         _close_member_archive(child)
 
 
-def _hash_one(reader, f, rec, size, hbar, fingerprints=True):
+def _hash_one(reader, f, rec, size, hbar, fingerprints=True, budget=None):
     """Hash one file into `rec`, returning its leading bytes (for archive
-    sniffing), or None when the file was unreadable."""
+    sniffing), or None when the file was unreadable. When a `budget` is given
+    (nested archive members), a member that exhausts it is abandoned as
+    unreadable rather than streamed to the end — a decompression-bomb guard."""
     md5 = hashlib.md5(usedforsecurity=False)
     sha1 = hashlib.sha1(usedforsecurity=False)
     sha256 = hashlib.sha256()
@@ -645,6 +720,12 @@ def _hash_one(reader, f, rec, size, hbar, fingerprints=True):
                     shingler.update(chunk)
                 read += len(chunk)
                 hbar.update(len(chunk))
+                if budget is not None and not budget.take(len(chunk)):
+                    logging.getLogger("prism-adapter").warning(
+                        "archive byte budget exhausted; skipping remainder of %s", rec["path"]
+                    )
+                    rec["unreadable"] = True
+                    return None
         finally:
             with contextlib.suppress(Exception):
                 fh.__exit__(None, None, None) if is_ctx else fh.close()
@@ -824,7 +905,7 @@ def analyze(path):
 
     def work(processor, reader, system):
         info = _gather_info(processor, reader, system, mods)
-        files = _hash_files(reader, manager)
+        files = _hash_files(reader, manager, mods)
         exe_fp = _exe_fp_for(info, reader)
         return info, files, exe_fp, system
 
@@ -854,12 +935,12 @@ def extract(path, out_dir):
     parent_dir = pathlib.Path(path).resolve().parent
 
     def work(processor, reader, system):
-        return _extract_assets(reader, out_dir, manager)
+        return _extract_assets(reader, out_dir, manager, mods)
 
     return {"assets": _process(path, basename, parent_dir, mods, manager, work)}
 
 
-def _extract_assets(reader, out_dir, manager, prefix="", depth=0):
+def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
     from . import viewable
 
     # Candidate list first, bytes second — the same two-step the hashing pass
@@ -870,6 +951,8 @@ def _extract_assets(reader, out_dir, manager, prefix="", depth=0):
     # too, extracted through the same recursion as the hashing pass.
     entries = []
     for f in reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=False):
+        if _dir_member_escapes(reader, f, mods):
+            continue  # symlink out of a folder source: never serve its target's bytes
         path = prefix + _clean_path(reader.get_file_path(f).replace("\\", "/"))
         try:
             size = int(reader.get_file_size(f))
@@ -972,7 +1055,7 @@ def _stream_to_store(reader, f, out_dir, mime, cap):
     not smuggle an oversized asset in)."""
     from . import viewable
 
-    tmp = os.path.join(out_dir, f".stream{os.getpid()}.part")
+    tmp = os.path.join(out_dir, f".stream{os.getpid()}.{os.urandom(4).hex()}.part")
     digest = hashlib.sha256()
     size = 0
     try:
@@ -1040,10 +1123,16 @@ def _store_blob(out_dir, sha, data):
     if os.path.exists(final):
         return
     os.makedirs(os.path.dirname(final), exist_ok=True)
-    tmp = f"{final}.tmp{os.getpid()}"
+    tmp = f"{final}.tmp{os.getpid()}.{os.urandom(4).hex()}"
     with open(tmp, "wb") as fh:
         fh.write(data)
     os.replace(tmp, final)
+
+
+# A real boot executable is small; anything past this is either not a boot exe
+# or a hostile/decompression-bombed member. Cap the read so it can't buffer a
+# multi-GB member into memory (read cap+1 to detect the overrun).
+_EXE_FP_MAX_BYTES = 128 * 1024 * 1024
 
 
 def _exe_fingerprint(reader, exe_path):
@@ -1063,7 +1152,7 @@ def _exe_fingerprint(reader, exe_path):
         if is_ctx:
             fh.__enter__()
         try:
-            data = fh.read()
+            data = fh.read(_EXE_FP_MAX_BYTES + 1)
         finally:
             with contextlib.suppress(Exception):
                 fh.__exit__(None, None, None) if is_ctx else fh.close()
@@ -1071,6 +1160,11 @@ def _exe_fingerprint(reader, exe_path):
         return None
 
     if not data or len(data) < 256:
+        return None
+    if len(data) > _EXE_FP_MAX_BYTES:
+        logging.getLogger("prism-adapter").debug(
+            "boot exe %s exceeds %d bytes; skipping fingerprint", exe_path, _EXE_FP_MAX_BYTES
+        )
         return None
 
     th = tlsh.hash(data)
@@ -1118,6 +1212,10 @@ def _scan_audio_tracks(readers, mods, manager):
     return media
 
 
+# A cue sheet describes track layout in plain text — kilobytes at most.
+_CUE_MAX_BYTES = 1 * 1024 * 1024
+
+
 def _read_entry(reader, entry, length=None):
     fh = reader.open_file(entry)
     is_ctx = hasattr(fh, "__enter__")
@@ -1151,6 +1249,8 @@ def _scan_member_audio(r, mods):
 
     out = []
     for entry in entries:
+        if _dir_member_escapes(r, entry, mods):
+            continue  # don't read a member symlinked out of the folder source
         path = _member_path(r, entry, mods)
         try:
             size = int(r.get_file_size(entry))
@@ -1191,7 +1291,9 @@ def _scan_cue_audio(r):
         low = base.lower()
         if low.endswith(".cue"):
             try:
-                cue_text = _read_entry(r, entry).decode("utf-8", "replace")
+                # A real cue sheet is a few KB; cap the read so a member merely
+                # named `*.cue` can't buffer gigabytes into memory.
+                cue_text = _read_entry(r, entry, _CUE_MAX_BYTES).decode("utf-8", "replace")
             except Exception:  # noqa: BLE001
                 return None
         elif low.endswith(".bin"):
