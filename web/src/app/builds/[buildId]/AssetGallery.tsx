@@ -160,8 +160,13 @@ export default function AssetGallery({
                       </span>
                       <span className="shrink-0 text-[10px] text-neutral-400">{humanSize(a.size)}</span>
                     </div>
-                    {/* Binary cards preview the head snippet as spaced hex pairs. */}
-                    <pre className="mt-1.5 line-clamp-4 whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-neutral-500">
+                    {/* Binary cards preview the head snippet as spaced hex
+                        pairs, elided to a single line; text wraps to a few. */}
+                    <pre
+                      className={`mt-1.5 font-mono text-[11px] leading-4 text-neutral-500 ${
+                        kind === "binary" ? "truncate" : "line-clamp-4 whitespace-pre-wrap break-words"
+                      }`}
+                    >
                       {kind === "source" ? (
                         <SourceCode path={a.path} text={excerpts[a.path] ?? ""} />
                       ) : (

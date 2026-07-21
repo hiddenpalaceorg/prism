@@ -18,6 +18,9 @@ export const dynamic = "force-dynamic";
 // Excerpt reads are tiny (2KB head per file) but keep them bounded on games
 // whose builds carry pathological text counts.
 const MAX_EXCERPT_READS = 200;
+// At most this many items per kind per month, matching the game page; the
+// rare overflow (a 200+ image month) stays reachable on each build's page.
+const MONTH_PER_KIND = 200;
 
 interface Params {
   params: Promise<{ slug: string; path?: string[] }>;
@@ -46,10 +49,10 @@ export default async function GameAssetsPage({ params }: Params) {
   // matching the game page itself.
   const includePrivate = !!(await getModeratorFromHeaders(await headers()));
   const assets = await getGameAssets(pool, game.id, includePrivate);
-  // Same month timeline as the game page, uncapped.
+  // Same month timeline as the game page.
   const months = assetMonths(assets).map((m) => ({
     ...m,
-    ordered: orderAssets(m.assets),
+    ordered: orderAssets(m.assets, MONTH_PER_KIND),
     totals: assetTotals(m.assets),
   }));
   const ordered = months.flatMap((m) => m.ordered);
@@ -75,7 +78,8 @@ export default async function GameAssetsPage({ params }: Params) {
         ) : (
           months.map((m) => (
             <div key={m.key} className="mt-8 first:mt-4">
-              <h3 className="border-b border-neutral-200 pb-1 text-sm font-semibold dark:border-neutral-800">
+              {/* Sticky per-month header, same treatment as the game page. */}
+              <h3 className="sticky top-0 z-10 border-b border-neutral-200 bg-[var(--background)] pb-1 pt-2 text-sm font-semibold dark:border-neutral-800">
                 {m.label}
                 <span className="ml-2 font-normal text-neutral-400">
                   {m.assets.length} {m.assets.length === 1 ? "file" : "files"}

@@ -10,9 +10,9 @@ import AssetGallery from "../../builds/[buildId]/AssetGallery";
 import AssetViewerHost from "../../builds/[buildId]/AssetViewerHost";
 import GameBuilds from "./GameBuilds";
 
-// The timeline previews at most this many items per kind per month; the
-// rest live on /games/<slug>/assets. Excerpt reads stay bounded regardless.
-const MONTH_PREVIEW_PER_KIND = { image: 18, audio: 8, video: 6, document: 8, source: 6, text: 6, binary: 6 };
+// The timeline shows at most this many items per kind per month; the rest
+// live on /games/<slug>/assets. Excerpt reads stay bounded regardless.
+const MONTH_PREVIEW_PER_KIND = 200;
 const MAX_EXCERPT_READS = 200;
 
 export const runtime = "nodejs";
@@ -58,11 +58,10 @@ export default async function GamePage({ params }: Params) {
     preview: orderAssets(m.assets, MONTH_PREVIEW_PER_KIND),
     totals: assetTotals(m.assets),
   }));
-  const ordered = months.flatMap((m) => orderAssets(m.assets));
-  const excerpts = await assetExcerpts(
-    months.flatMap((m) => m.preview),
-    MAX_EXCERPT_READS
-  );
+  // The lightbox steps through exactly what the galleries show, so the
+  // serialized asset list stays bounded with the same per-kind cap.
+  const ordered = months.flatMap((m) => m.preview);
+  const excerpts = await assetExcerpts(ordered, MAX_EXCERPT_READS);
 
   return (
     <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
@@ -92,7 +91,10 @@ export default async function GamePage({ params }: Params) {
             </p>
             {months.map((m) => (
               <div key={m.key} className="mt-8 first:mt-4">
-                <h3 className="border-b border-neutral-200 pb-1 text-sm font-semibold dark:border-neutral-800">
+                {/* Sticky per-month header; the page background keeps the
+                    scrolled cards from showing through. Below the lightbox
+                    overlay, above the cards. */}
+                <h3 className="sticky top-0 z-10 border-b border-neutral-200 bg-[var(--background)] pb-1 pt-2 text-sm font-semibold dark:border-neutral-800">
                   {m.label}
                   <span className="ml-2 font-normal text-neutral-400">
                     {m.assets.length} {m.assets.length === 1 ? "file" : "files"}
