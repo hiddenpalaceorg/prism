@@ -122,12 +122,38 @@ function openRecords(path: string): { lines: Readable; done: Promise<void> } {
   return { lines: fs.createReadStream(path), done: Promise.resolve() };
 }
 
+/** Bust the web app's caches for the ingested builds (ISR pages + tree caches)
+ *  via /api/refresh. Opt-in: needs REFRESH_TOKEN in the environment (and
+ *  REFRESH_URL when the app isn't on localhost:6800). Best-effort — a failure
+ *  leaves the pages to their hourly revalidation, never the ingest broken. */
+async function refreshWeb(shas: string[]) {
+  const token = process.env.REFRESH_TOKEN;
+  if (!token || shas.length === 0) return;
+  const base = process.env.REFRESH_URL || "http://localhost:6800";
+  try {
+    const res = await fetch(`${base}/api/refresh`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-refresh-token": token },
+      body: JSON.stringify({ sha256s: shas }),
+    });
+    if (res.ok) {
+      const { refreshed } = (await res.json()) as { refreshed: number };
+      console.log(`refreshed ${refreshed} build page(s)`);
+    } else {
+      console.warn(`page refresh failed: HTTP ${res.status}`);
+    }
+  } catch (e) {
+    console.warn(`page refresh failed: ${(e as Error).message}`);
+  }
+}
+
 async function main() {
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL || "postgres:///prism_test",
   });
   let n = 0;
   let lineNo = 0;
+  const ingested: string[] = [];
   const failures: { line: number; sha?: string; name?: string; error: string }[] = [];
   try {
     // Blobs before rows: once a build_asset row exists, its blob is servable.
@@ -153,6 +179,7 @@ async function main() {
       try {
         await ingestRecordTx(pool, rec);
         n++;
+        if (rec.image?.sha256) ingested.push(rec.image.sha256);
       } catch (e) {
         failures.push({
           line: lineNo,
@@ -170,6 +197,7 @@ async function main() {
     await pool.end();
   }
   console.log(`ingested ${n} builds`);
+  await refreshWeb(ingested);
   if (failures.length) {
     console.error(`\n${failures.length} record(s) failed and were skipped:`);
     for (const f of failures) {
