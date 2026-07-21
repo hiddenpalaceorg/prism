@@ -15,6 +15,16 @@ CREATE EXTENSION IF NOT EXISTS vector;    -- pgvector: text embedding ANN
 -- CREATE EXTENSION IF NOT EXISTS smlar;  -- exact set similarity (identical-file overlap); build/install separately
 CREATE EXTENSION IF NOT EXISTS intarray;  -- fallback array overlap if smlar unavailable
 
+-- ── games ────────────────────────────────────────────────────────────────────
+-- Shared classification: which game each build is a build of. Seeded from the
+-- wiki {{Prototype}} infobox by scripts/import-wiki-games.ts, extended by
+-- moderator edits (upsert by name). ids are PER-DATABASE — cross-DB copies of
+-- builds rows must remap game_id through the name, never raw ids.
+CREATE TABLE games (
+    id   BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
 -- ── builds ───────────────────────────────────────────────────────────────────
 CREATE TABLE builds (
     sha256                TEXT PRIMARY KEY,         -- image identity / lookup key
@@ -36,7 +46,8 @@ CREATE TABLE builds (
     ingested_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     build_date            TEXT,                     -- volume creation date, else header release date (sortable copy)
     lot                   TEXT,                     -- moderator-assigned display group, e.g. "Sonic Month 2026"
-    private               BOOLEAN NOT NULL DEFAULT FALSE -- hidden from public list/search/similar (direct URL stays reachable)
+    private               BOOLEAN NOT NULL DEFAULT FALSE, -- hidden from public list/search/similar (direct URL stays reachable)
+    game_id               BIGINT REFERENCES games(id) -- which game this is a build of (wiki import / moderator)
 );
 CREATE INDEX idx_builds_content      ON builds(content_hash);
 CREATE INDEX idx_builds_filtered     ON builds(filtered_content_hash);
@@ -46,6 +57,7 @@ CREATE INDEX idx_builds_name_trgm    ON builds USING gin (name gin_trgm_ops);
 CREATE INDEX idx_builds_textdoc_fts  ON builds USING gin (to_tsvector('simple', text_doc));
 CREATE INDEX idx_builds_embedding    ON builds USING hnsw (text_embedding vector_cosine_ops);
 CREATE INDEX idx_builds_lot          ON builds(lot) WHERE lot IS NOT NULL;
+CREATE INDEX idx_builds_game         ON builds(game_id) WHERE game_id IS NOT NULL;
 
 -- Lots hidden from non-moderators; a build in a listed lot is hidden with it.
 CREATE TABLE private_lots (

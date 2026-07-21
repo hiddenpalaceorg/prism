@@ -502,6 +502,10 @@ export interface BuildRow {
   /** Hidden from public list/search/similar (the build's own flag; a private
    *  lot hides its builds without setting this). */
   private: boolean;
+  /** The game this is a build of (games.id), wiki import / moderator edit. */
+  game_id: number | null;
+  /** The game's display name (joined from games). */
+  game: string | null;
 }
 
 export interface BuildListItem {
@@ -753,9 +757,11 @@ export async function getBuildMeta(pool: Pool, sha256: string): Promise<BuildMet
 /// Fetch one stored build (with its full canonical record) by sha256.
 export async function getBuild(pool: Pool, sha256: string): Promise<BuildRow | null> {
   const r = await pool.query(
-    `SELECT sha256, name, system, size, md5, sha1, content_hash, file_count,
-            total_size, fingerprint_profile, ingested_at, record, lot, private
-     FROM builds WHERE sha256=$1`,
+    `SELECT b.sha256, b.name, b.system, b.size, b.md5, b.sha1, b.content_hash, b.file_count,
+            b.total_size, b.fingerprint_profile, b.ingested_at, b.record, b.lot, b.private,
+            b.game_id::int AS game_id, g.name AS game
+     FROM builds b LEFT JOIN games g ON g.id = b.game_id
+     WHERE b.sha256=$1`,
     [sha256]
   );
   return (r.rows[0] as BuildRow) ?? null;
@@ -817,6 +823,50 @@ export async function listLots(pool: Pool): Promise<string[]> {
      ORDER BY lot`
   );
   return r.rows.map((row) => row.lot as string);
+}
+
+export interface GameRow {
+  id: number;
+  name: string;
+}
+
+/** Game-name suggestions for the moderator combobox: substring match ranked
+ *  by trigram similarity, alphabetical when the query is empty. The games
+ *  table is small (thousands), so ILIKE without an index is fine. */
+export async function searchGames(pool: Pool, q: string, limit = 20): Promise<GameRow[]> {
+  const t = q.trim();
+  const r = t
+    ? await pool.query(
+        `SELECT id::int AS id, name FROM games
+         WHERE name ILIKE $1
+         ORDER BY similarity(name, $2) DESC, lower(name) LIMIT $3`,
+        ["%" + t.replace(/([\\%_])/g, "\\$1") + "%", t, limit]
+      )
+    : await pool.query("SELECT id::int AS id, name FROM games ORDER BY lower(name) LIMIT $1", [limit]);
+  return r.rows as GameRow[];
+}
+
+/// Moderator game assignment: null clears; a name upserts into games (so
+/// typing a new title creates it) and points the build at it. Returns the
+/// resulting game, or undefined when the build doesn't exist.
+export async function setBuildGame(
+  pool: Pool,
+  sha256: string,
+  game: string | null
+): Promise<GameRow | null | undefined> {
+  if (game === null) {
+    const r = await pool.query("UPDATE builds SET game_id=NULL WHERE sha256=$1 RETURNING sha256", [sha256]);
+    return r.rows.length ? null : undefined;
+  }
+  const g = await pool.query(
+    `INSERT INTO games(name) VALUES ($1)
+     ON CONFLICT (name) DO UPDATE SET name=excluded.name
+     RETURNING id::int AS id, name`,
+    [game]
+  );
+  const row = g.rows[0] as GameRow;
+  const r = await pool.query("UPDATE builds SET game_id=$2 WHERE sha256=$1 RETURNING sha256", [sha256, row.id]);
+  return r.rows.length ? row : undefined;
 }
 
 /** Whether a lot is hidden from non-moderators. */

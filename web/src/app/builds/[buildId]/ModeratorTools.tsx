@@ -16,6 +16,8 @@ interface Props {
   lot: string | null;
   /** Existing lot names, offered as suggestions when assigning. */
   lots: string[];
+  /** The game this build is assigned to (games.name), if any. */
+  game: string | null;
   /** The build's own private flag. */
   privateFlag: boolean;
   /** Whether the build's lot is private (hides every build in it). */
@@ -29,12 +31,14 @@ interface Props {
 // belongs to a moderator group. Purely cosmetic gating — the PATCH route
 // re-checks credentials server-side. The parent keys this component on
 // name+lot, so a router.refresh() after a save remounts it with fresh values.
-export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, lotPrivate, skips }: Props) {
+export default function ModeratorTools({ sha256, name, lot, lots, game, privateFlag, lotPrivate, skips }: Props) {
   const router = useRouter();
   const token = useSyncExternalStore(noSubscribe, clientToken, serverToken);
   const [wikiModerator, setWikiModerator] = useState(false);
   const [nameInput, setNameInput] = useState(name);
   const [lotInput, setLotInput] = useState(lot ?? "");
+  const [gameInput, setGameInput] = useState(game ?? "");
+  const [gameOpts, setGameOpts] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
@@ -50,12 +54,31 @@ export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, l
     };
   }, [token]);
 
-  if (!token && !wikiModerator) return null;
+  // Game suggestions come from the server as you type (there are thousands of
+  // games — too many to embed like the lot list). Debounced; stale responses
+  // are dropped so a slow early query can't overwrite a fresh one.
+  const visible = !!token || wikiModerator;
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      fetch(`/api/games?q=${encodeURIComponent(gameInput.trim())}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => !cancelled && setGameOpts((d.games ?? []).map((g: { name: string }) => g.name)))
+        .catch(() => {});
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [gameInput, visible]);
+
+  if (!visible) return null;
 
   async function saveTo(
     path: string,
     patch:
-      | { name?: string; lot?: string | null; private?: boolean; lotPrivate?: boolean }
+      | { name?: string; lot?: string | null; game?: string | null; private?: boolean; lotPrivate?: boolean }
       | { notes?: boolean; screenshots?: boolean; video?: boolean; physical?: boolean }
   ) {
     setBusy(true);
@@ -83,13 +106,14 @@ export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, l
     }
   }
 
-  const save = (patch: { name?: string; lot?: string | null; private?: boolean; lotPrivate?: boolean }) =>
+  const save = (patch: { name?: string; lot?: string | null; game?: string | null; private?: boolean; lotPrivate?: boolean }) =>
     saveTo(`/api/build/${sha256}`, patch);
   const saveSkip = (patch: { notes?: boolean; screenshots?: boolean; video?: boolean; physical?: boolean }) =>
     saveTo(`/api/build/${sha256}/skip`, patch);
 
   const nameDirty = nameInput.trim() !== "" && nameInput.trim() !== name;
   const lotDirty = (lotInput.trim() || null) !== lot;
+  const gameDirty = (gameInput.trim() || null) !== game;
 
   return (
     <section className="mt-6 rounded-md border border-dashed border-neutral-300 px-4 py-3 dark:border-neutral-700">
@@ -135,6 +159,33 @@ export default function ModeratorTools({ sha256, name, lot, lots, privateFlag, l
               className="rounded-md border border-neutral-300 px-3 py-1 font-medium hover:border-neutral-500 disabled:opacity-40 disabled:hover:border-neutral-300 dark:border-neutral-700"
             >
               {lotInput.trim() ? "Set lot" : "Clear lot"}
+            </button>
+          </div>
+        </label>
+        {/* Combobox: pick one of the server-suggested games or type a new
+            title — saving an unknown name creates the game. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-neutral-500">Game</span>
+          <div className="flex gap-2">
+            <input
+              list="prism-game-names"
+              value={gameInput}
+              onChange={(e) => setGameInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && gameDirty && !busy && save({ game: gameInput.trim() || null })}
+              placeholder="e.g. Sonic Adventure"
+              className="h-9 w-72 max-w-full rounded-md border border-neutral-300 bg-transparent px-3 outline-none placeholder:text-neutral-400 focus:border-neutral-500 dark:border-neutral-700"
+            />
+            <datalist id="prism-game-names">
+              {gameOpts.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+            <button
+              onClick={() => save({ game: gameInput.trim() || null })}
+              disabled={busy || !gameDirty}
+              className="rounded-md border border-neutral-300 px-3 py-1 font-medium hover:border-neutral-500 disabled:opacity-40 disabled:hover:border-neutral-300 dark:border-neutral-700"
+            >
+              {gameInput.trim() ? "Set game" : "Clear game"}
             </button>
           </div>
         </label>

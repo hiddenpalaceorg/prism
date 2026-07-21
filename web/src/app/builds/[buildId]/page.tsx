@@ -197,6 +197,11 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
         <Chip>{humanSize(build.total_size)}</Chip>
         <Chip>profile {build.fingerprint_profile}</Chip>
         {assets.length > 0 && <Chip>{assets.length} assets</Chip>}
+        {build.game && (
+          <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200">
+            {build.game}
+          </span>
+        )}
         {build.lot && (
           <Link
             href={`/builds?lot=${encodeURIComponent(build.lot)}`}
@@ -218,11 +223,12 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
       </dl>
 
       <ModeratorTools
-        key={`${build.name}\0${build.lot ?? ""}\0${build.private}\0${lotPrivate}\0${JSON.stringify(skips)}`}
+        key={`${build.name}\0${build.lot ?? ""}\0${build.game ?? ""}\0${build.private}\0${lotPrivate}\0${JSON.stringify(skips)}`}
         sha256={build.sha256}
         name={build.name}
         lot={build.lot}
         lots={lots}
+        game={build.game}
         privateFlag={build.private}
         lotPrivate={lotPrivate}
         skips={skips}
