@@ -1,18 +1,9 @@
 // Shared strings for social-preview metadata (build pages + OG card images).
 
 import type { BuildMetaRow } from "./queries";
+import { humanSize } from "./format";
 
-export function humanSize(bytes?: number | null): string {
-  if (bytes == null) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = Number(bytes);
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return i === 0 ? `${bytes} B` : `${v.toFixed(1)} ${units[i]}`;
-}
+export { humanSize };
 
 /** The heading users see: the curated build name (renameable by moderators). */
 export function displayTitle(m: BuildMetaRow): string {
