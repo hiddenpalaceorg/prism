@@ -56,6 +56,59 @@ export function assetStagingPath(sha256: string): string {
   return path.join(assetStoreDir(), ".staging", `${sha256}.part`);
 }
 
+// Asset staging files (`<sha>.part`) abandoned this long are reaped, so a flood
+// of never-finalized uploads can't pile up on the store disk. Media sessions
+// (`media-*`) carry their own reaper and are left alone here.
+const ASSET_STAGING_TTL_MS = 24 * 3600_000;
+
+/** Remove asset staging files past the TTL. Best-effort and opportunistic —
+ *  the asset upload route calls it before staging a fresh chunk. */
+export async function reapStaleAssetStaging(): Promise<void> {
+  const dir = path.join(assetStoreDir(), ".staging");
+  const cutoff = Date.now() - ASSET_STAGING_TTL_MS;
+  let names: string[];
+  try {
+    names = await fsp.readdir(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".part") || name.startsWith("media-")) continue;
+    const p = path.join(dir, name);
+    try {
+      if ((await fsp.stat(p)).mtimeMs < cutoff) await fsp.rm(p, { force: true });
+    } catch {
+      // Raced with another reaper or an active finalize; leave it.
+    }
+  }
+}
+
+/** Free space the store filesystem must keep in reserve: staging writes refuse
+ *  below it, so an upload flood can't fill the disk out from under Postgres and
+ *  in-flight transcodes (env ASSET_STORE_MIN_FREE_BYTES, default 5 GiB). */
+export function storeMinFreeBytes(): number {
+  const raw = Number(process.env.ASSET_STORE_MIN_FREE_BYTES);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 5 * 1024 * 1024 * 1024;
+}
+
+/** Free bytes on the filesystem backing the local store, or null when it can't
+ *  be determined (a stat failure must never wedge uploads). */
+export async function storeFreeBytes(): Promise<number | null> {
+  try {
+    const s = await fsp.statfs(assetStoreDir());
+    return s.bavail * s.bsize;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether the store can take `need` more bytes and still hold the reserve. */
+export async function hasStagingHeadroom(need = 0): Promise<boolean> {
+  const free = await storeFreeBytes();
+  if (free === null) return true;
+  return free - need >= storeMinFreeBytes();
+}
+
 /** Whether blob reads/writes go to the S3 backend. */
 export function s3Enabled(): boolean {
   return !!process.env.ASSET_S3_ENDPOINT;

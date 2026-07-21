@@ -6,6 +6,9 @@ import type { BuildRecord, Node } from "./types";
 // few hundred bytes of JSON, so cap-sized records run tens of MB.
 export const MAX_BODY_BYTES = 64_000_000;
 
+/** Longest accepted submitter nickname (display/attribution only). */
+export const MAX_NICKNAME_LEN = 100;
+
 const MAX_FILES = 200_000;
 const MAX_SIGNATURE_VALUES = 4096;
 const MAX_MEDIA = 4096;

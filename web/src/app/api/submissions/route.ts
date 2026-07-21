@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { enqueueSubmission, listSubmissions } from "@/lib/queries";
 import { getModerator, moderationEnabled } from "@/lib/auth";
-import { MAX_BODY_BYTES, validateBuildRecord } from "@/lib/validate";
+import { MAX_BODY_BYTES, MAX_NICKNAME_LEN, validateBuildRecord } from "@/lib/validate";
 import { rateLimit, clientKey } from "@/lib/ratelimit";
 import type { BuildRecord } from "@/lib/types";
 
@@ -27,6 +27,12 @@ export async function POST(request: NextRequest) {
   if (!rateLimit(`submissions:${clientKey(request)}`, 30, 60_000)) {
     return Response.json({ error: "rate limit exceeded" }, { status: 429 });
   }
+  // Reject an oversized body by its declared length before buffering it whole
+  // into memory; the post-read check still guards chunked requests that omit it.
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return Response.json({ error: "request body too large" }, { status: 413 });
+  }
   const text = await request.text();
   if (text.length > MAX_BODY_BYTES) {
     return Response.json({ error: "request body too large" }, { status: 413 });
@@ -38,8 +44,11 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
   const { nickname } = body;
-  if (!nickname) {
+  if (!nickname || typeof nickname !== "string") {
     return Response.json({ error: "require { nickname, record(with image.sha256) }" }, { status: 400 });
+  }
+  if (nickname.length > MAX_NICKNAME_LEN) {
+    return Response.json({ error: `nickname exceeds ${MAX_NICKNAME_LEN} characters` }, { status: 400 });
   }
   const v = validateBuildRecord(body.record);
   if (!v.ok) {
