@@ -18,12 +18,19 @@ CREATE EXTENSION IF NOT EXISTS intarray;  -- fallback array overlap if smlar una
 -- ── games ────────────────────────────────────────────────────────────────────
 -- Shared classification: which game each build is a build of. Seeded from the
 -- wiki {{Prototype}} infobox by scripts/import-wiki-games.ts, extended by
--- moderator edits (upsert by name). ids are PER-DATABASE — cross-DB copies of
--- builds rows must remap game_id through the name, never raw ids.
+-- moderator edits (upsert by name+system). The same title on two systems is
+-- two games, so identity is (name, system), '' system when unknown. slug is
+-- the /games/<slug> segment (lib/slug.ts gameSlug, "-<id>" on collision).
+-- ids are PER-DATABASE — cross-DB copies of builds rows must remap game_id
+-- through (name, system), never raw ids.
 CREATE TABLE games (
-    id   BIGSERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
+    id     BIGSERIAL PRIMARY KEY,
+    name   TEXT NOT NULL,
+    system TEXT NOT NULL DEFAULT '',
+    slug   TEXT,
+    UNIQUE (name, system)
 );
+CREATE UNIQUE INDEX games_slug_key ON games(slug);
 
 -- ── builds ───────────────────────────────────────────────────────────────────
 CREATE TABLE builds (

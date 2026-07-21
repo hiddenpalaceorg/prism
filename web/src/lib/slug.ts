@@ -23,6 +23,16 @@ export function slugify(name: string): string {
     .replace(/-+$/, "");
 }
 
+/** The /games/<slug> segment: name slug, "--" + system slug when the system
+ *  is known. Slugify collapses dash runs, so "--" can never occur inside a
+ *  part — the delimiter is unambiguous. Uniqueness is enforced at insert
+ *  (colliding spellings get a "-<id>" suffix appended). */
+export function gameSlug(name: string, system = ""): string {
+  const n = slugify(name);
+  const s = slugify(system);
+  return s ? `${n}--${s}` : n;
+}
+
 /** The canonical /builds/ path segment: "<short sha>-<slug>" (short sha alone for empty slugs). */
 export function canonicalBuildId(sha256: string, name: string): string {
   const short = sha256.slice(0, SHORT_SHA_LEN);

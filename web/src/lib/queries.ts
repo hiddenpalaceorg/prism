@@ -2,7 +2,7 @@
 
 import type { Pool } from "pg";
 import { minhashJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
-import { slugify } from "./slug";
+import { slugify, gameSlug } from "./slug";
 import { tlshDiff } from "./tlsh";
 import type { BuildRecord, SimilarityResult } from "./types";
 import type { FusedBuild, TierKey } from "./tiers";
@@ -506,6 +506,9 @@ export interface BuildRow {
   game_id: number | null;
   /** The game's display name (joined from games). */
   game: string | null;
+  /** The game's system ("Xbox 360", '' unknown) and /games/<slug> segment. */
+  game_system: string | null;
+  game_slug: string | null;
 }
 
 export interface BuildListItem {
@@ -759,7 +762,7 @@ export async function getBuild(pool: Pool, sha256: string): Promise<BuildRow | n
   const r = await pool.query(
     `SELECT b.sha256, b.name, b.system, b.size, b.md5, b.sha1, b.content_hash, b.file_count,
             b.total_size, b.fingerprint_profile, b.ingested_at, b.record, b.lot, b.private,
-            b.game_id::int AS game_id, g.name AS game
+            b.game_id::int AS game_id, g.name AS game, g.system AS game_system, g.slug AS game_slug
      FROM builds b LEFT JOIN games g ON g.id = b.game_id
      WHERE b.sha256=$1`,
     [sha256]
@@ -828,43 +831,86 @@ export async function listLots(pool: Pool): Promise<string[]> {
 export interface GameRow {
   id: number;
   name: string;
+  /** Display system from the wiki infobox ("Xbox 360"), '' when unknown. */
+  system: string;
+  /** /games/<slug> path segment; NULL only on rows not yet visited by the
+   *  import or a moderator assignment. */
+  slug: string | null;
 }
 
-/** Game-name suggestions for the moderator combobox: substring match ranked
- *  by trigram similarity, alphabetical when the query is empty. The games
- *  table is small (thousands), so ILIKE without an index is fine. */
+/** Game suggestions for the moderator combobox: substring match ranked by
+ *  trigram similarity, alphabetical when the query is empty. The games table
+ *  is small (thousands), so ILIKE without an index is fine. */
 export async function searchGames(pool: Pool, q: string, limit = 20): Promise<GameRow[]> {
   const t = q.trim();
   const r = t
     ? await pool.query(
-        `SELECT id::int AS id, name FROM games
+        `SELECT id::int AS id, name, system, slug FROM games
          WHERE name ILIKE $1
-         ORDER BY similarity(name, $2) DESC, lower(name) LIMIT $3`,
+         ORDER BY similarity(name, $2) DESC, lower(name), system LIMIT $3`,
         ["%" + t.replace(/([\\%_])/g, "\\$1") + "%", t, limit]
       )
-    : await pool.query("SELECT id::int AS id, name FROM games ORDER BY lower(name) LIMIT $1", [limit]);
+    : await pool.query("SELECT id::int AS id, name, system, slug FROM games ORDER BY lower(name), system LIMIT $1", [limit]);
   return r.rows as GameRow[];
 }
 
-/// Moderator game assignment: null clears; a name upserts into games (so
-/// typing a new title creates it) and points the build at it. Returns the
-/// resulting game, or undefined when the build doesn't exist.
+/** Resolve a /games/<slug> segment to its game. */
+export async function getGameBySlug(pool: Pool, slug: string): Promise<GameRow | null> {
+  const r = await pool.query("SELECT id::int AS id, name, system, slug FROM games WHERE slug=$1", [slug]);
+  return (r.rows[0] as GameRow) ?? null;
+}
+
+/// All visible builds of a game, oldest prototype first (missing dates last).
+/// Public surface — private builds stay hidden (visibleSql).
+export async function getGameBuilds(pool: Pool, gameId: number, includePrivate = false): Promise<BuildListItem[]> {
+  const r = await pool.query(
+    `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot
+     FROM builds WHERE game_id=$1 AND ${includePrivate ? "TRUE" : visibleSql("builds")}
+     ORDER BY build_date NULLS LAST, lower(name)`,
+    [gameId]
+  );
+  return r.rows as BuildListItem[];
+}
+
+/** Fill a game's slug if still NULL: the computed base, or base-<id> when a
+ *  near-duplicate spelling already claimed the base. */
+async function ensureGameSlug(pool: Pool, row: GameRow): Promise<GameRow> {
+  if (row.slug) return row;
+  const base = gameSlug(row.name, row.system);
+  const u = await pool.query(
+    `UPDATE games SET slug=$2 WHERE id=$1 AND slug IS NULL
+       AND NOT EXISTS (SELECT 1 FROM games WHERE slug=$2 AND id<>$1)
+     RETURNING slug`,
+    [row.id, base]
+  );
+  if (u.rows.length) return { ...row, slug: u.rows[0].slug as string };
+  const u2 = await pool.query(
+    "UPDATE games SET slug=$2 WHERE id=$1 AND slug IS NULL RETURNING slug",
+    [row.id, `${base}-${row.id}`]
+  );
+  return { ...row, slug: (u2.rows[0]?.slug as string) ?? row.slug };
+}
+
+/// Moderator game assignment: null clears; a (name, system) upserts into
+/// games (so typing a new title creates it) and points the build at it.
+/// Returns the resulting game, or undefined when the build doesn't exist.
 export async function setBuildGame(
   pool: Pool,
   sha256: string,
-  game: string | null
+  game: string | null,
+  system = ""
 ): Promise<GameRow | null | undefined> {
   if (game === null) {
     const r = await pool.query("UPDATE builds SET game_id=NULL WHERE sha256=$1 RETURNING sha256", [sha256]);
     return r.rows.length ? null : undefined;
   }
   const g = await pool.query(
-    `INSERT INTO games(name) VALUES ($1)
-     ON CONFLICT (name) DO UPDATE SET name=excluded.name
-     RETURNING id::int AS id, name`,
-    [game]
+    `INSERT INTO games(name, system) VALUES ($1, $2)
+     ON CONFLICT (name, system) DO UPDATE SET name=excluded.name
+     RETURNING id::int AS id, name, system, slug`,
+    [game, system]
   );
-  const row = g.rows[0] as GameRow;
+  const row = await ensureGameSlug(pool, g.rows[0] as GameRow);
   const r = await pool.query("UPDATE builds SET game_id=$2 WHERE sha256=$1 RETURNING sha256", [sha256, row.id]);
   return r.rows.length ? row : undefined;
 }

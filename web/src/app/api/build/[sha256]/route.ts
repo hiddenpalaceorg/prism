@@ -38,11 +38,12 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   return Response.json({ build, similar: { ...similar, text_neighbors } });
 }
 
-// PATCH /api/build/<sha256> { name?, lot?, private?, lotPrivate?, game? } — moderator
-// metadata edit. `name` renames the build; `lot` assigns it to a display group
-// ("" or null clears); `private` hides the build from public list/search/similar;
-// `lotPrivate` hides/unhides the build's whole lot (current and future members);
-// `game` names the game the build belongs to (created if new; "" or null clears).
+// PATCH /api/build/<sha256> { name?, lot?, private?, lotPrivate?, game?, gameSystem? }
+// — moderator metadata edit. `name` renames the build; `lot` assigns it to a
+// display group ("" or null clears); `private` hides the build from public
+// list/search/similar; `lotPrivate` hides/unhides the build's whole lot
+// (current and future members); `game` (+ optional `gameSystem`) names the
+// game the build belongs to (created if new; "" or null clears).
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   if (!(await getModerator(request))) {
     return moderationEnabled()
@@ -98,6 +99,13 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
     }
     game = ((body.game as string | null) ?? "").trim() || null;
   }
+  if (body.gameSystem !== undefined && typeof body.gameSystem !== "string") {
+    return Response.json({ error: "gameSystem must be a string" }, { status: 400 });
+  }
+  const gameSystem = ((body.gameSystem as string | undefined) ?? "").trim();
+  if (gameSystem.length > MAX_GAME_LEN) {
+    return Response.json({ error: `gameSystem exceeds ${MAX_GAME_LEN} characters` }, { status: 400 });
+  }
   const hasFields = fields.name !== undefined || fields.lot !== undefined || fields.private !== undefined;
   if (!hasFields && lotPrivate === undefined && game === undefined) {
     return Response.json({ error: "nothing to update (name, lot, private, lotPrivate and/or game required)" }, { status: 400 });
@@ -121,9 +129,9 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
   if (lotPrivate !== undefined && effectiveLot) {
     await setLotPrivate(pool, effectiveLot, lotPrivate);
   }
-  let gameRow: { id: number; name: string } | null | undefined;
+  let gameRow: { id: number; name: string; system: string; slug: string | null } | null | undefined;
   if (game !== undefined) {
-    gameRow = await setBuildGame(pool, sha256, game);
+    gameRow = await setBuildGame(pool, sha256, game, gameSystem);
     if (gameRow === undefined) return Response.json({ error: "not found" }, { status: 404 });
   }
 
@@ -160,6 +168,8 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
     lot: effectiveLot,
     ...(fields.private !== undefined ? { private: fields.private } : {}),
     ...(lotPrivate !== undefined ? { lotPrivate } : {}),
-    ...(game !== undefined ? { game: gameRow?.name ?? null } : {}),
+    ...(game !== undefined
+      ? { game: gameRow?.name ?? null, gameSystem: gameRow?.system ?? null, gameSlug: gameRow?.slug ?? null }
+      : {}),
   });
 }

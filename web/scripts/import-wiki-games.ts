@@ -6,21 +6,30 @@
 //        (env DATABASE_URL)
 //
 // Joins builds to wiki downloads by archive sha1, then per matched build:
-//  - upserts the infobox "game" into games and sets builds.game_id — only
-//    when game_id is NULL, so re-runs never clobber a moderator's assignment;
+//  - upserts the infobox (game, system) pair into games (with its
+//    /games/<slug> segment) and points builds.game_id at it. A NULL game_id
+//    is filled; an existing assignment is migrated only when its current
+//    game NAME equals the wiki-derived one (re-keying to the system-specific
+//    row) — a moderator's different choice is never clobbered;
 //  - renames the build to the article's as-typed File title (underscores and
 //    spaces are interchangeable in MediaWiki titles, so the imported
 //    underscored disk name is "supposed to be" the spaced title). A build
 //    whose name no longer corresponds to its wiki file — i.e. a moderator
 //    renamed it — is left alone. Game names are imported verbatim: infobox
 //    text keeps intentional underscores (WATCH_DOGS), unlike file names.
+// Any games row still missing a slug gets one (base slug, "-<id>" when a
+// near-duplicate spelling took the base).
 // --underscore-unmatched additionally rewrites _ to space in the name of
 // every build whose sha1 is NOT in the map — only safe when every such build
 // is known to carry a pristine wiki filename (e.g. curator_wiki, or strays
 // whose wiki download was replaced after the dump was taken).
+// --prune deletes games no build references afterwards (safe because games
+// exist only through imports and assignments; an unassigned game is dead
+// weight the combobox recreates on demand).
 
 import fs from "node:fs";
 import pg from "pg";
+import { gameSlug } from "../src/lib/slug";
 import { loadDotEnv } from "./dotenv";
 
 interface MapDownload {
@@ -83,13 +92,12 @@ async function main() {
   ).rows as { sha256: string; sha1: string; name: string; game_id: string | null }[];
 
   const renames: { sha256: string; name: string }[] = [];
-  const assigns: { sha256: string; game: string }[] = [];
+  const assigns: { sha256: string; game: string; system: string }[] = [];
   const stats = {
     builds: rows.length,
     matched: 0,
     renamed: 0,
-    game_set: 0,
-    game_already_set: 0,
+    game_assignable: 0,
     no_infobox_game: 0,
     ambiguous_game: 0,
     unmatched: 0,
@@ -124,26 +132,35 @@ async function main() {
       stats.renamed++;
     }
 
-    const games = new Set(
-      [...e.articles]
-        .map((a) => proto.articles[a]?.prototype?.game?.trim())
-        .filter((g): g is string => !!g)
-    );
-    if (b.game_id != null) {
-      stats.game_already_set++;
-    } else if (games.size === 1) {
-      assigns.push({ sha256: b.sha256, game: [...games][0] });
-      stats.game_set++;
-    } else if (games.size > 1) {
+    // Distinct (game, system) pairs across the articles linking this file;
+    // the same title on two systems is two different games.
+    const pairs = new Map<string, { game: string; system: string }>();
+    for (const a of e.articles) {
+      const pr = proto.articles[a]?.prototype;
+      const g = pr?.game?.trim();
+      if (!g) continue;
+      const s = pr?.system?.trim() ?? "";
+      pairs.set(`${g}\0${s}`, { game: g, system: s });
+    }
+    if (pairs.size === 1) {
+      const [p] = pairs.values();
+      assigns.push({ sha256: b.sha256, ...p });
+      stats.game_assignable++;
+    } else if (pairs.size > 1) {
       stats.ambiguous_game++;
-      console.error(`ambiguous game for ${b.name} (${b.sha256.slice(0, 12)}): ${[...games].join(" | ")}`);
+      console.error(
+        `ambiguous game for ${b.name} (${b.sha256.slice(0, 12)}): ` +
+          [...pairs.values()].map((p) => `${p.game} [${p.system}]`).join(" | ")
+      );
     } else {
       stats.no_infobox_game++;
     }
   }
 
-  const gameNames = [...new Set(assigns.map((a) => a.game))].sort();
-  console.log(JSON.stringify({ ...stats, distinct_games: gameNames.length }, null, 2));
+  const pairKeys = new Map<string, { game: string; system: string }>();
+  for (const a of assigns) pairKeys.set(`${a.game}\0${a.system}`, { game: a.game, system: a.system });
+  const distinctPairs = [...pairKeys.values()];
+  console.log(JSON.stringify({ ...stats, distinct_games: distinctPairs.length }, null, 2));
   if (dryRun) {
     const byName = new Map(rows.map((b) => [b.sha256, b.name]));
     for (const r of renames) console.error(`rename: ${byName.get(r.sha256)}  ->  ${r.name}`);
@@ -151,19 +168,27 @@ async function main() {
     return;
   }
 
+  const prune = process.argv.includes("--prune");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const created = await client.query(
-      "INSERT INTO games(name) SELECT unnest($1::text[]) ON CONFLICT (name) DO NOTHING",
-      [gameNames]
+      `INSERT INTO games(name, system)
+       SELECT * FROM unnest($1::text[], $2::text[])
+       ON CONFLICT (name, system) DO NOTHING`,
+      [distinctPairs.map((p) => p.game), distinctPairs.map((p) => p.system)]
     );
-    await client.query(
+    // Fill NULL game_id, and re-key assignments whose current game NAME is
+    // the wiki-derived one (v1 name-only rows migrate to the (name, system)
+    // row); a moderator's different choice stays.
+    const assigned = await client.query(
       `UPDATE builds b SET game_id = g.id
-       FROM unnest($1::text[], $2::text[]) AS u(sha256, game)
-       JOIN games g ON g.name = u.game
-       WHERE b.sha256 = u.sha256 AND b.game_id IS NULL`,
-      [assigns.map((a) => a.sha256), assigns.map((a) => a.game)]
+       FROM unnest($1::text[], $2::text[], $3::text[]) AS u(sha256, game, system)
+       JOIN games g ON g.name = u.game AND g.system = u.system
+       WHERE b.sha256 = u.sha256 AND b.game_id IS DISTINCT FROM g.id
+         AND (b.game_id IS NULL
+              OR EXISTS (SELECT 1 FROM games cur WHERE cur.id = b.game_id AND cur.name = u.game))`,
+      [assigns.map((a) => a.sha256), assigns.map((a) => a.game), assigns.map((a) => a.system)]
     );
     await client.query(
       `UPDATE builds b SET name = u.name
@@ -171,8 +196,38 @@ async function main() {
        WHERE b.sha256 = u.sha256`,
       [renames.map((r) => r.sha256), renames.map((r) => r.name)]
     );
+    const pruned = prune
+      ? (
+          await client.query(
+            "DELETE FROM games g WHERE NOT EXISTS (SELECT 1 FROM builds WHERE game_id = g.id)"
+          )
+        ).rowCount
+      : 0;
+    // Slug backfill for every row still missing one, in id order so the
+    // first spelling keeps the base and later near-duplicates get "-<id>".
+    const taken = new Set(
+      (await client.query("SELECT slug FROM games WHERE slug IS NOT NULL")).rows.map((r) => r.slug as string)
+    );
+    const bare = (
+      await client.query("SELECT id::int AS id, name, system FROM games WHERE slug IS NULL ORDER BY id")
+    ).rows as { id: number; name: string; system: string }[];
+    const slugged = bare.map((g) => {
+      const base = gameSlug(g.name, g.system);
+      const slug = taken.has(base) ? `${base}-${g.id}` : base;
+      taken.add(slug);
+      return { id: g.id, slug };
+    });
+    await client.query(
+      `UPDATE games g SET slug = u.slug
+       FROM unnest($1::int[], $2::text[]) AS u(id, slug)
+       WHERE g.id = u.id`,
+      [slugged.map((s) => s.id), slugged.map((s) => s.slug)]
+    );
     await client.query("COMMIT");
-    console.log(`games created: ${created.rowCount}; game_id set: ${assigns.length}; renamed: ${renames.length}`);
+    console.log(
+      `games created: ${created.rowCount}; game_id set: ${assigned.rowCount}; ` +
+        `renamed: ${renames.length}; slugs filled: ${slugged.length}; pruned: ${pruned}`
+    );
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
