@@ -640,7 +640,8 @@ fn strip_track_suffix(stem: &str) -> Option<&str> {
 /// over the folder's: the descriptor stem when every track file corroborates it
 /// (`Build Name.cue` + `Build Name (Track 1).bin` → "Build Name"), else the
 /// tracks' shared prefix (`Game (Track 1).bin` + `Game (Track 2).bin` →
-/// "Game"), else the folder name. Corroboration keeps generic descriptors out:
+/// "Game"), else a lone image file's stem (`Dump 1/asdf.iso` → "asdf"), else
+/// the folder name. Corroboration keeps generic descriptors out:
 /// a GDI dump's `disc.gdi` + `track01.bin` would otherwise name the build
 /// "disc". Display only: identity never depends on names (see
 /// [`fingerprint::hash_image`]).
@@ -697,6 +698,15 @@ pub fn folder_build_name(root: &Path) -> String {
             if !prefix.is_empty() {
                 return stems[0][..prefix.len()].to_string();
             }
+        }
+    }
+
+    // A folder wrapping one lone image names the build after that file. Bare
+    // track labels ("track01") are excluded — such a file only means something
+    // inside its folder, which then does the naming.
+    if let [stem] = stems.as_slice() {
+        if !stem.is_empty() && strip_track_suffix(&lower_stems[0]).is_none() {
+            return stem.clone();
         }
     }
 
@@ -994,6 +1004,23 @@ mod folder_build_tests {
         touch(&root, "Jet Set Radio (Track 2).bin");
         assert_eq!(folder_build_name(&root), "Jet Set Radio");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn folder_build_name_uses_lone_image_stem() {
+        // One image, no descriptor: the file names the build, not the folder.
+        let root = scratch("name-lone");
+        touch(&root, "asdf.iso");
+        assert_eq!(folder_build_name(&root), "asdf");
+
+        // A bare track label doesn't count as the dump's own name.
+        let root2 = scratch("name-lone-track");
+        touch(&root2, "disc.gdi");
+        touch(&root2, "track01.bin");
+        assert_eq!(folder_build_name(&root2), root2.file_name().unwrap().to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
     }
 
     #[test]
