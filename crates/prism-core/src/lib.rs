@@ -640,7 +640,10 @@ fn strip_track_suffix(stem: &str) -> Option<&str> {
 /// over the folder's: the descriptor stem when every track file corroborates it
 /// (`Build Name.cue` + `Build Name (Track 1).bin` → "Build Name"), else the
 /// tracks' shared prefix (`Game (Track 1).bin` + `Game (Track 2).bin` →
-/// "Game"), else the folder name. Corroboration keeps generic descriptors out:
+/// "Game"), else the one stem all importable files share (`Dump 1/asdf.iso` →
+/// "asdf", and likewise a raw dump's same-named sidecar family `x.scram` +
+/// `x.toc` + `x.atip` → "x"), else the folder name. Corroboration keeps
+/// generic descriptors out:
 /// a GDI dump's `disc.gdi` + `track01.bin` would otherwise name the build
 /// "disc". Display only: identity never depends on names (see
 /// [`fingerprint::hash_image`]).
@@ -697,6 +700,19 @@ pub fn folder_build_name(root: &Path) -> String {
             if !prefix.is_empty() {
                 return stems[0][..prefix.len()].to_string();
             }
+        }
+    }
+
+    // All importable files sharing one stem — a lone image, or an image with
+    // same-named sidecars (raw dumps: x.scram + x.toc + x.atip) — name the
+    // build after that stem. Bare track labels ("track01") are excluded — such
+    // files only mean something inside their folder, which then does the naming.
+    if let Some((first, rest)) = lower_stems.split_first() {
+        if !first.is_empty()
+            && rest.iter().all(|s| s == first)
+            && strip_track_suffix(first).is_none()
+        {
+            return stems[0].clone();
         }
     }
 
@@ -994,6 +1010,44 @@ mod folder_build_tests {
         touch(&root, "Jet Set Radio (Track 2).bin");
         assert_eq!(folder_build_name(&root), "Jet Set Radio");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn folder_build_name_uses_lone_image_stem() {
+        // One image, no descriptor: the file names the build, not the folder.
+        let root = scratch("name-lone");
+        touch(&root, "asdf.iso");
+        assert_eq!(folder_build_name(&root), "asdf");
+
+        // A bare track label doesn't count as the dump's own name.
+        let root2 = scratch("name-lone-track");
+        touch(&root2, "disc.gdi");
+        touch(&root2, "track01.bin");
+        assert_eq!(folder_build_name(&root2), root2.file_name().unwrap().to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
+    }
+
+    #[test]
+    fn folder_build_name_uses_shared_sidecar_stem() {
+        // Raw-dump family: several importable files, one stem between them.
+        let root = scratch("name-raw");
+        touch(&root, "Icewind Dale Ads 12-11-99 1280.scram");
+        touch(&root, "Icewind Dale Ads 12-11-99 1280.toc");
+        touch(&root, "Icewind Dale Ads 12-11-99 1280.atip");
+        touch(&root, "Icewind Dale Ads 12-11-99 1280.log");
+        touch(&root, "Icewind Dale Ads 12-11-99 1280.subcode"); // blocklisted sidecar
+        assert_eq!(folder_build_name(&root), "Icewind Dale Ads 12-11-99 1280");
+
+        // Two stems: no self-naming, the folder names it.
+        let root2 = scratch("name-two-stems");
+        touch(&root2, "game-a.iso");
+        touch(&root2, "game-b.iso");
+        assert_eq!(folder_build_name(&root2), root2.file_name().unwrap().to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
     }
 
     #[test]
