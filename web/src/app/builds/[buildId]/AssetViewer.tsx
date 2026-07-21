@@ -5,6 +5,7 @@
 // once seen comes back from browser cache). ← → step through the list, Esc closes.
 
 import { useEffect, useState } from "react";
+import { humanSize } from "@/lib/format";
 import { hexDump } from "@/lib/hexdump";
 import SourceCode from "./SourceCode";
 
@@ -57,16 +58,7 @@ export function videoThumbSrc(a: ViewableAsset): string {
   return `${assetUrl(a)}/thumb`;
 }
 
-export function humanSize(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = bytes;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return i === 0 ? `${bytes} B` : `${v.toFixed(1)} ${units[i]}`;
-}
+export { humanSize };
 
 // Show at most this much decoded text — a 20MB DOM node makes the tab crawl.
 const TEXT_DISPLAY_CAP = 1_000_000;

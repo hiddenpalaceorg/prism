@@ -10,6 +10,7 @@
 // hunks), clicking through to that change's diff.
 
 import { Fragment, useEffect, useState } from "react";
+import { humanSize } from "@/lib/format";
 import { blameHunks, type BlameDto } from "@/lib/blame";
 import { splitLines } from "@/lib/linediff";
 import { formatCommitDate, type RepoLogEntryDto } from "@/lib/repo-manifest";
@@ -18,17 +19,6 @@ import type { LogState } from "./RepoViewer";
 
 // Same cap as the asset viewer: a 20MB DOM node makes the tab crawl.
 const TEXT_DISPLAY_CAP = 1_000_000;
-
-function humanSize(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = bytes;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return i === 0 ? `${bytes} B` : `${v.toFixed(1)} ${units[i]}`;
-}
 
 function TextBody({ url, path }: { url: string; path: string }) {
   const [state, setState] = useState<{ text: string; truncated: boolean } | "loading" | "error">("loading");

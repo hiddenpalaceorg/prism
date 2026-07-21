@@ -1,14 +1,8 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-
-// The token never changes while the page is mounted (it's set on /moderate),
-// so there is nothing to subscribe to — the store only bridges the SSR/client
-// gap: the server snapshot renders nothing, hydration reveals the saved token.
-const noSubscribe = () => () => {};
-const clientToken = () => sessionStorage.getItem("prism-mod-token") ?? "";
-const serverToken = () => "";
+import { useModerator } from "@/components/useModerator";
 
 interface Props {
   sha256: string;
@@ -35,8 +29,7 @@ interface Props {
 // name+lot, so a router.refresh() after a save remounts it with fresh values.
 export default function ModeratorTools({ sha256, name, lot, lots, game, gameSystem, privateFlag, lotPrivate, skips }: Props) {
   const router = useRouter();
-  const token = useSyncExternalStore(noSubscribe, clientToken, serverToken);
-  const [wikiModerator, setWikiModerator] = useState(false);
+  const { moderator: visible, token } = useModerator();
   const [nameInput, setNameInput] = useState(name);
   const [lotInput, setLotInput] = useState(lot ?? "");
   const [gameInput, setGameInput] = useState(game ?? "");
@@ -45,22 +38,9 @@ export default function ModeratorTools({ sha256, name, lot, lots, game, gameSyst
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
-  useEffect(() => {
-    if (token) return;
-    let cancelled = false;
-    fetch("/api/whoami", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((w) => !cancelled && setWikiModerator(!!w.moderator))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
   // Game suggestions come from the server as you type (there are thousands of
   // games — too many to embed like the lot list). Debounced; stale responses
   // are dropped so a slow early query can't overwrite a fresh one.
-  const visible = !!token || wikiModerator;
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;

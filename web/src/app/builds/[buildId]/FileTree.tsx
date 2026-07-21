@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { humanSize } from "@/lib/format";
 import {
   collectDirPaths,
   findByPath,
@@ -13,18 +14,6 @@ import { useOpenAsset } from "./AssetViewerHost";
 
 // Chip label on viewable file rows, by asset kind.
 const KIND_TAG: Record<string, string> = { image: "img", audio: "aud", video: "vid", source: "src", text: "txt", binary: "hex" };
-
-function humanSize(bytes?: number): string {
-  if (bytes == null) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = bytes;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return i === 0 ? `${bytes} B` : `${v.toFixed(1)} ${units[i]}`;
-}
 
 function formatDate(date?: string): string {
   if (!date) return "—";
