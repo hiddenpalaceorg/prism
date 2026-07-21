@@ -859,6 +859,40 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // Hand-rolled tree/detail splitter: the toolkit's GridSplitter would pull
+    // the WindowsAppSDK meta package back in (see the csproj note).
+    private bool _treeSizing;
+    private double _treeSizeStartX;
+    private double _treeSizeStartWidth;
+
+    private void TreeSizer_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(BuildPane);
+        if (point.Properties.IsRightButtonPressed) return;
+        _treeSizing = ((UIElement)sender).CapturePointer(e.Pointer);
+        _treeSizeStartX = point.Position.X;
+        _treeSizeStartWidth = TreeColumn.ActualWidth;
+    }
+
+    private void TreeSizer_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_treeSizing) return;
+        var dx = e.GetCurrentPoint(BuildPane).Position.X - _treeSizeStartX;
+        TreeColumn.Width = new GridLength(Math.Clamp(
+            _treeSizeStartWidth + dx, TreeColumn.MinWidth, TreeColumn.MaxWidth));
+    }
+
+    private void TreeSizer_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        _treeSizing = false;
+        ((UIElement)sender).ReleasePointerCapture(e.Pointer);
+    }
+
+    private void TreeSizer_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        _treeSizing = false;
+    }
+
     // ---- assets ----
 
     private static readonly string[] AssetKindOrder = { "image", "audio", "video", "document", "source", "text", "binary" };
