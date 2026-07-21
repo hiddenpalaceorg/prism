@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
 import { enqueueSubmission, listSubmissions } from "@/lib/queries";
-import { getModerator, moderationEnabled } from "@/lib/auth";
+import { requireModerator } from "@/lib/auth";
 import { MAX_BODY_BYTES, MAX_NICKNAME_LEN, validateBuildRecord } from "@/lib/validate";
 import { rateLimit, clientKey } from "@/lib/ratelimit";
 import type { BuildRecord } from "@/lib/types";
@@ -11,12 +11,8 @@ export const dynamic = "force-dynamic";
 
 // GET /api/submissions?status=queued — the moderation queue. Requires moderator auth.
 export async function GET(request: NextRequest) {
-  if (!moderationEnabled()) {
-    return Response.json({ error: "moderation disabled (set MODERATION_TOKEN or WIKI_API_URL)" }, { status: 403 });
-  }
-  if (!(await getModerator(request))) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const denied = await requireModerator(request);
+  if (denied) return denied;
   const status = request.nextUrl.searchParams.get("status") ?? undefined;
   const items = await listSubmissions(getPool(), status);
   return Response.json({ submissions: items });

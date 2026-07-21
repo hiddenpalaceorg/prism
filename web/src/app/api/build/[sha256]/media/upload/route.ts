@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { getPool } from "@/lib/db";
-import { getContributor, contributionTarget } from "@/lib/contrib";
+import { requireContributor } from "@/lib/contrib";
 import {
   createMediaSession,
   isMediaKind,
@@ -28,16 +28,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
 
-  const contributor = await getContributor(request);
-  if (!contributor) {
-    return Response.json({ error: "log in to the wiki to contribute" }, { status: 401 });
-  }
   const pool = getPool();
-  const target = await contributionTarget(pool, sha256);
-  if (!target) return Response.json({ error: "not found" }, { status: 404 });
-  if (!target.visible && !contributor.moderator) {
-    return Response.json({ error: "this build is not open for contributions" }, { status: 403 });
-  }
+  const gate = await requireContributor(request, pool, sha256);
+  if (!gate.ok) return gate.response;
+  const { contributor } = gate;
 
   const rl = rateLimitCheck(`media:${contributor.name}:${clientKey(request)}`, CREATE_LIMIT, CREATE_WINDOW_MS);
   if (!rl.ok) {

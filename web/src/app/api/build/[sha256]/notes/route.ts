@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { getContributor, contributionTarget, revalidateBuildPages } from "@/lib/contrib";
+import { requireContributor, revalidateBuildPages } from "@/lib/contrib";
 import { getPool } from "@/lib/db";
 import { MAX_NOTE_LEN, insertNote } from "@/lib/media";
 import { clientKey, rateLimitCheck } from "@/lib/ratelimit";
@@ -17,16 +17,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
 
-  const contributor = await getContributor(request);
-  if (!contributor) {
-    return Response.json({ error: "log in to the wiki to contribute" }, { status: 401 });
-  }
   const pool = getPool();
-  const target = await contributionTarget(pool, sha256);
-  if (!target) return Response.json({ error: "not found" }, { status: 404 });
-  if (!target.visible && !contributor.moderator) {
-    return Response.json({ error: "this build is not open for contributions" }, { status: 403 });
-  }
+  const gate = await requireContributor(request, pool, sha256);
+  if (!gate.ok) return gate.response;
+  const { contributor, target } = gate;
 
   const rl = rateLimitCheck(`notes:${contributor.name}:${clientKey(request)}`, NOTE_LIMIT, NOTE_WINDOW_MS);
   if (!rl.ok) {

@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { bulkUpdateBuilds } from "@/lib/queries";
-import { getModerator, moderationEnabled } from "@/lib/auth";
+import { requireModerator } from "@/lib/auth";
 import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
 
@@ -19,11 +19,8 @@ export const dynamic = "force-dynamic";
 // PATCH /api/build/<sha256>; unknown sha256s are skipped, the response
 // carries how many rows actually changed.
 export async function POST(request: NextRequest) {
-  if (!(await getModerator(request))) {
-    return moderationEnabled()
-      ? Response.json({ error: "unauthorized" }, { status: 401 })
-      : Response.json({ error: "moderation disabled (set MODERATION_TOKEN or WIKI_API_URL)" }, { status: 403 });
-  }
+  const denied = await requireModerator(request);
+  if (denied) return denied;
 
   let body: Record<string, unknown>;
   try {

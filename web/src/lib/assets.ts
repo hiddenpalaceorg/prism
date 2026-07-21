@@ -2,11 +2,29 @@
 // Blobs are extracted by the desktop analyzer, shipped inside export bundles,
 // and stored by scripts/ingest.ts; the API routes stream them out by sha256.
 
+import { unstable_cache } from "next/cache";
 import { readBlobHead } from "./blobstore";
+import { getPool } from "./db";
 import { hexPreview } from "./hexdump";
 
 // Path helpers re-exported for the store-layout consumers (staging, tests).
 export { assetBlobPath, assetStagingPath, assetStoreDir } from "./blobstore";
+
+/** Serving metadata (stored path, mime, byte size) for one asset blob, or null
+ *  when the sha isn't a known asset. Immutable for a content hash, so the lookup
+ *  is cached — a gallery/poll burst for the same blob costs one query, not N.
+ *  Shared by every byte-serving asset route (raw, png, thumb, audio, video). */
+export const getAssetMeta = unstable_cache(
+  async (sha256: string): Promise<{ path: string; mime: string; size: number } | null> => {
+    const r = await getPool().query(
+      "SELECT path, mime, size::float8 AS size FROM build_asset WHERE sha256=$1 LIMIT 1",
+      [sha256]
+    );
+    return (r.rows[0] as { path: string; mime: string; size: number }) ?? null;
+  },
+  ["asset-meta"],
+  { revalidate: 3600 }
+);
 
 /** Public gateway URL for one blob when ASSET_PUBLIC_BASE points at a host
  *  serving the bucket's key layout directly (`<base>/<sha256[:2]>/<sha256>`),

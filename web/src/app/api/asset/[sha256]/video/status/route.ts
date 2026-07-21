@@ -1,4 +1,4 @@
-import { getPool } from "@/lib/db";
+import { getAssetMeta } from "@/lib/assets";
 import { ensureTranscode, transcodable, transcodeStatus } from "@/lib/ffmpeg";
 import { isSha256 } from "@/lib/validate";
 
@@ -15,8 +15,7 @@ export async function GET(_request: Request, ctx: { params: Promise<{ sha256: st
   const { sha256 } = await ctx.params;
   if (!isSha256(sha256)) return Response.json({ error: "invalid sha256" }, { status: 400 });
 
-  const r = await getPool().query("SELECT mime FROM build_asset WHERE sha256=$1 LIMIT 1", [sha256]);
-  const meta = r.rows[0] as { mime: string } | undefined;
+  const meta = await getAssetMeta(sha256);
   if (!meta) return Response.json({ error: "not found" }, { status: 404 });
 
   const headers = { "Cache-Control": "no-store" };

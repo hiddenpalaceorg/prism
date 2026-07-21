@@ -1,6 +1,7 @@
-import { Readable } from "node:stream";
 import type { NextRequest } from "next/server";
 import { blobSize, openBlobStream } from "@/lib/blobstore";
+import { IMMUTABLE_CACHE, SANDBOX_CSP, contentDisposition, streamResponse } from "@/lib/http";
+import { parseRange } from "@/lib/range";
 import { loadRepo, repoAttached } from "@/lib/repo";
 import { isSha256 } from "@/lib/validate";
 
@@ -14,20 +15,6 @@ export const runtime = "nodejs";
 //
 // Headers mirror /api/asset: repo blobs are only ever text/plain (inline) or
 // opaque bytes (attachment), never anything a browser could script with.
-const CACHE = "public, max-age=31536000, immutable";
-const CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
-
-/** One satisfiable `bytes=start-end` range, else null (serve the whole file). */
-function parseRange(header: string | null, size: number): { start: number; end: number } | null {
-  const m = header?.match(/^bytes=(\d*)-(\d*)$/);
-  if (!m || size === 0) return null;
-  const [, a, b] = m;
-  if (a === "" && b === "") return null;
-  const start = a === "" ? Math.max(0, size - Number(b)) : Number(a);
-  const end = a !== "" && b !== "" ? Math.min(Number(b), size - 1) : size - 1;
-  if (start > end || start >= size) return null;
-  return { start, end };
-}
 
 export async function GET(
   request: NextRequest,
@@ -45,7 +32,7 @@ export async function GET(
   const [storeSha, , binary] = info;
 
   if (request.headers.get("if-none-match") === `"${oid}"`) {
-    return new Response(null, { status: 304, headers: { "Cache-Control": CACHE, ETag: `"${oid}"` } });
+    return new Response(null, { status: 304, headers: { "Cache-Control": IMMUTABLE_CACHE, ETag: `"${oid}"` } });
   }
 
   const size = await blobSize(storeSha);
@@ -55,26 +42,18 @@ export async function GET(
   }
 
   const name = request.nextUrl.searchParams.get("name") || oid;
-  const asciiName = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   const headers: Record<string, string> = {
     "Content-Type": binary ? "application/octet-stream" : "text/plain; charset=utf-8",
-    "Content-Disposition": `${binary ? "attachment" : "inline"}; filename="${asciiName}"`,
-    "Cache-Control": CACHE,
+    "Content-Disposition": contentDisposition(name, !binary),
+    "Cache-Control": IMMUTABLE_CACHE,
     ETag: `"${oid}"`,
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": CSP,
+    "Content-Security-Policy": SANDBOX_CSP,
     "Accept-Ranges": "bytes",
   };
 
   const range = parseRange(request.headers.get("range"), size);
   const stream = await openBlobStream(storeSha, range ?? undefined);
   if (!stream) return Response.json({ error: "blob bytes not in store" }, { status: 404 });
-  if (range) {
-    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${size}`;
-    headers["Content-Length"] = String(range.end - range.start + 1);
-    return new Response(Readable.toWeb(stream) as ReadableStream, { status: 206, headers });
-  }
-
-  headers["Content-Length"] = String(size);
-  return new Response(Readable.toWeb(stream) as ReadableStream, { status: 200, headers });
+  return streamResponse(stream, size, range, headers);
 }
