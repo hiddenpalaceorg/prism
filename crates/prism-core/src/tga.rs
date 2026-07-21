@@ -74,7 +74,7 @@ fn decode(b: &[u8]) -> Result<Decoded, String> {
         if !matches!(cmap_bits, 15 | 16 | 24 | 32) {
             return Err(format!("unsupported TGA palette depth {cmap_bits}"));
         }
-        let entry_bytes = (cmap_bits as usize + 7) / 8;
+        let entry_bytes = (cmap_bits as usize).div_ceil(8);
         let end = off + cmap_len * entry_bytes;
         if end > b.len() {
             return Err("truncated TGA".into());
@@ -87,7 +87,7 @@ fn decode(b: &[u8]) -> Result<Decoded, String> {
         off = end;
     }
 
-    let bpp = (depth as usize + 7) / 8;
+    let bpp = (depth as usize).div_ceil(8);
     let count = (width * height) as usize;
 
     // Bound the up-front allocation: a valid stream must carry at least this many

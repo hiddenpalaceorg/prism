@@ -1211,10 +1211,11 @@ mod app {
             if !p.is_null() {
                 std::ptr::copy_nonoverlapping(wtext.as_ptr(), p as *mut u16, wtext.len());
                 let _ = GlobalUnlock(hmem);
-                // CF_UNICODETEXT = 13. On success the clipboard owns the memory.
-                if SetClipboardData(13u32, HANDLE(hmem.0)).is_err() {
-                    let _ = GlobalUnlock(hmem); // best-effort; free not exposed here
-                }
+                // CF_UNICODETEXT = 13. On success the clipboard takes ownership. On
+                // the rare failure the moveable global leaks — GlobalFree isn't in the
+                // enabled windows-crate features, and the old second GlobalUnlock here
+                // (the handle was already unlocked) neither freed it nor did anything.
+                let _ = SetClipboardData(13u32, HANDLE(hmem.0));
             }
         }
         let _ = CloseClipboard();
