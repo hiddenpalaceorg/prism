@@ -89,6 +89,21 @@ fn decode(b: &[u8]) -> Result<Decoded, String> {
 
     let bpp = (depth as usize + 7) / 8;
     let count = (width * height) as usize;
+
+    // Bound the up-front allocation: a valid stream must carry at least this many
+    // bytes of pixel data, so a tiny (18-byte) header can't force a huge zero-fill
+    // before the pixel loop ever validates the stream — a decode-bomb guard. RLE
+    // encodes at best 128 pixels per packet (1 header byte + one pixel's bytes).
+    let avail = b.len().checked_sub(off).ok_or("truncated TGA")?;
+    let min_bytes = if image_type >= 9 {
+        count.div_ceil(128) * (1 + bpp)
+    } else {
+        count * bpp
+    };
+    if avail < min_bytes {
+        return Err("truncated TGA".into());
+    }
+
     let mut px = vec![0u8; count * 4]; // RGBA in file scan order
 
     let to_rgba = |p: &[u8]| -> Result<[u8; 4], String> {
@@ -269,5 +284,14 @@ mod tests {
         // Truncated pixel data.
         let short = header(2, 4, 4, 24, 0);
         assert!(tga_to_bmp(&short).is_err());
+    }
+
+    #[test]
+    fn rle_bomb_rejected_before_alloc() {
+        // Large (but under the pixel cap) RLE dimensions with almost no data:
+        // must be rejected up front, not zero-fill a huge buffer first.
+        let mut bomb = header(10, 4000, 4000, 24, 0);
+        bomb.extend_from_slice(&[0x80, 1, 2, 3]); // one packet, nowhere near enough
+        assert!(tga_to_bmp(&bomb).is_err());
     }
 }

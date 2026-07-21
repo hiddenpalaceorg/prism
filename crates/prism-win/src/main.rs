@@ -2271,6 +2271,10 @@ mod app {
     }
 
     unsafe fn read_all(req: *mut core::ffi::c_void) -> String {
+        // Every expected response is small JSON; cap the accumulation so a
+        // compromised or misbehaving endpoint can't stream unbounded data into
+        // memory.
+        const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
         let mut data: Vec<u8> = Vec::new();
         let mut buf = [0u8; 8192];
         loop {
@@ -2287,6 +2291,9 @@ mod app {
                 break;
             }
             data.extend_from_slice(&buf[..read as usize]);
+            if data.len() >= MAX_RESPONSE_BYTES {
+                break;
+            }
         }
         String::from_utf8_lossy(&data).into_owned()
     }
