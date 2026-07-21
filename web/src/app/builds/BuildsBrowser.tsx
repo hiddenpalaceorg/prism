@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import RowLink from "./RowLink";
+import MassApply from "@/components/MassApply";
 import Select from "@/components/Select";
+import { useModerator } from "@/components/useModerator";
 import { buildHref } from "@/lib/slug";
 import type { BuildListItem, BuildSortKey } from "@/lib/queries";
 
@@ -47,6 +49,27 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
   const [isPending, startTransition] = useTransition();
   const [input, setInput] = useState(q);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bulk moderation: selection is keyed by sha256 and survives paging, so a
+  // moderator can gather builds across pages and apply once.
+  const { moderator, token } = useModerator();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSelected = (sha: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(sha)) next.delete(sha);
+      else next.add(sha);
+      return next;
+    });
+  const pageSelected = rows.length > 0 && rows.every((b) => selected.has(b.sha256));
+  const togglePage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const b of rows) {
+        if (pageSelected) next.delete(b.sha256);
+        else next.add(b.sha256);
+      }
+      return next;
+    });
 
   const navigate = (
     next: Partial<{ q: string; system: string; lot: string; sort: BuildSortKey; dir: "asc" | "desc"; page: number }>,
@@ -113,12 +136,34 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
         </span>
       </div>
 
+      {moderator && (
+        <MassApply
+          selected={[...selected]}
+          token={token}
+          onClear={() => setSelected(new Set())}
+          onDone={() => {
+            setSelected(new Set());
+            router.refresh();
+          }}
+        />
+      )}
+
       {rows.length === 0 ? (
         <p className="mt-6 text-sm text-neutral-500">No builds match.</p>
       ) : (
         <table className={`mt-4 w-full border-collapse text-sm ${isPending ? "opacity-60" : ""}`}>
           <thead>
             <tr className="border-b border-neutral-200/80 text-left text-xs font-medium text-neutral-400 dark:border-neutral-800/80">
+              {moderator && (
+                <th className="w-6 py-1.5 pr-2">
+                  <input
+                    type="checkbox"
+                    checked={pageSelected}
+                    onChange={togglePage}
+                    aria-label="Select all builds on this page"
+                  />
+                </th>
+              )}
               <Th label="Name" sortKey="name" sort={sort} dir={dir} onSort={toggleSort} />
               <th className="px-3 py-1.5">SHA-256</th>
               <Th label="System" sortKey="system" sort={sort} dir={dir} onSort={toggleSort} />
@@ -136,7 +181,17 @@ export default function BuildsBrowser({ rows, total, systems, page, perPage, q, 
               const href = buildHref(b.sha256, b.name);
               return (
               <tr key={b.sha256} className="hover:bg-neutral-50 dark:hover:bg-neutral-900/40">
-                <td className="h-full p-0 font-medium first:[&>a]:pl-0">
+                {moderator && (
+                  <td className="py-0 pr-2">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(b.sha256)}
+                      onChange={() => toggleSelected(b.sha256)}
+                      aria-label={`Select ${b.name}`}
+                    />
+                  </td>
+                )}
+                <td className="h-full p-0 font-medium [&>a]:pl-0">
                   <RowLink href={href} focusable className="px-3 hover:underline">
                     {b.name}
                     {b.lot && (
