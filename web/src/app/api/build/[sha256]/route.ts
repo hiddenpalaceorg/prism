@@ -2,13 +2,14 @@ import type { NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
-import { getBuild, findSimilar, findByEmbeddingOf, getLotBuilds, updateBuildMeta, setLotPrivate } from "@/lib/queries";
+import { getBuild, findSimilar, findByEmbeddingOf, getLotBuilds, updateBuildMeta, setLotPrivate, setBuildGame } from "@/lib/queries";
 import { getModerator, moderationEnabled } from "@/lib/auth";
 import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
 
 const MAX_NAME_LEN = 300;
 const MAX_LOT_LEN = 200;
+const MAX_GAME_LEN = 200;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,10 +38,12 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ sha256:
   return Response.json({ build, similar: { ...similar, text_neighbors } });
 }
 
-// PATCH /api/build/<sha256> { name?, lot?, private?, lotPrivate? } — moderator
-// metadata edit. `name` renames the build; `lot` assigns it to a display group
-// ("" or null clears); `private` hides the build from public list/search/similar;
-// `lotPrivate` hides/unhides the build's whole lot (current and future members).
+// PATCH /api/build/<sha256> { name?, lot?, private?, lotPrivate?, game?, gameSystem? }
+// — moderator metadata edit. `name` renames the build; `lot` assigns it to a
+// display group ("" or null clears); `private` hides the build from public
+// list/search/similar; `lotPrivate` hides/unhides the build's whole lot
+// (current and future members); `game` (+ optional `gameSystem`) names the
+// game the build belongs to (created if new; "" or null clears).
 export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
   if (!(await getModerator(request))) {
     return moderationEnabled()
@@ -86,9 +89,26 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
   if (lotPrivate !== undefined && typeof lotPrivate !== "boolean") {
     return Response.json({ error: "lotPrivate must be a boolean" }, { status: 400 });
   }
+  let game: string | null | undefined;
+  if (body.game !== undefined) {
+    if (body.game !== null && typeof body.game !== "string") {
+      return Response.json({ error: "game must be a string or null" }, { status: 400 });
+    }
+    if (typeof body.game === "string" && body.game.length > MAX_GAME_LEN) {
+      return Response.json({ error: `game exceeds ${MAX_GAME_LEN} characters` }, { status: 400 });
+    }
+    game = ((body.game as string | null) ?? "").trim() || null;
+  }
+  if (body.gameSystem !== undefined && typeof body.gameSystem !== "string") {
+    return Response.json({ error: "gameSystem must be a string" }, { status: 400 });
+  }
+  const gameSystem = ((body.gameSystem as string | undefined) ?? "").trim();
+  if (gameSystem.length > MAX_GAME_LEN) {
+    return Response.json({ error: `gameSystem exceeds ${MAX_GAME_LEN} characters` }, { status: 400 });
+  }
   const hasFields = fields.name !== undefined || fields.lot !== undefined || fields.private !== undefined;
-  if (!hasFields && lotPrivate === undefined) {
-    return Response.json({ error: "nothing to update (name, lot, private and/or lotPrivate required)" }, { status: 400 });
+  if (!hasFields && lotPrivate === undefined && game === undefined) {
+    return Response.json({ error: "nothing to update (name, lot, private, lotPrivate and/or game required)" }, { status: 400 });
   }
 
   const pool = getPool();
@@ -108,6 +128,11 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
   }
   if (lotPrivate !== undefined && effectiveLot) {
     await setLotPrivate(pool, effectiveLot, lotPrivate);
+  }
+  let gameRow: { id: number; name: string; system: string; slug: string | null } | null | undefined;
+  if (game !== undefined) {
+    gameRow = await setBuildGame(pool, sha256, game, gameSystem);
+    if (gameRow === undefined) return Response.json({ error: "not found" }, { status: 404 });
   }
 
   // Build pages are ISR-cached (revalidate = 3600); surface the edit now. A
@@ -143,5 +168,8 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
     lot: effectiveLot,
     ...(fields.private !== undefined ? { private: fields.private } : {}),
     ...(lotPrivate !== undefined ? { lotPrivate } : {}),
+    ...(game !== undefined
+      ? { game: gameRow?.name ?? null, gameSystem: gameRow?.system ?? null, gameSlug: gameRow?.slug ?? null }
+      : {}),
   });
 }
