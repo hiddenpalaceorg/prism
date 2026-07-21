@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { getModeratorFromHeaders } from "@/lib/auth";
 import { getPool } from "@/lib/db";
 import { getGameAssets, getGameBySlug } from "@/lib/queries";
-import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
+import { assetExcerpts, assetMonths, assetTotals, orderAssets } from "@/lib/assets";
 import { safeDecodeSegment } from "@/lib/slug";
 import AssetGallery from "../../../../builds/[buildId]/AssetGallery";
 import AssetViewerHost from "../../../../builds/[buildId]/AssetViewerHost";
@@ -46,7 +46,13 @@ export default async function GameAssetsPage({ params }: Params) {
   // matching the game page itself.
   const includePrivate = !!(await getModeratorFromHeaders(await headers()));
   const assets = await getGameAssets(pool, game.id, includePrivate);
-  const ordered = orderAssets(assets);
+  // Same month timeline as the game page, uncapped.
+  const months = assetMonths(assets).map((m) => ({
+    ...m,
+    ordered: orderAssets(m.assets),
+    totals: assetTotals(m.assets),
+  }));
+  const ordered = months.flatMap((m) => m.ordered);
   const excerpts = await assetExcerpts(ordered, MAX_EXCERPT_READS);
 
   // Deep link: open the viewer on the named file; unknown paths just render
@@ -67,7 +73,17 @@ export default async function GameAssetsPage({ params }: Params) {
         {assets.length === 0 ? (
           <p className="mt-6 text-sm text-neutral-500">No viewable assets in this game&apos;s builds.</p>
         ) : (
-          <AssetGallery buildHref={href} assets={ordered} totals={assetTotals(assets)} excerpts={excerpts} />
+          months.map((m) => (
+            <div key={m.key} className="mt-8 first:mt-4">
+              <h3 className="border-b border-neutral-200 pb-1 text-sm font-semibold dark:border-neutral-800">
+                {m.label}
+                <span className="ml-2 font-normal text-neutral-400">
+                  {m.assets.length} {m.assets.length === 1 ? "file" : "files"}
+                </span>
+              </h3>
+              <AssetGallery buildHref={href} assets={m.ordered} totals={m.totals} excerpts={excerpts} />
+            </div>
+          ))
         )}
       </AssetViewerHost>
     </main>

@@ -681,6 +681,8 @@ export async function getBuildAssets(pool: Pool, sha256: string): Promise<BuildA
 export interface GameAsset extends BuildAsset {
   build_sha256: string;
   build_name: string;
+  /** The file's own timestamp ("YYYY-MM-DD HH:MM:SS"), for the month timeline. */
+  file_date: string | null;
 }
 
 /// Every visible build's assets for one game, builds in the game page's
@@ -690,7 +692,7 @@ export interface GameAsset extends BuildAsset {
 export async function getGameAssets(pool: Pool, gameId: number, includePrivate = false): Promise<GameAsset[]> {
   const r = await pool.query(
     `SELECT b.sha256 AS build_sha256, b.name AS build_name,
-            a.path, a.sha256, a.size::float8 AS size, a.mime, a.kind
+            a.path, a.sha256, a.size::float8 AS size, a.mime, a.kind, a.file_date
      FROM build_asset a JOIN builds b ON b.sha256 = a.build_sha256
      WHERE b.game_id=$1 AND ${includePrivate ? "TRUE" : visibleSql("b")}
      ORDER BY b.build_date NULLS LAST, lower(b.name), a.path`,

@@ -5,14 +5,15 @@ import { notFound } from "next/navigation";
 import { getModeratorFromHeaders } from "@/lib/auth";
 import { getPool } from "@/lib/db";
 import { getGameAssets, getGameBySlug, getGameBuilds } from "@/lib/queries";
-import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
+import { assetExcerpts, assetMonths, assetTotals, orderAssets } from "@/lib/assets";
 import AssetGallery from "../../builds/[buildId]/AssetGallery";
 import AssetViewerHost from "../../builds/[buildId]/AssetViewerHost";
 import GameBuilds from "./GameBuilds";
 
-// The combined gallery previews at most this many items per kind across all
-// of the game's builds; the rest live on /games/<slug>/assets.
-const ASSET_PREVIEW_PER_KIND = { image: 30, audio: 20, video: 10, document: 12, source: 10, text: 10, binary: 9 };
+// The timeline previews at most this many items per kind per month; the
+// rest live on /games/<slug>/assets. Excerpt reads stay bounded regardless.
+const MONTH_PREVIEW_PER_KIND = { image: 18, audio: 8, video: 6, document: 8, source: 6, text: 6, binary: 6 };
+const MAX_EXCERPT_READS = 200;
 
 export const runtime = "nodejs";
 // Assignments change through moderation, not ingest; render fresh each time
@@ -49,32 +50,57 @@ export default async function GamePage({ params }: Params) {
     getGameBuilds(pool, game.id, includePrivate),
     getGameAssets(pool, game.id, includePrivate),
   ]);
-  const previewAssets = orderAssets(assets, ASSET_PREVIEW_PER_KIND);
-  const excerpts = await assetExcerpts(previewAssets);
+  // Timeline: one bucket per month of the assets' own file dates. The viewer
+  // steps through the whole timeline in order; each month's gallery shows a
+  // capped preview, with the full set on /games/<slug>/assets.
+  const months = assetMonths(assets).map((m) => ({
+    ...m,
+    preview: orderAssets(m.assets, MONTH_PREVIEW_PER_KIND),
+    totals: assetTotals(m.assets),
+  }));
+  const ordered = months.flatMap((m) => orderAssets(m.assets));
+  const excerpts = await assetExcerpts(
+    months.flatMap((m) => m.preview),
+    MAX_EXCERPT_READS
+  );
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-10 sm:px-8">
-      <AssetViewerHost assets={orderAssets(assets)} buildHref={href} returnHref={href}>
-        <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight">{game.name}</h1>
-        <div className="mt-2 flex flex-wrap gap-2 text-xs">
-          {game.system && (
-            <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-              {game.system}
+    <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
+      <AssetViewerHost assets={ordered} buildHref={href} returnHref={href}>
+        <div className="mx-auto max-w-4xl">
+          <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight">{game.name}</h1>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+            {game.system && (
+              <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                {game.system}
+              </span>
+            )}
+            <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200">
+              {builds.length} {builds.length === 1 ? "build" : "builds"}
             </span>
-          )}
-          <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-900 dark:bg-sky-900/40 dark:text-sky-200">
-            {builds.length} {builds.length === 1 ? "build" : "builds"}
-          </span>
-        </div>
+          </div>
 
-        <GameBuilds builds={builds} />
+          <GameBuilds builds={builds} />
+        </div>
 
         {assets.length > 0 && (
           <section className="mt-10">
             <h2 className="text-lg font-medium">Assets</h2>
-            <p className="mt-1 text-xs text-neutral-500">Extracted from every build of this game.</p>
-            <AssetGallery buildHref={href} assets={previewAssets} totals={assetTotals(assets)} excerpts={excerpts} />
+            <p className="mt-1 text-xs text-neutral-500">
+              Extracted from every build of this game, by the files&apos; own dates.
+            </p>
+            {months.map((m) => (
+              <div key={m.key} className="mt-8 first:mt-4">
+                <h3 className="border-b border-neutral-200 pb-1 text-sm font-semibold dark:border-neutral-800">
+                  {m.label}
+                  <span className="ml-2 font-normal text-neutral-400">
+                    {m.assets.length} {m.assets.length === 1 ? "file" : "files"}
+                  </span>
+                </h3>
+                <AssetGallery buildHref={href} assets={m.preview} totals={m.totals} excerpts={excerpts} />
+              </div>
+            ))}
           </section>
         )}
       </AssetViewerHost>
