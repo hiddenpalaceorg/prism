@@ -462,11 +462,16 @@ def _gather_info(processor, reader, system, mods):
 # untouched — composite hashing sees only the archive file's own hashes (the
 # consumer skips in_archive records there), and members carry no chunk/shingle
 # fingerprints. Detection is by leading bytes (plus
-# tar's magic at offset 257); anything ArchiveWrapper can't open (bare gzip of
-# a single file, InstallShield cab, passworded/corrupt archives) quietly stays
-# a plain file.
+# tar's magic at offset 257). InstallShield cabinets expand the same way, with
+# one twist: a multi-volume set is anchored at one member (the .hdr on IS6+,
+# data1.cab before that) whose expansion pulls the sibling volumes in through
+# the containing reader, while the secondary volumes themselves stay plain
+# files. Anything that can't be opened (bare gzip of a single file,
+# passworded/corrupt archives, a data-only cab volume) quietly stays a plain file.
 _ARCHIVE_SNIFF_BYTES = 512
 _ARCHIVE_MAX_DEPTH = 3
+
+_ISHIELD_MAGIC = b"ISc("    # installshield cabinet/header
 
 _ARCHIVE_MAGICS = (
     b"PK\x03\x04",          # zip
@@ -476,6 +481,7 @@ _ARCHIVE_MAGICS = (
     b"\x1F\x8B\x08",        # gzip (a .tar.gz; a bare .gz fails to open and stays a file)
     b"BZh",                 # bzip2
     b"\xFD7zXZ\x00",        # xz
+    _ISHIELD_MAGIC,
 )
 
 
@@ -495,21 +501,36 @@ class _ArchiveSource:
         return getattr(self._fh, attr)
 
 
-def _open_member_archive(reader, entry, path, manager):
-    """A CompressedPathReader over an archive member, or None when the member
-    can't be opened as one (unsupported/corrupt/passworded). The caller must
-    hand the result to _close_member_archive, which also releases the
-    decompression spool and the member handle."""
+def _open_member_archive(reader, entry, path, manager, head=b""):
+    """A CompressedPathReader over an archive or InstallShield-cabinet member, or
+    None when the member can't be opened as one (unsupported/corrupt/passworded/a
+    secondary cab volume). The caller must hand the result to
+    _close_member_archive, which also releases the decompression spool and the
+    member handle."""
     if str(_PS2EXE_DIR) not in sys.path:  # set by _import_ps2exe in normal runs
         sys.path.insert(0, str(_PS2EXE_DIR))
-    from common.iso_path_reader.methods.compressed import CompressedPathReader  # noqa: E402
+    from common.iso_path_reader.methods.compressed import (  # noqa: E402
+        CompressedPathReader,
+        InstallShieldPathReader,
+    )
     from utils.archives import ArchiveWrapper  # noqa: E402
+    from utils.installshield import InstallShieldCabWrapper  # noqa: E402
 
     fh = None
     try:
         fh = reader.open_file(entry)
         if hasattr(fh, "__enter__"):
             fh.__enter__()
+        if head.startswith(_ISHIELD_MAGIC):
+            # The wrapper resolves the set's other pieces (the .hdr anchor,
+            # data2.cab, external files) by name through `reader`, so it gets
+            # the reader-native member path, not the display path.
+            native = str(reader.get_file_path(entry))
+            src = _ArchiveSource(fh, native)
+            name = os.path.basename(native.replace("\\", "/"))
+            return InstallShieldPathReader(
+                InstallShieldCabWrapper(src, name, reader, manager), src, reader
+            )
         src = fh if getattr(fh, "name", None) else _ArchiveSource(fh, path)
         return CompressedPathReader(ArchiveWrapper(src, reader, manager), src, reader)
     except Exception as e:  # noqa: BLE001 — any failure means "not an archive we can read"
@@ -565,15 +586,15 @@ def _hash_files(reader, manager, prefix="", depth=0):
 
             files.append(rec)
             if head is not None and depth < _ARCHIVE_MAX_DEPTH and _looks_like_archive(head):
-                files.extend(_archive_member_files(reader, f, path, manager, depth))
+                files.extend(_archive_member_files(reader, f, path, manager, depth, head))
             pbar.update()
     return files
 
 
-def _archive_member_files(reader, entry, path, manager, depth):
+def _archive_member_files(reader, entry, path, manager, depth, head=b""):
     """Hash an archive member's own members as `<path>/...` records. Best-effort:
     an archive that can't be opened or dies mid-listing just stays a plain file."""
-    child = _open_member_archive(reader, entry, path, manager)
+    child = _open_member_archive(reader, entry, path, manager, head)
     if child is None:
         return []
     try:
@@ -868,7 +889,7 @@ def _extract_assets(reader, out_dir, manager, prefix="", depth=0):
                 head = _read_head(reader, f, viewable.SNIPPET_BYTES)
                 asset = (head, viewable.SNIPPET_MIME, viewable.SNIPPET_KIND) if head else None
                 if head and depth < _ARCHIVE_MAX_DEPTH and _looks_like_archive(head):
-                    out.extend(_archive_member_assets(reader, f, path, out_dir, manager, depth))
+                    out.extend(_archive_member_assets(reader, f, path, out_dir, manager, depth, head))
             else:
                 kind, mime = classified
                 if size is not None and size > viewable.MAX_ASSET_SIZE:
@@ -904,10 +925,10 @@ def _extract_assets(reader, out_dir, manager, prefix="", depth=0):
     return out
 
 
-def _archive_member_assets(reader, entry, path, out_dir, manager, depth):
+def _archive_member_assets(reader, entry, path, out_dir, manager, depth, head=b""):
     """Extract an archive member's own members as `<path>/...` assets.
     Best-effort, like the listing pass."""
-    child = _open_member_archive(reader, entry, path, manager)
+    child = _open_member_archive(reader, entry, path, manager, head)
     if child is None:
         return []
     try:
