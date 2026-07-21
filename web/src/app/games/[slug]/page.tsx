@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { getModeratorFromHeaders } from "@/lib/auth";
 import { getPool } from "@/lib/db";
 import { getGameAssets, getGameBySlug, getGameBuilds } from "@/lib/queries";
 import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
@@ -40,7 +42,13 @@ export default async function GamePage({ params }: Params) {
   if (!game) notFound();
   const href = `/games/${game.slug}`;
 
-  const [builds, assets] = await Promise.all([getGameBuilds(pool, game.id), getGameAssets(pool, game.id)]);
+  // The page renders per-request (force-dynamic), so a wiki-moderator's
+  // cookies reveal private builds here — badged, exactly like /builds.
+  const includePrivate = !!(await getModeratorFromHeaders(await headers()));
+  const [builds, assets] = await Promise.all([
+    getGameBuilds(pool, game.id, includePrivate),
+    getGameAssets(pool, game.id, includePrivate),
+  ]);
   const previewAssets = orderAssets(assets, ASSET_PREVIEW_PER_KIND);
   const excerpts = await assetExcerpts(previewAssets);
 

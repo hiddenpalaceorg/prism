@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { getModeratorFromHeaders } from "@/lib/auth";
 import { getPool } from "@/lib/db";
 import { getGameAssets, getGameBySlug } from "@/lib/queries";
 import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
@@ -40,7 +42,10 @@ export default async function GameAssetsPage({ params }: Params) {
   if (!game) notFound();
   const href = `/games/${game.slug}`;
 
-  const assets = await getGameAssets(pool, game.id);
+  // Per-request render: wiki-moderators see private builds' assets too,
+  // matching the game page itself.
+  const includePrivate = !!(await getModeratorFromHeaders(await headers()));
+  const assets = await getGameAssets(pool, game.id, includePrivate);
   const ordered = orderAssets(assets);
   const excerpts = await assetExcerpts(ordered, MAX_EXCERPT_READS);
 

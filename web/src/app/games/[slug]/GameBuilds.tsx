@@ -82,7 +82,14 @@ export default function GameBuilds({ builds }: { builds: BuildListItem[] }) {
               href={buildHref(b.sha256, b.name)}
               className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-4 gap-y-1 py-2.5 hover:bg-neutral-50 dark:hover:bg-neutral-900"
             >
-              <span className="min-w-0 flex-1 break-words font-medium">{b.name}</span>
+              <span className="min-w-0 flex-1 break-words font-medium">
+                {b.name}
+                {b.private && (
+                  <span className="ml-2 rounded border border-red-300 px-1.5 py-0.5 text-xs font-normal text-red-600 dark:border-red-800 dark:text-red-400">
+                    private
+                  </span>
+                )}
+              </span>
               <span className="shrink-0 text-xs tabular-nums text-neutral-500">
                 {b.build_date ? b.build_date.slice(0, 10) : "—"}
               </span>

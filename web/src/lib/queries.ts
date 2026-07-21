@@ -898,10 +898,12 @@ export async function getGameBySlug(pool: Pool, slug: string): Promise<GameRow |
 }
 
 /// All visible builds of a game, oldest prototype first (missing dates last).
-/// Public surface — private builds stay hidden (visibleSql).
+/// The game pages render per-request (no shared cache), so moderators pass
+/// includePrivate and see private builds marked via the `private` field.
 export async function getGameBuilds(pool: Pool, gameId: number, includePrivate = false): Promise<BuildListItem[]> {
   const r = await pool.query(
-    `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot
+    `SELECT sha256, name, system, file_count, total_size, ingested_at, build_date, lot,
+            (private OR EXISTS (SELECT 1 FROM private_lots _pl WHERE _pl.lot = builds.lot)) AS private
      FROM builds WHERE game_id=$1 AND ${includePrivate ? "TRUE" : visibleSql("builds")}
      ORDER BY build_date NULLS LAST, lower(name)`,
     [gameId]
