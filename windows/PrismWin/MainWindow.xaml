@@ -78,20 +78,22 @@
                  rounded layer card at right (the Windows 11 Settings layout). -->
             <Grid x:Name="BuildPane">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="2*" MinWidth="220" />
-                    <ColumnDefinition Width="3*" />
+                    <ColumnDefinition x:Name="TreeColumn" Width="280" MinWidth="200" MaxWidth="560" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
                 <Grid Grid.Column="0" Margin="8,0,0,8">
                     <TreeView x:Name="FsTree" SelectionMode="Single" ItemInvoked="FsTree_ItemInvoked"
-                              Margin="0,4,4,0">
+                              Margin="0,4,0,0">
                         <TreeView.ItemTemplate>
                             <DataTemplate x:DataType="local:DiscNodeVm">
                                 <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsRoot}">
-                                    <StackPanel Orientation="Horizontal" Spacing="9">
+                                    <StackPanel Orientation="Horizontal" Spacing="5">
                                         <FontIcon Glyph="{x:Bind Glyph}" FontSize="14"
+                                                  VerticalAlignment="Center"
                                                   Foreground="{x:Bind IconBrush}" />
-                                        <TextBlock Text="{x:Bind Name}" />
+                                        <TextBlock Text="{x:Bind Name}" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </TreeViewItem>
                             </DataTemplate>
@@ -112,7 +114,14 @@
                     </StackPanel>
                 </Grid>
 
-                <Border Grid.Column="1" Margin="4,4,16,8" CornerRadius="8"
+                <!-- Invisible drag strip in the gutter between the panes. -->
+                <local:SizerBar Grid.Column="1" Background="Transparent" Margin="0,4,0,8"
+                                PointerPressed="TreeSizer_PointerPressed"
+                                PointerMoved="TreeSizer_PointerMoved"
+                                PointerReleased="TreeSizer_PointerReleased"
+                                PointerCaptureLost="TreeSizer_PointerCaptureLost" />
+
+                <Border Grid.Column="2" Margin="0,4,16,8" CornerRadius="8"
                         Background="{ThemeResource LayerFillColorDefaultBrush}"
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <Grid>
