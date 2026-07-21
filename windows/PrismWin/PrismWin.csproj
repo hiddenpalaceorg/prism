@@ -1,0 +1,96 @@
+<!-- Prism for Windows: WinUI 3 shell over prism-core via UniFFI C# bindings.
+     Build on Windows with windows/build.ps1 from the repo root (or see
+     windows/README.md for the step-by-step commands). Generated/ holds the
+     UniFFI bindings. They are regenerated from the built DLL (never edited)
+     so the binding checksums always match the Rust side. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>PrismWin</RootNamespace>
+    <AssemblyName>PrismWin</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/prism.ico</ApplicationIcon>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <UseWinUI>true</UseWinUI>
+    <!-- Unpackaged, xcopy-deployable app; the Windows App SDK runtime ships in the folder. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Required for dotnet-CLI publish to generate and copy resources.pri (the
+         compiled XAML); without it the app dies silently at InitializeComponent. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- Single-exe publish (CI passes PublishSingleFile=true): the whole app,
+         content and native DLLs included, self-extracts at first launch. -->
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- The generated UniFFI bindings use LibraryImport, which emits unsafe stubs. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Program.Main handles CLI mode before any XAML spins up. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <!-- The Rust core; built by cargo, copied next to the exe for DllImport("prism_ffi"). -->
+    <PrismFfiDll>$(MSBuildThisFileDirectory)..\..\target\release\prism_ffi.dll</PrismFfiDll>
+    <!-- The frozen Python adapter (when present) rides along under adapter\,
+         where AdapterLocator looks for it. -->
+    <PrismAdapterExe>$(MSBuildThisFileDirectory)..\..\ps2exe-adapter\dist\prism-adapter.exe</PrismAdapterExe>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The WinUI component package (not the Microsoft.WindowsAppSDK meta
+         package): the meta drags the AI/ML payload (DirectML, OnnxRuntime,
+         imaging models) into self-contained output, tens of MB we never use. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.2.1" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.8249" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\prism.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(PrismFfiDll)" Link="prism_ffi.dll" Condition="Exists('$(PrismFfiDll)')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="$(PrismAdapterExe)" Link="adapter\prism-adapter.exe" Condition="Exists('$(PrismAdapterExe)')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- Single-file publish leaves resources.pri (the compiled XAML) out of the
+       bundle entirely, so the exe would die silently at InitializeComponent.
+       Find the generated pri (its location varies by target) and add it to the
+       bundle by hand; both item names are covered because the SDK's bundling
+       target has used either across versions. -->
+  <Target Name="BundleXamlResourcesPri" AfterTargets="_ComputeFilesToBundle"
+          BeforeTargets="GenerateSingleFileBundle" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <!-- makepri names the file after the index (PrismWin.pri); folder
+           publishes ship it renamed to resources.pri, which is the name the
+           resource loader looks for, so bundle it under that name. -->
+      <_PrismPriCandidate Include="$(TargetDir)resources.pri" Condition="Exists('$(TargetDir)resources.pri')" />
+      <_PrismPriCandidate Include="$(TargetDir)$(AssemblyName).pri" Condition="Exists('$(TargetDir)$(AssemblyName).pri')" />
+      <_PrismPriCandidate Include="$(ProjectDir)bin\**\$(AssemblyName).pri" />
+      <_PrismPriCandidate Include="$(ProjectDir)obj\**\resources.pri" />
+      <_PrismPriCandidate Include="$(ProjectDir)bin\**\resources.pri" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_PrismPriList>@(_PrismPriCandidate)</_PrismPriList>
+      <_PrismPriFile>$(_PrismPriList.Split(';')[0])</_PrismPriFile>
+    </PropertyGroup>
+    <Error Text="resources.pri not found under $(ProjectDir) obj or bin; the bundled app would have no compiled XAML"
+           Condition="'$(_PrismPriFile)' == ''" />
+    <Message Importance="high" Text="Bundling XAML resources from $(_PrismPriFile)" />
+    <ItemGroup Condition="'$(_PrismPriFile)' != ''">
+      <FilesToBundle Include="$(_PrismPriFile)">
+        <RelativePath>resources.pri</RelativePath>
+      </FilesToBundle>
+      <_FilesToBundle Include="$(_PrismPriFile)">
+        <RelativePath>resources.pri</RelativePath>
+      </_FilesToBundle>
+    </ItemGroup>
+  </Target>
+</Project>

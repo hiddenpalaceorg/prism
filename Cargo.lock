@@ -1074,6 +1074,7 @@ dependencies = [
 name = "prism-ffi"
 version = "0.1.0"
 dependencies = [
+ "prism-cli",
  "prism-core",
  "thiserror 1.0.69",
  "uniffi",

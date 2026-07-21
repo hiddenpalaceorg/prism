@@ -14,6 +14,7 @@ crate-type = ["staticlib", "cdylib", "lib"]
 
 [dependencies]
 prism-core = { path = "../prism-core" }
+prism-cli = { path = "../prism-cli" }
 uniffi = { version = "0.31", features = ["cli"] }
 thiserror = "1"
 

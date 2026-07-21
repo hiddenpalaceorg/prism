@@ -411,3 +411,79 @@ impl Engine {
             .export_bundle(std::path::Path::new(&out_path))?)
     }
 }
+
+// ---- Plain C exports (outside the UniFFI surface) ----
+//
+// P/Invoked directly by the Windows C# shell for the two pieces UniFFI doesn't
+// carry: the TGA→BMP converter (raw buffers) and the shared CLI entry point.
+// Deliberately not #[uniffi::export], so the generated Swift/C# bindings and
+// their checksums are unaffected.
+
+/// Convert a TGA image to a 32bpp BMP. On success writes a heap buffer to
+/// `out_ptr`/`out_len` (release it with [`prism_buffer_free`]) and returns true.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; `out_ptr` and `out_len` must be
+/// valid for writes.
+#[no_mangle]
+pub unsafe extern "C" fn prism_tga_to_bmp(
+    data: *const u8,
+    len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> bool {
+    if data.is_null() || out_ptr.is_null() || out_len.is_null() {
+        return false;
+    }
+    let bytes = std::slice::from_raw_parts(data, len);
+    match prism_core::tga::tga_to_bmp(bytes) {
+        Ok(bmp) => {
+            let boxed = bmp.into_boxed_slice();
+            *out_len = boxed.len();
+            *out_ptr = Box::into_raw(boxed) as *mut u8;
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Release a buffer returned by [`prism_tga_to_bmp`].
+///
+/// # Safety
+/// `ptr`/`len` must be exactly as returned by [`prism_tga_to_bmp`], at most once.
+#[no_mangle]
+pub unsafe extern "C" fn prism_buffer_free(ptr: *mut u8, len: usize) {
+    if !ptr.is_null() {
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));
+    }
+}
+
+/// Run the shared prism CLI in-process and return its exit code. `argv` holds
+/// `argc` UTF-8 strings including argv[0]; `adapter_bin` (nullable) is the
+/// fallback adapter binary used when no flag or env var picks one. The caller
+/// must attach a console first, output goes to stdout/stderr.
+///
+/// # Safety
+/// `argv` must point to `argc` valid NUL-terminated strings; `adapter_bin`
+/// must be null or a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn prism_cli_run(
+    argc: usize,
+    argv: *const *const std::os::raw::c_char,
+    adapter_bin: *const std::os::raw::c_char,
+) -> i32 {
+    let args: Vec<String> = (0..argc)
+        .map(|i| {
+            std::ffi::CStr::from_ptr(*argv.add(i))
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    let fallback = if adapter_bin.is_null() {
+        None
+    } else {
+        let bin = std::ffi::CStr::from_ptr(adapter_bin).to_string_lossy();
+        Some(AdapterCommand::bin(&bin))
+    };
+    prism_cli::run(args, fallback)
+}
