@@ -24,7 +24,9 @@ const getTree = (sha256: string) =>
       const build = await getBuild(getPool(), sha256);
       return build ? buildTree(build.record.contents) : null;
     },
-    ["build-tree", sha256],
+    // v2: untagged v1 entries predate /api/refresh and can't be revalidated,
+    // so they get a fresh key namespace and age out on their own.
+    ["build-tree-v2", sha256],
     { revalidate: 3600, tags: [`build-tree:${sha256}`] }
   )();
 
