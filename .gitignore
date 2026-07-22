@@ -27,3 +27,12 @@ node_modules
 # Adapter freeze output (PyInstaller)
 /ps2exe-adapter/dist
 /ps2exe-adapter/build
+
+# cube spike artifacts (local dev only)
+cube/spikes/
+
+# cube dev artifacts
+web/.wiki-git/
+web/cube-media/
+web/.wiki-sync-state.json
+web/.wiki-import-failures.log
