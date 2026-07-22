@@ -423,17 +423,25 @@ export async function search(
   const t = term.trim();
   if (/^[0-9a-fA-F]{8,}$/.test(t)) {
     const h = t.toLowerCase();
-    // Two UNION arms instead of one OR across the builds×files join: the
+    // UNION arms instead of one OR across the builds×files join: the
     // joined form made the planner walk the whole files table (15s+ at 9M
     // rows); separately, each arm is index-served and the union stays in
     // the low milliseconds. UNION (not ALL) dedups like the old DISTINCT.
+    // Covers every stored hash: image md5/sha1/sha256, both content hashes,
+    // per-file md5/sha1/sha256 (nested archives included), and asset blob
+    // sha256s (the ids visible in gateway URLs).
     const vis = includePrivate ? "TRUE" : visibleSql("b");
     const r = await pool.query(
       `SELECT b.sha256, b.name, b.system FROM builds b
-       WHERE (b.sha256=$1 OR b.md5=$1 OR b.sha1=$1 OR b.content_hash=$1) AND ${vis}
+       WHERE (b.sha256=$1 OR b.md5=$1 OR b.sha1=$1 OR b.content_hash=$1 OR b.filtered_content_hash=$1)
+         AND ${vis}
        UNION
        SELECT b.sha256, b.name, b.system FROM builds b
        WHERE b.sha256 IN (SELECT f.build_sha256 FROM files f WHERE f.md5=$1 OR f.sha1=$1 OR f.sha256=$1)
+         AND ${vis}
+       UNION
+       SELECT b.sha256, b.name, b.system FROM builds b
+       WHERE b.sha256 IN (SELECT a.build_sha256 FROM build_asset a WHERE a.sha256=$1)
          AND ${vis}
        LIMIT $2`,
       [h, limit]
@@ -449,6 +457,42 @@ export async function search(
     [t, limit]
   );
   return { mode: "text", results: r.rows.map((x) => ({ ...x, sim: x.sim == null ? null : Number(x.sim) })) };
+}
+
+export interface FileSearchResult {
+  sha256: string;
+  name: string;
+  system: string;
+  file: string;
+  sim: number;
+}
+
+/** Filename substring search: builds owning a matching file, best-matching
+ *  file per build, ranked by trigram similarity. Terms under 3 chars return
+ *  nothing (no trigrams to serve the ILIKE, so it would walk all of files);
+ *  the inner LIMIT bounds pathological substrings ("data") that match a large
+ *  slice of the table — beyond it results may be incomplete, never private. */
+export async function searchFiles(
+  pool: Pool,
+  term: string,
+  limit = 50,
+  includePrivate = false
+): Promise<FileSearchResult[]> {
+  const t = term.trim();
+  if (t.length < 3) return [];
+  const pat = "%" + t.replace(/([\\%_])/g, "\\$1") + "%";
+  const r = await pool.query(
+    `SELECT sha256, name, system, file, sim FROM (
+       SELECT DISTINCT ON (b.sha256) b.sha256, b.name, b.system, f.name AS file,
+              similarity(f.name, $1) AS sim
+       FROM (SELECT build_sha256, name FROM files WHERE name ILIKE $2 LIMIT 5000) f
+       JOIN builds b ON b.sha256 = f.build_sha256
+       WHERE ${includePrivate ? "TRUE" : visibleSql("b")}
+       ORDER BY b.sha256, similarity(f.name, $1) DESC
+     ) x ORDER BY sim DESC LIMIT $3`,
+    [t, pat, limit]
+  );
+  return r.rows.map((x) => ({ ...x, sim: Number(x.sim) }));
 }
 
 export type SubmissionKind = "build" | "duplicate";
