@@ -10,6 +10,10 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Recent changes - Hidden Palace" };
 
+const LINK = "text-blue-600 hover:underline dark:text-blue-400";
+const TH = "border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-left dark:border-neutral-800 dark:bg-neutral-900";
+const TD = "border border-neutral-200 px-3 py-1.5 dark:border-neutral-800";
+
 type Props = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
@@ -36,7 +40,7 @@ export default async function RecentChangesPage({ searchParams }: Props) {
       </h1>
       {user && (
         <p className="mb-4 text-sm">
-          <Link className="cube-link" href="/wiki/changes">
+          <Link className={LINK} href="/wiki/changes">
             Show all changes
           </Link>
         </p>
@@ -44,15 +48,15 @@ export default async function RecentChangesPage({ searchParams }: Props) {
       {changes.length === 0 ? (
         <p className="text-sm text-neutral-500">No changes yet.</p>
       ) : (
-        <table className="cube-table w-full text-sm">
+        <table className="w-full border-collapse text-sm">
           <thead>
             <tr>
-              <th>Page</th>
-              <th>Revision</th>
-              <th>Date</th>
-              <th>Author</th>
-              <th>Comment</th>
-              <th>Delta</th>
+              <th className={TH}>Page</th>
+              <th className={TH}>Revision</th>
+              <th className={TH}>Date</th>
+              <th className={TH}>Author</th>
+              <th className={TH}>Comment</th>
+              <th className={TH}>Delta</th>
             </tr>
           </thead>
           <tbody>
@@ -60,27 +64,27 @@ export default async function RecentChangesPage({ searchParams }: Props) {
               const href = pageHref({ ns: c.ns, slug: c.slug });
               return (
                 <tr key={c.revId}>
-                  <td>
-                    <Link className="cube-link" href={href}>
+                  <td className={TD}>
+                    <Link className={LINK} href={href}>
                       {c.title}
                     </Link>
                   </td>
-                  <td>
-                    <Link className="cube-link" href={`${href}?rev=${c.revId}`}>
+                  <td className={TD}>
+                    <Link className={LINK} href={`${href}?rev=${c.revId}`}>
                       r{c.revId}
                     </Link>
                   </td>
-                  <td>{new Date(c.createdAt).toISOString().slice(0, 16).replace("T", " ")}</td>
-                  <td>
-                    <Link className="cube-link" href={`/wiki/changes?user=${encodeURIComponent(c.author)}`}>
+                  <td className={TD}>{new Date(c.createdAt).toISOString().slice(0, 16).replace("T", " ")}</td>
+                  <td className={TD}>
+                    <Link className={LINK} href={`/wiki/changes?user=${encodeURIComponent(c.author)}`}>
                       {c.author}
                     </Link>
                   </td>
-                  <td>
+                  <td className={TD}>
                     {c.comment}
                     {c.minor ? " (minor)" : ""}
                   </td>
-                  <td className={c.delta > 0 ? "text-green-700 dark:text-green-400" : c.delta < 0 ? "text-red-700 dark:text-red-400" : "text-neutral-500"}>
+                  <td className={`${TD} ${c.delta > 0 ? "text-green-700 dark:text-green-400" : c.delta < 0 ? "text-red-700 dark:text-red-400" : "text-neutral-500"}`}>
                     {c.delta > 0 ? `+${c.delta}` : c.delta}
                   </td>
                 </tr>
