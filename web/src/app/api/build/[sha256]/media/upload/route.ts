@@ -4,6 +4,7 @@ import { requireContributor } from "@/lib/contrib";
 import {
   createMediaSession,
   isMediaKind,
+  isMediaLabel,
   kindMaxBytes,
   MAX_FILENAME_LEN,
   newMediaToken,
@@ -19,9 +20,10 @@ export const dynamic = "force-dynamic";
 const CREATE_LIMIT = 60;
 const CREATE_WINDOW_MS = 3600_000;
 
-// POST /api/build/<sha256>/media/upload { kind, filename, size }: open a
-// chunked upload session for one media file, for any logged-in wiki user who
-// can see the build. Returns { token }; the client PUTs chunks to
+// POST /api/build/<sha256>/media/upload { kind, filename, size, label? }:
+// open a chunked upload session for one media file, for any logged-in wiki
+// user who can see the build. label (front/back/other) applies to physical
+// photos only and defaults to other. Returns { token }; the client PUTs chunks to
 // ./upload/<token>?offset=N until the claimed size is reached, at which point
 // the server sniffs, stores, and records the file (see the token route).
 export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256: string }> }) {
@@ -51,6 +53,16 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   if (!isMediaKind(kind)) {
     return Response.json({ error: "kind must be screenshot, video, or physical" }, { status: 400 });
   }
+  let label;
+  if (body.label !== undefined) {
+    if (kind !== "physical") {
+      return Response.json({ error: "only physical photos take a label" }, { status: 400 });
+    }
+    if (!isMediaLabel(body.label)) {
+      return Response.json({ error: "label must be front, back, or other" }, { status: 400 });
+    }
+    label = body.label;
+  }
   const size = body.size;
   if (typeof size !== "number" || !Number.isInteger(size) || size <= 0) {
     return Response.json({ error: "size must be a positive integer" }, { status: 400 });
@@ -71,6 +83,6 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
       .slice(0, MAX_FILENAME_LEN) || "upload";
 
   const token = newMediaToken();
-  await createMediaSession(token, { build: sha256, kind, filename, size, author: contributor.name });
+  await createMediaSession(token, { build: sha256, kind, filename, size, author: contributor.name, label });
   return Response.json({ token });
 }

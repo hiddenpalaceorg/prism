@@ -393,3 +393,72 @@ export async function extractStill(input: string, out: string): Promise<string> 
     await rm(tmp, { force: true });
   }
 }
+
+// One scaled photo per (blob, width) at a time, same reason as transcodes.
+const photoScalesInFlight = new Map<string, Promise<string>>();
+
+/** Widths the photo scale cache will produce: 500 for gallery/preview thumbs
+ *  (2x the largest cell they draw into), 1000 for the OG card pane. */
+export const PHOTO_SCALE_WIDTHS = [500, 1000] as const;
+export type PhotoScaleWidth = (typeof PHOTO_SCALE_WIDTHS)[number];
+
+export function isPhotoScaleWidth(v: number): v is PhotoScaleWidth {
+  return (PHOTO_SCALE_WIDTHS as readonly number[]).includes(v);
+}
+
+export function photoScalePath(sha256: string, width: PhotoScaleWidth): string {
+  return join(assetStoreDir(), ".thumb", `${sha256}.photo-${width}.jpg`);
+}
+
+/**
+ * A cached scaled-down JPEG (≤`width`px wide) of a stored photo, produced on
+ * first use. The OG card inlines photos and satori decodes them in-process,
+ * and the browser makes jaggies of a 3000px scan crammed into a 200px cell —
+ * multi-MB camera shots get shrunk once, out of process, with a real
+ * resampler here. Throws when ffmpeg is missing, the blob is absent, or the
+ * bytes don't decode.
+ */
+export async function ensurePhotoScale(sha256: string, ns = "", width: PhotoScaleWidth = 1000): Promise<string> {
+  const out = photoScalePath(sha256, width);
+  if (await nonEmpty(out)) return out;
+  const key = `${sha256}:${width}`;
+  let job = photoScalesInFlight.get(key);
+  if (!job) {
+    job = scalePhoto(sha256, ns, out, width).finally(() => photoScalesInFlight.delete(key));
+    photoScalesInFlight.set(key, job);
+  }
+  return job;
+}
+
+async function scalePhoto(sha256: string, ns: string, out: string, width: PhotoScaleWidth): Promise<string> {
+  const result = await withBlobFile(sha256, (input) => scaleStill(input, out, width), ns);
+  if (result === null) throw new Error("blob missing from store");
+  return result;
+}
+
+/** Re-encode a local image as a JPEG capped at `width`px wide (never
+ *  upscaled; animations contribute their first frame) into `out`. Lanczos
+ *  resampling: these are photos headed for thumbnails, sharpness wins. */
+async function scaleStill(input: string, out: string, width: PhotoScaleWidth): Promise<string> {
+  await mkdir(dirname(out), { recursive: true });
+  const tmp = `${out}.${randomBytes(4).toString("hex")}.part`;
+  try {
+    await execFileP(
+      FFMPEG_BIN,
+      [
+        "-hide_banner", "-loglevel", "error", "-y",
+        "-i", input,
+        "-frames:v", "1",
+        "-vf", `scale=trunc(min(iw\\,${width})/2)*2:-2:flags=lanczos`,
+        "-c:v", "mjpeg", "-q:v", "4", "-f", "image2",
+        tmp,
+      ],
+      { timeout: THUMB_TIMEOUT_MS, maxBuffer: 4_000_000 }
+    );
+    if ((await stat(tmp)).size === 0) throw new Error("empty scaled photo");
+    await rename(tmp, out);
+    return out;
+  } finally {
+    await rm(tmp, { force: true });
+  }
+}

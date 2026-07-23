@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { BuildMediaView, MediaKind, SkipFlags } from "@/lib/media";
+import type { BuildMediaView, MediaKind, MediaLabel, SkipFlags } from "@/lib/media";
 
 interface Viewer {
   name?: string;
@@ -133,6 +133,21 @@ export default function MediaSection({ sha256, items, skips }: Props) {
     router.refresh();
   }
 
+  async function relabel(id: number, label: MediaLabel) {
+    setNote("");
+    const res = await fetch(`/api/build/${sha256}/media/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setNote(`Error: ${j.error ?? res.statusText}`);
+      return;
+    }
+    router.refresh();
+  }
+
   const total = items.length;
   return (
     <section className="mt-8">
@@ -185,15 +200,23 @@ export default function MediaSection({ sha256, items, skips }: Props) {
                   {mine.map((m) => (
                     <figure key={m.id}>
                       <a href={m.url} target="_blank" rel="noreferrer">
+                        {/* Physical photos are multi-MB scans; draw the cell from the
+                            server-scaled thumb (2x the cell, lanczos) instead of making
+                            the browser downsample the original. */}
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={m.url}
+                          src={s.kind === "physical" ? `/api/media/${m.sha256}/thumb?w=500` : m.url}
                           alt={m.filename}
                           loading="lazy"
-                          className="h-36 w-full rounded-md border border-neutral-200 object-cover dark:border-neutral-800"
+                          className={`${s.kind === "physical" ? "aspect-square" : "h-36"} w-full rounded-md border border-neutral-200 object-cover dark:border-neutral-800`}
                         />
                       </a>
-                      <Caption item={m} viewer={viewer} onDelete={() => remove(m.id)} />
+                      <Caption
+                        item={m}
+                        viewer={viewer}
+                        onDelete={() => remove(m.id)}
+                        onLabel={s.kind === "physical" ? (label) => relabel(m.id, label) : undefined}
+                      />
                     </figure>
                   ))}
                 </div>
@@ -267,23 +290,52 @@ function AddButton({
   );
 }
 
+// Options hardcoded (not imported from lib/media, whose value exports drag
+// node builtins into the client bundle). Kept in sync with MEDIA_LABELS.
+const LABELS: Array<{ value: MediaLabel; text: string }> = [
+  { value: "front", text: "Front" },
+  { value: "back", text: "Back" },
+  { value: "other", text: "Other" },
+];
+
 function Caption({
   item,
   viewer,
   onDelete,
+  onLabel,
 }: {
   item: BuildMediaView;
   viewer: Viewer | null;
   onDelete: () => void;
+  /** Physical photos only: change the front/back/other label. */
+  onLabel?: (label: MediaLabel) => void;
 }) {
-  const canDelete = !!viewer && (viewer.moderator || (!!viewer.name && viewer.name === item.author));
+  const canEdit = !!viewer && (viewer.moderator || (!!viewer.name && viewer.name === item.author));
+  const label = item.label ?? "other";
   return (
     <figcaption className="mt-1 flex items-baseline gap-2 text-xs text-neutral-500">
+      {onLabel &&
+        (canEdit ? (
+          <select
+            value={label}
+            onChange={(e) => onLabel(e.target.value as MediaLabel)}
+            title="What the photo shows"
+            className="shrink-0 rounded border border-neutral-200 bg-transparent px-1 dark:border-neutral-800"
+          >
+            {LABELS.map((l) => (
+              <option key={l.value} value={l.value}>
+                {l.text}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="shrink-0">{LABELS.find((l) => l.value === label)?.text}</span>
+        ))}
       <span className="min-w-0 truncate" title={item.filename}>
         {item.author}
       </span>
       <span className="shrink-0 text-neutral-400">{item.created_at.slice(0, 10)}</span>
-      {canDelete && (
+      {canEdit && (
         <button onClick={onDelete} title="Remove" className="shrink-0 text-neutral-400 hover:text-red-500">
           ×
         </button>

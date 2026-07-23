@@ -8,6 +8,7 @@ import {
   MEDIA_NS,
   dropMediaSession,
   hashFile,
+  inferMediaLabel,
   insertMedia,
   isMediaToken,
   mediaStagingPath,
@@ -143,6 +144,7 @@ export async function PUT(
     content_type: session.contentType,
     size: session.size,
     author: session.author,
+    label: session.kind === "physical" ? (session.label ?? inferMediaLabel(session.filename)) : null,
   });
   revalidateBuildPages(sha256, target.name);
   return Response.json({ done: true, media: mediaView(row) });
