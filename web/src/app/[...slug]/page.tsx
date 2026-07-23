@@ -27,14 +27,20 @@ type Props = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-function titleFromParams(slug: string[]): string {
-  return slug.map((s) => decodeURIComponent(s)).join("/");
+function titleFromParams(slug: string[]): string | null {
+  try {
+    return slug.map((s) => decodeURIComponent(s)).join("/");
+  } catch {
+    return null; // malformed percent-encoding (e.g. "%zz")
+  }
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   if (RESERVED.has(slug[0] ?? "")) return {};
-  const ref = normalizeTitle(titleFromParams(slug), getCube().slug);
+  const title = titleFromParams(slug);
+  if (title === null) return {};
+  const ref = normalizeTitle(title, getCube().slug);
   if (isTitleError(ref)) return {};
   return { title: `${ref.title} - Hidden Palace` };
 }
@@ -45,6 +51,7 @@ export default async function WikiPage({ params, searchParams }: Props) {
 
   const cube = getCube();
   const title = titleFromParams(slug);
+  if (title === null) notFound();
   const ref = normalizeTitle(title, cube.slug);
   if (isTitleError(ref)) notFound();
 
