@@ -2,7 +2,12 @@
 // (cube/spikes/data/all-titles.tsv format: ns_id TAB title-with-prefix).
 // Converts each page via the HP mapping; when conversion fails the raw
 // wikitext is stored with wikitextFallback. Failures append to
-// web/.wiki-import-failures.log (title TAB error); resume with --offset.
+// web/.wiki-import-failures.log (title TAB error). To resume after an
+// interruption, re-run from the ORIGINAL --offset: imports are idempotent by
+// revision id, so already-done pages are cheap no-ops. With --concurrency > 1
+// the in-progress `done` counter is not a contiguous prefix, so do not use it
+// as a resume point (the "next --offset" hint below is only exact on a clean
+// finish).
 //
 //   npx tsx web/scripts/import-wiki-batch.mts --titles cube/spikes/data/all-titles.tsv \
 //     [--limit N] [--concurrency 3] [--offset N] [--ns 0]
