@@ -8,11 +8,11 @@ import { getPool } from "@/lib/db";
 import { pageHref } from "./cube";
 import { hpBindings } from "./registry";
 
-export interface RenderedWikiPage {
+export type RenderedWikiPage = {
   node: ReactNode;
   headings: { depth: number; text: string; id: string }[];
   parseFailed: boolean;
-}
+};
 
 export async function renderWikiMarkdown(
   cube: Cube,

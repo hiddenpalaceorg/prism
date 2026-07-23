@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Recent changes - Hidden Palace" };
 
-interface Props {
+type Props = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-}
+};
 
 function num(v: string | string[] | undefined): number | undefined {
   if (typeof v !== "string") return undefined;

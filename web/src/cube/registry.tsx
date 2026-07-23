@@ -10,11 +10,11 @@ import type { ComponentBinding, ComponentViewProps, CubeRenderCtx } from "cube/r
 
 /* ---- shared helpers ------------------------------------------------------ */
 
-interface PageLink {
+type PageLink = {
   href: string;
   title: string;
   displayTitle: string | null;
-}
+};
 
 function toLink(ctx: CubeRenderCtx, row: QueryRow): PageLink {
   return {
@@ -87,9 +87,9 @@ function LinkList({ links }: { links: PageLink[] }) {
 
 /* ---- Prototype ----------------------------------------------------------- */
 
-interface PrototypeData {
+type PrototypeData = {
   titleScreenUrl: string | null;
-}
+};
 
 function PrototypeView({ attrs, data }: ComponentViewProps) {
   const a = attrs as {
@@ -177,10 +177,10 @@ function PrototypeView({ attrs, data }: ComponentViewProps) {
 
 /* ---- Board ---------------------------------------------------------------- */
 
-interface BoardData {
+type BoardData = {
   photoUrl: string | null;
   usedIn: PageLink[];
-}
+};
 
 function BoardView({ attrs, data }: ComponentViewProps) {
   const a = attrs as {
@@ -260,11 +260,11 @@ function LotView({ attrs }: ComponentViewProps) {
 
 /* ---- Download --------------------------------------------------------------- */
 
-interface DownloadData {
+type DownloadData = {
   url: string | null;
   exists: boolean;
   infoHref: string | null;
-}
+};
 
 function DownloadView({ attrs, data }: ComponentViewProps) {
   const a = attrs as { file?: string; external?: unknown; raw?: string; title?: string };
@@ -366,19 +366,19 @@ function FileEntryView({ attrs }: ComponentViewProps) {
 
 /* ---- HexDump ---------------------------------------------------------------- */
 
-interface HexDumpLine {
+type HexDumpLine = {
   offset: string;
   bytes: string;
   ascii?: string;
-}
+};
 
-interface HexDumpAnnotation {
+type HexDumpAnnotation = {
   line: number;
   start: number;
   length: number;
   field: string;
   value: string;
-}
+};
 
 function HexDumpRow({
   line,
@@ -467,10 +467,10 @@ function HexDumpView({ children, childrenJson }: ComponentViewProps) {
 
 /* ---- GameNav ------------------------------------------------------------------ */
 
-interface GameNavData {
+type GameNavData = {
   prototypes: PageLink[];
   videos: PageLink[];
-}
+};
 
 function GameNavView({ attrs, data }: ComponentViewProps) {
   const a = attrs as { game?: string };
@@ -495,11 +495,11 @@ function GameNavView({ attrs, data }: ComponentViewProps) {
 
 /* ---- HardwareSystem ----------------------------------------------------------- */
 
-interface BoardTile {
+type BoardTile = {
   href: string;
   title: string;
   photoUrl: string | null;
-}
+};
 
 function HardwareSystemView({ data }: ComponentViewProps) {
   const d = (data ?? {}) as { boards?: BoardTile[] };

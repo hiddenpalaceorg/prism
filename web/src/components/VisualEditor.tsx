@@ -19,13 +19,13 @@ import {
 } from "cube/editor";
 import { createRegistry, type ComponentSpec } from "cube/schema";
 
-interface Props {
+type Props = {
   markdown: string;
   onChange: (markdown: string) => void;
   /** Site component specs; cube built-ins are always included. */
   specs?: ComponentSpec[];
   placeholder?: string;
-}
+};
 
 const BTN =
   "rounded border border-neutral-300 px-2 py-1 text-sm leading-none hover:bg-neutral-100 " +

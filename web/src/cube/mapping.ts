@@ -30,10 +30,10 @@ type ParamKind =
   | "number"
   | "boolean";
 
-interface ParamRule {
+type ParamRule = {
   attr: string;
   kind: ParamKind;
-}
+};
 
 /** Build a lookup of lowercased param aliases ("a|b|c") to one rule. */
 function rules(entries: [aliases: string, attr: string, kind?: ParamKind][]): Map<string, ParamRule> {

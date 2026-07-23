@@ -15,21 +15,21 @@ const VisualEditor = dynamic(() => import("./VisualEditor"), {
   loading: () => <div className="py-12 text-center text-sm text-neutral-500">Loading visual editor...</div>,
 });
 
-interface Issue {
+type Issue = {
   severity: "error" | "warning";
   rule: string;
   message: string;
   line?: number;
   column?: number;
-}
+};
 
-interface Props {
+type Props = {
   title: string;
   canonicalHref: string;
   initialMarkdown: string;
   baseRevision: number | null;
   isNew: boolean;
-}
+};
 
 export default function WikiEditor({ title, canonicalHref, initialMarkdown, baseRevision, isNew }: Props) {
   const router = useRouter();

@@ -22,10 +22,10 @@ const RESERVED = new Set([
   "sitemap.xml", "icon.png", "apple-icon.png", "w", "wiki",
 ]);
 
-interface Props {
+type Props = {
   params: Promise<{ slug: string[] }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-}
+};
 
 function titleFromParams(slug: string[]): string {
   return slug.map((s) => decodeURIComponent(s)).join("/");

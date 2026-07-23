@@ -75,10 +75,10 @@ function parseCall(inner: string): TemplateCall {
   return { kind: "template", name, params };
 }
 
-interface Warned {
+type Warned = {
   code: WarningCode;
   message: string;
-}
+};
 
 function makeCtx(): { ctx: MapCtx; warnings: Warned[] } {
   const warnings: Warned[] = [];
