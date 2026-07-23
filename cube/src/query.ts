@@ -216,15 +216,27 @@ function safeAlias(name: string): string {
   return /^[a-zA-Z_]/.test(cleaned) ? cleaned : `agg_${cleaned}`;
 }
 
-function compileWhere(where: Where, fields: Map<string, QueryableField>, params: ParamSink): string {
+/** Guards against a page-authored `where` deep enough to blow the JS stack
+ * (an uncaught RangeError → 500). Real clauses nest only a handful deep. */
+const MAX_WHERE_DEPTH = 64;
+
+function compileWhere(
+  where: Where,
+  fields: Map<string, QueryableField>,
+  params: ParamSink,
+  depth = 0,
+): string {
+  if (depth > MAX_WHERE_DEPTH) {
+    throw new CubeQueryError(`where clause nested too deeply (max ${MAX_WHERE_DEPTH})`);
+  }
   if ("and" in where && Array.isArray(where.and)) {
-    return `(${(where.and as Where[]).map((w) => compileWhere(w, fields, params)).join(" AND ")})`;
+    return `(${(where.and as Where[]).map((w) => compileWhere(w, fields, params, depth + 1)).join(" AND ")})`;
   }
   if ("or" in where && Array.isArray(where.or)) {
-    return `(${(where.or as Where[]).map((w) => compileWhere(w, fields, params)).join(" OR ")})`;
+    return `(${(where.or as Where[]).map((w) => compileWhere(w, fields, params, depth + 1)).join(" OR ")})`;
   }
   if ("not" in where && typeof where.not === "object" && where.not !== null && !isScalarOrOps(where.not)) {
-    return `NOT (${compileWhere(where.not as Where, fields, params)})`;
+    return `NOT (${compileWhere(where.not as Where, fields, params, depth + 1)})`;
   }
 
   const conds: string[] = [];

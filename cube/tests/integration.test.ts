@@ -14,6 +14,7 @@ import pg from "pg";
 import { createCube, dependentPages, type Cube } from "../src/index";
 import { CubeConflictError, CubeValidationError } from "../src/issues";
 import { processGitQueue } from "../src/git";
+import { parseComponentTag } from "../src/tags";
 import { testComponents } from "./helpers";
 
 const DB = "cube_test";
@@ -266,6 +267,21 @@ skippable("move leaves a redirect and logs", async () => {
   assert.equal(resolved!.slug, "New_Name");
   const log = await pool.query(`SELECT action FROM cube_page_log WHERE action = 'move'`);
   assert.equal(log.rows.length, 1);
+});
+
+skippable("move to a title containing a quote can't inject redirect attributes", async () => {
+  await cube.api.savePage({ ns: "main", slug: "Quote_Move_Src", markdown: "content\n", author });
+  await cube.api.movePage({
+    from: { ns: "main", slug: "Quote_Move_Src" },
+    to: { ns: "main", slug: 'Pwned" author="admin' },
+    actor: author,
+  });
+  const redirect = await cube.api.getPage({ ns: "main", slug: "Quote_Move_Src" });
+  assert.ok(redirect);
+  const parsed = parseComponentTag(redirect.markdown.trim());
+  assert.ok(!("error" in parsed), `redirect should parse cleanly: ${JSON.stringify(parsed)}`);
+  // The quote must not have split into a second attribute: only `to` survives.
+  assert.deepEqual(Object.keys((parsed as { attrs: Record<string, unknown> }).attrs), ["to"]);
 });
 
 skippable("dependent pages found via query deps", async () => {

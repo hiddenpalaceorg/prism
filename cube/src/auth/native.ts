@@ -70,6 +70,14 @@ function sha256hex(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
+// A fixed valid scrypt hash, computed once, used only to spend the same work on
+// the login miss path as a real password verify (see login()).
+let DUMMY_HASH: string | null = null;
+function dummyHash(): string {
+  if (DUMMY_HASH === null) DUMMY_HASH = hashPassword("cube-timing-equalizer");
+  return DUMMY_HASH;
+}
+
 /** MW-compatible username canonicalization: trim, collapse spaces, ucfirst. */
 export function canonicalUsername(name: string): string {
   const t = name.replace(/[_\s]+/g, " ").trim();
@@ -123,7 +131,13 @@ export function cubeNativeAuth(opts: NativeAuthOptions): CubeAuthAdapter {
         [name],
       );
       const row = res.rows[0];
-      if (!row || row.blocked_at !== null) return null;
+      if (!row || row.blocked_at !== null) {
+        // Run a real verify against a dummy hash so the unknown/blocked-user
+        // path costs the same as a wrong password, closing a username-
+        // enumeration timing oracle. (Not a substitute for rate limiting.)
+        verifyPassword(dummyHash(), creds.password);
+        return null;
+      }
       if (!verifyPassword(row.password_hash, creds.password)) return null;
 
       if (row.password_hash && needsRehash(row.password_hash)) {

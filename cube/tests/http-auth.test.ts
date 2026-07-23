@@ -284,6 +284,101 @@ skippable("bearer tokens: scoped access, bad token rejected", async () => {
   assert.equal(body.user, null);
 });
 
+skippable("moderator-only pages don't leak content via revision/diff/history", async () => {
+  const csrf = { cookie: sessionCookie, "sec-fetch-site": "same-origin" };
+  const c1 = await cube.handlers.PUT(
+    req("PUT", "/page?title=Secret Page", { body: { markdown: "secret one\n", comment: "c1" }, headers: csrf }),
+  );
+  assert.equal(c1.status, 201);
+  const r1 = ((await c1.json()) as { revision: number }).revision;
+  const c2 = await cube.handlers.PUT(
+    req("PUT", "/page?title=Secret Page", {
+      body: { markdown: "secret two\n", baseRevision: r1, comment: "c2" },
+      headers: csrf,
+    }),
+  );
+  const r2 = ((await c2.json()) as { revision: number }).revision;
+
+  const modLogin = await cube.handlers.POST(
+    req("POST", "/auth/login", { body: { name: "mod", password: "modpass" } }),
+  );
+  const modCookie = modLogin.headers.get("set-cookie")!.split(";")[0]!;
+  const hide = await cube.handlers.POST(
+    req("POST", "/moderation/visibility", {
+      body: { title: "Secret Page", visibility: "moderator" },
+      headers: { cookie: modCookie, "sec-fetch-site": "same-origin" },
+    }),
+  );
+  assert.equal(hide.status, 200);
+
+  // Anonymous is blocked on every read path, not just /page.
+  assert.equal((await cube.handlers.GET(req("GET", "/page?title=Secret Page"))).status, 404);
+  assert.equal((await cube.handlers.GET(req("GET", `/revision/${r2}`))).status, 404);
+  assert.equal((await cube.handlers.GET(req("GET", "/revisions?title=Secret Page"))).status, 404);
+  assert.equal((await cube.handlers.GET(req("GET", `/diff?from=${r1}&to=${r2}`))).status, 404);
+
+  // A moderator can still read all of them.
+  const modRev = await cube.handlers.GET(req("GET", `/revision/${r2}`, { headers: { cookie: modCookie } }));
+  assert.equal(modRev.status, 200);
+  const modDiff = await cube.handlers.GET(req("GET", `/diff?from=${r1}&to=${r2}`, { headers: { cookie: modCookie } }));
+  assert.equal(modDiff.status, 200);
+});
+
+skippable("soft-deleted page revisions are hidden from anonymous, readable by moderators", async () => {
+  const csrf = { cookie: sessionCookie, "sec-fetch-site": "same-origin" };
+  const created = await cube.handlers.PUT(
+    req("PUT", "/page?title=Doomed Page", { body: { markdown: "doomed\n" }, headers: csrf }),
+  );
+  const rev = ((await created.json()) as { revision: number }).revision;
+
+  const modLogin = await cube.handlers.POST(
+    req("POST", "/auth/login", { body: { name: "mod", password: "modpass" } }),
+  );
+  const modCookie = modLogin.headers.get("set-cookie")!.split(";")[0]!;
+  const del = await cube.handlers.DELETE(
+    req("DELETE", "/page?title=Doomed Page", {
+      body: {},
+      headers: { cookie: modCookie, "sec-fetch-site": "same-origin" },
+    }),
+  );
+  assert.equal(del.status, 200);
+
+  assert.equal((await cube.handlers.GET(req("GET", `/revision/${rev}`))).status, 404);
+  const modRev = await cube.handlers.GET(req("GET", `/revision/${rev}`, { headers: { cookie: modCookie } }));
+  assert.equal(modRev.status, 200);
+});
+
+skippable("blocking a user revokes their API tokens", async () => {
+  const u = await createUser(pool, { name: "blockme", password: "pw" });
+  const { token } = await createToken(pool, {
+    name: "blockme-tok",
+    scopes: ["read", "query", "write"],
+    userId: u.id,
+  });
+
+  const before = await cube.handlers.GET(req("GET", "/auth/me", { headers: { authorization: `Bearer ${token}` } }));
+  assert.notEqual(((await before.json()) as { user: unknown }).user, null);
+
+  const modLogin = await cube.handlers.POST(
+    req("POST", "/auth/login", { body: { name: "mod", password: "modpass" } }),
+  );
+  const modCookie = modLogin.headers.get("set-cookie")!.split(";")[0]!;
+  const block = await cube.handlers.POST(
+    req("POST", "/moderation/block", {
+      body: { name: u.name },
+      headers: { cookie: modCookie, "sec-fetch-site": "same-origin" },
+    }),
+  );
+  assert.equal(block.status, 200);
+
+  const after = await cube.handlers.GET(req("GET", "/auth/me", { headers: { authorization: `Bearer ${token}` } }));
+  assert.equal(((await after.json()) as { user: unknown }).user, null);
+  const write = await cube.handlers.PUT(
+    req("PUT", "/page?title=Blocked Write", { body: { markdown: "x\n" }, headers: { authorization: `Bearer ${token}` } }),
+  );
+  assert.equal(write.status, 403);
+});
+
 skippable("moderator-only delete via defaultCan", async () => {
   const deny = await cube.handlers.DELETE(
     req("DELETE", "/page?title=Bot Page", {
