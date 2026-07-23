@@ -165,7 +165,7 @@ function renderNode(node: Node, state: RenderState): ReactNode {
       return h("code", { key }, (node as unknown as { value: string }).value);
     case "code": {
       const c = node as Code;
-      return h("pre", { key, className: c.lang ? `cube-code language-${c.lang}` : "cube-code" },
+      return h("pre", { key, ...(c.lang && { className: `language-${c.lang}` }) },
         h("code", null, c.value));
     }
     case "blockquote":
@@ -194,7 +194,7 @@ function renderNode(node: Node, state: RenderState): ReactNode {
         // Non-http URLs in plain markdown links render as text (structural sanitization).
         return h("span", { key }, renderChildren(l, state));
       }
-      return h("a", { key, href: l.url, rel: "nofollow noopener", className: "cube-external" },
+      return h("a", { key, href: l.url, rel: "nofollow noopener" },
         renderChildren(l, state));
     }
     case "image": {
@@ -221,7 +221,7 @@ function renderNode(node: Node, state: RenderState): ReactNode {
               key: `c${i}`,
               ...(t.align?.[i] && { style: { textAlign: t.align[i]! } }),
             }, renderChildren(cell as Parent, state))));
-      return h("table", { key, className: "cube-table" },
+      return h("table", { key },
         head ? h("thead", null, renderRow(head as Parent, true, "h")) : null,
         h("tbody", null, ...body.map((r, i) => renderRow(r as Parent, false, `r${i}`))));
     }
@@ -274,7 +274,7 @@ function renderWikiLink(link: WikiLink, state: RenderState, key: string): ReactN
     state.ctx.pageHref({ ns: resolved.ns, slug: resolved.slug }) +
     (resolved.fragment ? `#${resolved.fragment}` : "");
   const label = link.label !== undefined && link.label !== "" ? link.label : resolved.title;
-  return h("a", { key, href, className: exists ? "cube-link" : "cube-redlink" }, label);
+  return h("a", { key, href, ...(!exists && { className: "cube-redlink" }) }, label);
 }
 
 function renderJsx(el: JsxElement, state: RenderState, key: string): ReactNode {
@@ -345,7 +345,6 @@ function renderJsx(el: JsxElement, state: RenderState, key: string): ReactNode {
     case "YouTube":
       return h("iframe", {
         key,
-        className: "cube-youtube",
         src: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(String(attrs.id ?? ""))}`,
         allowFullScreen: true,
         loading: "lazy",
@@ -377,7 +376,7 @@ function makeQueryView(attrs: Record<string, unknown>, state: RenderState) {
     if (result.kind === "agg") {
       const first = result.rows[0] ?? {};
       const value = (first as Record<string, unknown>)[format === "count" ? "count" : "value"];
-      return h("span", { className: "cube-query-value" }, String(value ?? ""));
+      return h("span", null, String(value ?? ""));
     }
 
     const rows = result.rows;
@@ -391,7 +390,7 @@ function makeQueryView(attrs: Record<string, unknown>, state: RenderState) {
     if (format === "ul") {
       return h(
         "ul",
-        { className: "cube-query-list" },
+        null,
         ...rows.map((r, i) =>
           h("li", { key: i }, h("a", { href: ctx.pageHref(r.page) }, r.page.displayTitle ?? r.page.title)),
         ),
@@ -400,7 +399,7 @@ function makeQueryView(attrs: Record<string, unknown>, state: RenderState) {
     if (format === "inline") {
       const fields = (attrs.select as string[] | undefined) ?? [];
       const texts = rows.map((r) => fields.map((f) => String(r.data[f] ?? "")).join(", "));
-      return h("span", { className: "cube-query-inline" }, texts.join("; "));
+      return h("span", null, texts.join("; "));
     }
 
     // table (default)
@@ -408,7 +407,7 @@ function makeQueryView(attrs: Record<string, unknown>, state: RenderState) {
     const headers = (attrs.headers as string[] | undefined) ?? select;
     return h(
       "table",
-      { className: "cube-table cube-query-table" },
+      { className: "cube-query-table" },
       h("thead", null, h("tr", null, h("th", null, ""), ...headers.map((hd, i) => h("th", { key: i }, hd)))),
       h(
         "tbody",
@@ -440,7 +439,7 @@ function TocView({ headings }: { headings: RenderedPage["headings"] }): ReactNod
   // wanting a complete TOC should use renderAst().headings in their layout.
   return h(
     "nav",
-    { className: "cube-toc" },
+    { "aria-label": "Contents" },
     h("ul", null, ...headings.map((hd, i) =>
       h("li", { key: i, className: `cube-toc-d${hd.depth}` }, h("a", { href: `#${hd.id}` }, hd.text)),
     )),
@@ -461,7 +460,7 @@ function makeImageView(attrs: Record<string, unknown>, state: RenderState) {
       ...(typeof attrs.height === "number" && { height: attrs.height }),
     });
     if (attrs.caption) {
-      return h("figure", { className: "cube-figure" }, img, h("figcaption", null, String(attrs.caption)));
+      return h("figure", null, img, h("figcaption", null, String(attrs.caption)));
     }
     return img;
   };
@@ -480,7 +479,7 @@ function makeGalleryView(attrs: Record<string, unknown>, state: RenderState) {
         const src = map.get(img.file);
         return h(
           "figure",
-          { key: i, className: "cube-gallery-item" },
+          { key: i },
           src
             ? h("img", { src, alt: img.caption ?? img.file, ...(typeof attrs.heights === "number" && { height: attrs.heights }) })
             : h("span", { className: "cube-missing-media" }, `[missing media: ${img.file}]`),

@@ -66,7 +66,7 @@ test("wiki links: existing, red, labeled, interwiki", async () => {
         new Map(refs.map((r) => [`${r.ns}:${r.slug}`, r.slug === "Existing_Page"])),
     },
   );
-  assert.match(html, /<a href="\/Existing_Page" className="cube-link">Existing Page<\/a>/);
+  assert.match(html, /<a href="\/Existing_Page">Existing Page<\/a>/);
   assert.match(html, /<a href="\/Missing" className="cube-redlink">the missing one<\/a>/);
   assert.match(html, /<a href="https:\/\/tcrf\.net\/Proto:Sonic_2" className="cube-interwiki">/);
 });
@@ -132,7 +132,7 @@ test("Query count renders inline value", async () => {
   const { html } = await render(`<Query from="Prototype" format="count" />\n`, {
     runQuery: async () => ({ kind: "agg", rows: [{ count: 42 }] }),
   });
-  assert.match(html, /<span className="cube-query-value">42<\/span>/);
+  assert.match(html, /<span>42<\/span>/);
 });
 
 test("metadata components render nothing", async () => {
@@ -148,7 +148,7 @@ test("unbound site component renders a visible placeholder", async () => {
 
 test("gfm table renders with alignment", async () => {
   const { html } = await render("| a | b |\n| :- | -: |\n| 1 | 2 |\n");
-  assert.match(html, /<table className="cube-table">/);
+  assert.match(html, /<table>/);
   assert.match(html, /<th>a<\/th>/);
   assert.match(html, /<td>2<\/td>/);
 });
