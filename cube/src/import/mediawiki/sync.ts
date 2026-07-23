@@ -28,6 +28,8 @@ export type SyncSaveInput = {
 export type SyncFailure = {
   title: string;
   error: string;
+  /** Timestamp of the change we failed on; clamps the sync cursor. */
+  timestamp?: string;
 };
 
 export type SyncResult = {
@@ -68,7 +70,11 @@ type RcResponse = {
 };
 
 async function defaultFetchJson(url: string): Promise<unknown> {
-  const res = await fetch(url, { headers: { "user-agent": "cube-import/0.1" } });
+  // Bound the request so the continuous-sync loop can't hang on a stalled peer.
+  const res = await fetch(url, {
+    headers: { "user-agent": "cube-import/0.1" },
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!res.ok) throw new Error(`recentchanges ${res.status}`);
   return res.json();
 }
@@ -104,11 +110,6 @@ export async function syncRecentChanges(opts: SyncOptions): Promise<SyncResult> 
   }
   const considered = changes.slice(0, limit);
 
-  let newSince = opts.since;
-  for (const c of considered) {
-    if (c.timestamp !== undefined && c.timestamp > newSince) newSince = c.timestamp;
-  }
-
   // Dedupe per title, keeping the latest change; main namespace only for now.
   const byTitle = new Map<string, RecentChange>();
   for (const c of considered) {
@@ -140,8 +141,29 @@ export async function syncRecentChanges(opts: SyncOptions): Promise<SyncResult> 
       });
       processed++;
     } catch (err) {
-      failures.push({ title, error: err instanceof Error ? err.message : String(err) });
+      failures.push({
+        title,
+        error: err instanceof Error ? err.message : String(err),
+        timestamp: rc.timestamp,
+      });
     }
+  }
+
+  // Advance the cursor over successfully-processed changes only: never to or
+  // past the oldest change we failed to import, so a transient failure is
+  // retried next pass instead of being silently skipped forever. rcstart is
+  // inclusive with rcdir=newer, and imports are idempotent, so re-listing the
+  // clamp point and later successes next pass is cheap.
+  const oldestFailure = failures.reduce<string | undefined>(
+    (min, f) => (f.timestamp && (min === undefined || f.timestamp < min) ? f.timestamp : min),
+    undefined,
+  );
+  let newSince = opts.since;
+  for (const c of considered) {
+    const t = c.timestamp;
+    if (t === undefined || t <= newSince) continue;
+    if (oldestFailure !== undefined && t >= oldestFailure) continue;
+    newSince = t;
   }
 
   return { processed, newSince, failures };

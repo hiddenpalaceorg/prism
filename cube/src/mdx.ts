@@ -28,7 +28,15 @@ export function rawAttrs(node: JsxElement): RawAttrsResult {
       errors.push({ message: "spread attributes ({...x}) are not allowed" });
       continue;
     }
-    if (a.name in attrs) {
+    // Reject prototype-mutating names outright rather than relying on
+    // downstream unknown-field dropping to neutralize them.
+    if (a.name === "__proto__" || a.name === "constructor" || a.name === "prototype") {
+      errors.push({ attr: a.name, message: `reserved attribute name "${a.name}"` });
+      continue;
+    }
+    // hasOwnProperty, not `in`: `in` walks the prototype chain and would
+    // falsely flag a first-and-only attr named e.g. "toString" as duplicate.
+    if (Object.prototype.hasOwnProperty.call(attrs, a.name)) {
       errors.push({ attr: a.name, message: `duplicate attribute "${a.name}"` });
       continue;
     }

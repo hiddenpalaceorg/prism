@@ -123,7 +123,19 @@ export type CubeLocalApi = {
   savePage(input: SaveInput): Promise<SaveResult>;
   movePage(input: MoveInput): Promise<{ pageId: number }>;
   deletePage(input: DeleteInput): Promise<void>;
-  getRevision(id: number): Promise<(RevisionMeta & { content: string; pageId: number }) | null>;
+  getRevision(
+    id: number,
+  ): Promise<
+    | (RevisionMeta & {
+        content: string;
+        pageId: number;
+        ns: string;
+        slug: string;
+        visibility: "public" | "moderator";
+        deletedAt: Date | null;
+      })
+    | null
+  >;
   listRevisions(ref: { ns: string; slug: string }, opts?: { limit?: number; before?: number }): Promise<RevisionMeta[]>;
   search(q: string, opts?: { ns?: string; limit?: number }): Promise<SearchHit[]>;
   queryObjects(q: ObjectQuery, opts?: CompileOptions): Promise<QueryResult>;
@@ -223,15 +235,30 @@ export function createCube(config: CubeConfig): Cube {
 
     async getRevision(id) {
       const res = await pool().query(
-        `SELECT id, page_id, parent_rev_id, author_name, comment, minor, content, wikitext_fallback, created_at
-           FROM cube_revision WHERE id = $1`,
+        `SELECT r.id, r.page_id, r.parent_rev_id, r.author_name, r.comment, r.minor,
+                r.content, r.wikitext_fallback, r.created_at,
+                p.ns, p.slug, p.visibility, p.deleted_at
+           FROM cube_revision r JOIN cube_page p ON p.id = r.page_id
+          WHERE r.id = $1`,
         [id],
       );
-      const r = res.rows[0] as (RevisionRow & { page_id: number }) | undefined;
+      const r = res.rows[0] as
+        | (RevisionRow & {
+            page_id: number;
+            ns: string;
+            slug: string;
+            visibility: "public" | "moderator";
+            deleted_at: Date | null;
+          })
+        | undefined;
       if (!r) return null;
       return {
         id: Number(r.id),
         pageId: Number(r.page_id),
+        ns: r.ns,
+        slug: r.slug,
+        visibility: r.visibility,
+        deletedAt: r.deleted_at,
         parentRevId: r.parent_rev_id === null ? null : Number(r.parent_rev_id),
         author: r.author_name,
         comment: r.comment,

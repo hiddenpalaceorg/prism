@@ -15,6 +15,7 @@ import { parseDocument } from "./parse";
 import { checkQueries } from "./query-component";
 import type { Registry } from "./schema/index";
 import { DEFAULT_SLUG_CONFIG, isTitleError, normalizeTitle, type SlugConfig, type TitleRef } from "./slug";
+import { serializeComponentTag } from "./tags";
 import { validateDocument, type ComponentInstance, type ValidateOptions } from "./validate";
 
 export type CubeAuthor = {
@@ -394,7 +395,8 @@ export async function movePage(pool: Pool, ctx: SaveContext, input: MoveInput): 
     await savePage(pool, ctx, {
       ns: input.from.ns,
       slug: input.from.slug,
-      markdown: `<Redirect to="${to.title}" />\n`,
+      // Serialize the tag so a title containing `"` can't inject attributes.
+      markdown: `${serializeComponentTag("Redirect", { to: to.title })}\n`,
       author: input.actor,
       comment: input.comment ?? `moved to ${to.title}`,
     });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compileQuery, CubeQueryError } from "../src/query";
+import { compileQuery, CubeQueryError, type Where } from "../src/query";
 import { toObjectQuery } from "../src/query-component";
 import { testRegistry } from "./helpers";
 
@@ -69,6 +69,15 @@ test("unknown fields and components throw with valid-field listing", () => {
   assert.throws(
     () => compileQuery(testRegistry, { from: "Prototype", sort: [{ field: "nope" }] }),
     CubeQueryError,
+  );
+});
+
+test("deeply nested where throws CubeQueryError, not a RangeError stack overflow", () => {
+  let deep: Where = { game: "Sonic" };
+  for (let i = 0; i < 5000; i++) deep = { and: [deep] };
+  assert.throws(
+    () => compileQuery(testRegistry, { from: "Prototype", where: deep }),
+    (e: unknown) => e instanceof CubeQueryError && /nested too deeply/.test(e.message),
   );
 });
 

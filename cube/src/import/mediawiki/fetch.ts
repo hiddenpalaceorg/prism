@@ -11,13 +11,20 @@ export type FetchedPage = {
   html: string;
 };
 
+// Bound every request so an unattended sync loop can't hang forever on a
+// stalled connection; also caps how long a slow response ties up the worker.
+const FETCH_TIMEOUT_MS = 30_000;
+function reqInit(): RequestInit {
+  return { headers: { "user-agent": "cube-import/0.1" }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) };
+}
+
 function encodeTitle(title: string): string {
   return encodeURIComponent(title.replace(/ /g, "_"));
 }
 
 export async function fetchParsoidHtml(baseUrl: string, title: string): Promise<FetchedPage> {
   const url = `${baseUrl.replace(/\/$/, "")}/w/rest.php/v1/page/${encodeTitle(title)}/with_html`;
-  const res = await fetch(url, { headers: { "user-agent": "cube-import/0.1" } });
+  const res = await fetch(url, reqInit());
   if (!res.ok) throw new Error(`with_html ${res.status} for ${title}`);
   const body = (await res.json()) as { id: number; latest?: { id: number }; html: string; title?: string };
   return { title, revisionId: body.latest?.id ?? body.id, html: body.html };
@@ -25,7 +32,7 @@ export async function fetchParsoidHtml(baseUrl: string, title: string): Promise<
 
 export async function fetchRawWikitext(baseUrl: string, title: string): Promise<string> {
   const url = `${baseUrl.replace(/\/$/, "")}/w/index.php?title=${encodeTitle(title)}&action=raw`;
-  const res = await fetch(url, { headers: { "user-agent": "cube-import/0.1" } });
+  const res = await fetch(url, reqInit());
   if (!res.ok) throw new Error(`action=raw ${res.status} for ${title}`);
   return res.text();
 }
@@ -43,7 +50,7 @@ export async function fetchRevisionInfo(baseUrl: string, title: string): Promise
   const url =
     `${baseUrl.replace(/\/$/, "")}/w/api.php?action=query&prop=revisions` +
     `&rvprop=content|user|timestamp|comment|ids&rvslots=main&titles=${encodeTitle(title)}&format=json`;
-  const res = await fetch(url, { headers: { "user-agent": "cube-import/0.1" } });
+  const res = await fetch(url, reqInit());
   if (!res.ok) throw new Error(`revisions api ${res.status} for ${title}`);
   const body = (await res.json()) as {
     query?: { pages?: Record<string, { revisions?: {

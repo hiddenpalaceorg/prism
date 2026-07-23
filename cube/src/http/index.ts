@@ -125,6 +125,18 @@ async function route(cube: Cube, req: Request): Promise<Response> {
   };
   const requireScope = (scope: string): Response | null =>
     auth.scopes.has(scope) ? null : err("forbidden", 403, `missing scope: ${scope}`);
+  // Read gate for the revision/diff/history endpoints, which fetch content by
+  // id rather than title: honor page `visibility`, and treat soft-deleted
+  // pages as moderator-only so they 404 for everyone else. Without this these
+  // routes are a back door around the visibility control that /page enforces.
+  const canReadPage = async (
+    page: { ns: string; slug: string; visibility?: "public" | "moderator" },
+    deleted = false,
+  ): Promise<boolean> => {
+    if (!(await can("read", page))) return false;
+    if (deleted && !(await can("delete", page))) return false;
+    return true;
+  };
 
   /* ---- auth ---- */
   if (path === "/auth/login" && method === "POST") {
@@ -266,6 +278,8 @@ async function route(cube: Cube, req: Request): Promise<Response> {
     const resolved = await cube.api.resolve(title);
     if (!resolved) return err("not_found", 404, "no such page");
     const ref = resolved.redirectedFrom ?? resolved;
+    const page = await cube.api.getPage(ref);
+    if (!page || !(await canReadPage(page))) return err("not_found", 404, "no such page");
     const revisions = await cube.api.listRevisions(ref, {
       limit: numParam(url, "limit"),
       before: numParam(url, "before"),
@@ -277,6 +291,9 @@ async function route(cube: Cube, req: Request): Promise<Response> {
   if (revMatch && method === "GET") {
     const rev = await cube.api.getRevision(Number(revMatch[1]));
     if (!rev) return err("not_found", 404, "no such revision");
+    if (!(await canReadPage({ ns: rev.ns, slug: rev.slug, visibility: rev.visibility }, rev.deletedAt !== null))) {
+      return err("not_found", 404, "no such revision");
+    }
     return json(rev);
   }
 
@@ -286,6 +303,9 @@ async function route(cube: Cube, req: Request): Promise<Response> {
     if (!from || !to) return err("bad_request", 400, "from and to revision ids required");
     const diff = await diffRevisions(cube.pool(), from, to);
     if (!diff) return err("not_found", 404, "no such revisions");
+    for (const p of [diff.pages.from, diff.pages.to]) {
+      if (!(await canReadPage(p, p.deleted))) return err("not_found", 404, "no such revisions");
+    }
     return json(diff);
   }
 
@@ -545,12 +565,16 @@ async function verifyToken(pool: Pool, token: string): Promise<AuthResult | null
   const m = /^cube_(\d+)_[A-Za-z0-9_-]+$/.exec(token);
   if (!m) return null;
   const res = await pool.query(
-    `SELECT id, name, token_sha256, scopes, user_id, expires_at FROM cube_token WHERE id = $1`,
+    `SELECT t.id, t.name, t.token_sha256, t.scopes, t.user_id, t.expires_at, u.blocked_at
+       FROM cube_token t LEFT JOIN cube_user u ON u.id = t.user_id
+      WHERE t.id = $1`,
     [Number(m[1])],
   );
   const row = res.rows[0];
   if (!row) return null;
   if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return null;
+  // A blocked user's tokens must stop working, mirroring the cookie path.
+  if (row.user_id !== null && row.blocked_at !== null) return null;
   const actual = createHash("sha256").update(token).digest();
   const expected = Buffer.from(row.token_sha256, "hex");
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
