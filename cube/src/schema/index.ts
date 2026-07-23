@@ -19,32 +19,32 @@ export type AttrType =
   | "page"
   | "json";
 
-export interface AttrQueryableSpec {
+export type AttrQueryableSpec = {
   /** JSONB key in cube_page_object.data. Defaults to snake_case of the attr name. */
   key?: string;
   /** Gets a dedicated expression index; equality on it also drives cache filter keys. */
   indexed?: boolean;
   /** How sorts/ranges cast the value. Defaults by attr type (date -> date, number -> numeric). */
   sortType?: "text" | "numeric" | "date";
-}
+};
 
 export type SuggestSource =
   | { kind: "objectValues"; component: string; field: string }
   | { kind: "page"; ns?: string }
   | { kind: "media"; mime?: string };
 
-export interface AttrEditorSpec {
+export type AttrEditorSpec = {
   control?: "text" | "textarea" | "combobox" | "checkbox" | "date" | "media" | "page" | "hidden";
   suggest?: SuggestSource;
   label?: string;
   help?: string;
-}
+};
 
-export interface ValidateCtx {
+export type ValidateCtx = {
   page: PageRef;
-}
+};
 
-export interface AttrSpec {
+export type AttrSpec = {
   type: AttrType;
   required?: boolean;
   default?: unknown;
@@ -59,15 +59,15 @@ export interface AttrSpec {
   editor?: AttrEditorSpec;
   /** Extra per-value check; return a message to reject. */
   validate?: (value: unknown, ctx: ValidateCtx) => string | null;
-}
+};
 
-export interface PageRef {
+export type PageRef = {
   ns: string;
   slug: string;
   title: string;
-}
+};
 
-export interface DeriveResult {
+export type DeriveResult = {
   /** Extra fields merged into the extracted object (e.g. sort_date fallback chains). */
   fields?: Record<string, unknown>;
   /** Derived categories, e.g. "Sega Mega Drive prototypes". */
@@ -75,29 +75,29 @@ export interface DeriveResult {
   displayTitle?: string;
   /** Tracking-category analogs, e.g. "Missing title screenshots". */
   warnings?: string[];
-}
+};
 
-export interface SchemaError {
+export type SchemaError = {
   message: string;
   attr?: string;
-}
+};
 
-export interface QueryDep {
+export type QueryDep = {
   component: string;
   /** Fine-grained invalidation key, e.g. "game=Sonic the Hedgehog 2". Omit for component-wide. */
   filterKey?: string | null;
-}
+};
 
 export type ChildrenPolicy = "none" | "markdown" | "json" | readonly string[];
 
-export interface ComponentEditorSpec {
+export type ComponentEditorSpec = {
   icon?: string;
   description?: string;
   keywords?: string[];
   preview?: "view" | "html" | "card";
-}
+};
 
-export interface ComponentSpec<A extends Record<string, AttrSpec> = Record<string, AttrSpec>> {
+export type ComponentSpec<A extends Record<string, AttrSpec> = Record<string, AttrSpec>> = {
   /** JSX tag name; must be Capitalized. */
   name: string;
   placement: "block" | "inline";
@@ -119,7 +119,7 @@ export interface ComponentSpec<A extends Record<string, AttrSpec> = Record<strin
    */
   queries?(attrs: AttrValues<A>): QueryDep[];
   editor?: ComponentEditorSpec;
-}
+};
 
 /* ---- attr value typing ------------------------------------------------- */
 
@@ -176,7 +176,7 @@ export function snakeCase(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
 }
 
-export interface QueryableField {
+export type QueryableField = {
   /** JSONB key in object data. */
   key: string;
   attr: string;
@@ -184,7 +184,7 @@ export interface QueryableField {
   multi: boolean;
   indexed: boolean;
   sortType: "text" | "numeric" | "date";
-}
+};
 
 function defaultSortType(t: AttrType): "text" | "numeric" | "date" {
   if (t === "number") return "numeric";
@@ -249,10 +249,10 @@ export function createRegistry(specs: ComponentSpec[]): Registry {
 const PARTIAL_DATE_RE = /^\d{4}(-\d{2}(-\d{2})?)?$/;
 const NUMBER_RE = /^-?\d+(\.\d+)?$/;
 
-export interface NormalizedAttrs {
+export type NormalizedAttrs = {
   values: Record<string, unknown>;
   errors: SchemaError[];
-}
+};
 
 function normalizeScalar(spec: AttrSpec, raw: unknown, attr: string): { value?: unknown; error?: string } {
   switch (spec.type) {
@@ -379,7 +379,7 @@ export function normalizeAttrs(
 
 /* ---- introspection (API/MCP consumer) ----------------------------------- */
 
-export interface ComponentSchemaJson {
+export type ComponentSchemaJson = {
   name: string;
   placement: "block" | "inline";
   children: "none" | "markdown" | "json" | string[];
@@ -396,7 +396,7 @@ export interface ComponentSchemaJson {
       searchable?: boolean;
     }
   >;
-}
+};
 
 export function toSchemaJson(registry: Registry): ComponentSchemaJson[] {
   return registry.all().map((spec) => {

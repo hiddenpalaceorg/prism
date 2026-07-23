@@ -30,7 +30,7 @@ import { normalizeAttrs } from "../schema/index";
 import { DEFAULT_SLUG_CONFIG, isTitleError, normalizeTitle, type SlugConfig } from "../slug";
 import { DEFAULT_INTRINSIC_TAGS } from "../validate";
 
-export interface ComponentViewProps {
+export type ComponentViewProps = {
   attrs: Record<string, unknown>;
   data?: unknown;
   children?: ReactNode;
@@ -38,23 +38,23 @@ export interface ComponentViewProps {
   childrenJson?: unknown;
   readOnly?: boolean;
   page: PageRef;
-}
+};
 
-export interface ComponentBinding {
+export type ComponentBinding = {
   /** Server-only data fetch; its result is passed to View as `data`. */
   loader?: (attrs: Record<string, unknown>, ctx: CubeRenderCtx) => Promise<unknown>;
   /** Client-safe presentational component (also used by the editor preview). */
   View: (props: ComponentViewProps) => ReactNode | Promise<ReactNode>;
-}
+};
 
-export interface LinkInfo {
+export type LinkInfo = {
   href: string;
   exists: boolean;
-}
+};
 
 export type ResultRenderer = (rows: QueryRow[], attrs: Record<string, unknown>, ctx: CubeRenderCtx) => ReactNode;
 
-export interface CubeRenderCtx {
+export type CubeRenderCtx = {
   registry: Registry;
   page: PageRef;
   /** URL for a page ref: the host owns the URL scheme. */
@@ -70,12 +70,12 @@ export interface CubeRenderCtx {
   slug?: SlugConfig;
   intrinsicTags?: readonly string[];
   interwiki?: Record<string, string>;
-}
+};
 
-export interface RenderedPage {
+export type RenderedPage = {
   node: ReactNode;
   headings: { depth: number; text: string; id: string }[];
-}
+};
 
 export async function renderAst(root: Root, ctx: CubeRenderCtx): Promise<RenderedPage> {
   const slugCfg = ctx.slug ?? DEFAULT_SLUG_CONFIG;
@@ -108,7 +108,7 @@ export async function renderAst(root: Root, ctx: CubeRenderCtx): Promise<Rendere
   return { node, headings };
 }
 
-interface RenderState {
+type RenderState = {
   ctx: CubeRenderCtx;
   slugCfg: SlugConfig;
   linkMap: Map<string, boolean>;
@@ -116,7 +116,7 @@ interface RenderState {
   slugger: GithubSlugger;
   headings: RenderedPage["headings"];
   key: number;
-}
+};
 
 function collect(node: Node, fn: (n: Node) => void): void {
   fn(node);

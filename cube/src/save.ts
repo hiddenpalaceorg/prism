@@ -17,18 +17,18 @@ import type { Registry } from "./schema/index";
 import { DEFAULT_SLUG_CONFIG, isTitleError, normalizeTitle, type SlugConfig, type TitleRef } from "./slug";
 import { validateDocument, type ComponentInstance, type ValidateOptions } from "./validate";
 
-export interface CubeAuthor {
+export type CubeAuthor = {
   id?: number | null;
   name: string;
-}
+};
 
-export interface SaveContext {
+export type SaveContext = {
   registry: Registry;
   slug?: SlugConfig;
   validate?: ValidateOptions;
-}
+};
 
-export interface SaveInput {
+export type SaveInput = {
   ns: string;
   slug: string;
   markdown: string;
@@ -43,9 +43,9 @@ export interface SaveInput {
   timestamp?: Date;
   /** Import provenance: source MediaWiki revision id (unique when set). */
   mwRevId?: number;
-}
+};
 
-export interface SaveResult {
+export type SaveResult = {
   pageId: number;
   revId: number;
   noop: boolean;
@@ -53,7 +53,7 @@ export interface SaveResult {
   issues: Issue[];
   /** Cache invalidation tags for the host (cube:page:*, cube:cat:*, cube:q:*). */
   invalidate: string[];
-}
+};
 
 function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -64,12 +64,12 @@ export function normalizeContent(markdown: string): string {
   return lf.replace(/\n+$/, "") + "\n";
 }
 
-interface ParsedDoc {
+type ParsedDoc = {
   root: Root;
   components: ComponentInstance[];
   issues: Issue[];
   extraction: Extraction;
-}
+};
 
 function parseAndValidate(ctx: SaveContext, page: TitleRef, content: string): ParsedDoc {
   const { root, issues: parseIssues } = parseDocument(content);
@@ -347,13 +347,13 @@ function symmetricDiff(a: string[], b: string[]): string[] {
 
 /* ---- move / delete ------------------------------------------------------ */
 
-export interface MoveInput {
+export type MoveInput = {
   from: { ns: string; slug: string };
   to: { ns: string; slug: string };
   actor: CubeAuthor;
   comment?: string;
   leaveRedirect?: boolean;
-}
+};
 
 export async function movePage(pool: Pool, ctx: SaveContext, input: MoveInput): Promise<{ pageId: number }> {
   const slugCfg = ctx.slug ?? DEFAULT_SLUG_CONFIG;
@@ -402,12 +402,12 @@ export async function movePage(pool: Pool, ctx: SaveContext, input: MoveInput): 
   return { pageId };
 }
 
-export interface DeleteInput {
+export type DeleteInput = {
   ns: string;
   slug: string;
   actor: CubeAuthor;
   reason?: string;
-}
+};
 
 export async function deletePage(pool: Pool, input: DeleteInput): Promise<void> {
   await withTx(pool, async (client) => {

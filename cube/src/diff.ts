@@ -4,12 +4,12 @@
 import { diffLines, type Change } from "diff";
 import type { Pool } from "pg";
 
-export interface RevisionDiff {
+export type RevisionDiff = {
   from: { id: number; author: string; createdAt: Date };
   to: { id: number; author: string; createdAt: Date };
   samePage: boolean;
   changes: Change[];
-}
+};
 
 export async function diffRevisions(pool: Pool, fromId: number, toId: number): Promise<RevisionDiff | null> {
   const res = await pool.query(

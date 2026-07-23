@@ -31,11 +31,11 @@ export { docToMarkdown, serializeMdast } from "./to-markdown";
 // server-side "cube" root module.
 export { builtinComponents } from "../builtins";
 
-export interface MarkdownToDocResult {
+export type MarkdownToDocResult = {
   /** null when the markdown has hard parse errors (see issues). */
   doc: PMDocJSON | null;
   issues: Issue[];
-}
+};
 
 /** parseDocument + mdastToDoc: markdown straight to an editor document. */
 export function markdownToDoc(markdown: string, registry: Registry): MarkdownToDocResult {

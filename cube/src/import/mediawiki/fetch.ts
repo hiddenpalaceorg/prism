@@ -5,11 +5,11 @@
  * percent-encoded in the title path segment.
  */
 
-export interface FetchedPage {
+export type FetchedPage = {
   title: string;
   revisionId: number;
   html: string;
-}
+};
 
 function encodeTitle(title: string): string {
   return encodeURIComponent(title.replace(/ /g, "_"));
@@ -30,13 +30,13 @@ export async function fetchRawWikitext(baseUrl: string, title: string): Promise<
   return res.text();
 }
 
-export interface RevisionInfo {
+export type RevisionInfo = {
   wikitext: string;
   revId: number;
   author: string;
   timestamp: Date;
   comment: string;
-}
+};
 
 /** Current revision content + provenance (author/timestamp/comment) in one call. */
 export async function fetchRevisionInfo(baseUrl: string, title: string): Promise<RevisionInfo> {

@@ -21,11 +21,11 @@ export class CubeModerationError extends Error {
   }
 }
 
-interface PageRefInput {
+type PageRefInput = {
   ns: string;
   slug: string;
   actor: CubeAuthor;
-}
+};
 
 /** Set cube_page.protection (empty object = unprotect); logged as "protect". */
 export async function protectPage(
@@ -131,18 +131,18 @@ export async function unblockUser(
   });
 }
 
-export interface MassRevertInput {
+export type MassRevertInput = {
   userName: string;
   since: Date;
   actor: CubeAuthor;
   comment?: string;
-}
+};
 
-export interface MassRevertResult {
+export type MassRevertResult = {
   reverted: number;
   deleted: number;
   skipped: { slug: string; reason: string }[];
-}
+};
 
 /**
  * Revert every page whose current revision is by userName since a cutoff:
@@ -203,7 +203,7 @@ export async function massRevert(
   return result;
 }
 
-export interface RecentChange {
+export type RecentChange = {
   revId: number;
   ns: string;
   slug: string;
@@ -216,7 +216,7 @@ export interface RecentChange {
   bytes: number;
   /** Length delta vs the parent revision (new pages count from zero). */
   delta: number;
-}
+};
 
 export async function listRecentChanges(
   pool: Pool,

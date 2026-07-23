@@ -51,10 +51,10 @@ const WARNING_SEVERITY: Record<WarningCode, ConversionWarning["severity"]> = {
   VALIDATION_FAILED: "error",
 };
 
-export interface FullConvertOptions extends ConvertOptions {
+export type FullConvertOptions = ConvertOptions & {
   /** Handles {{#ask:}}/{{#show:}} calls (site-supplied, e.g. hpMapping's mapAsk). */
   mapAsk?: (ask: AskQuery, ctx: MapCtx) => MappingResult;
-}
+};
 
 export function convert(html: string, opts: FullConvertOptions): ConversionResult {
   const warnings: ConversionWarning[] = [];

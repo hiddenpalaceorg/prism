@@ -1,5 +1,5 @@
 /** A line-accurate problem found while parsing, validating, or saving a document. */
-export interface Issue {
+export type Issue = {
   severity: "error" | "warning";
   /** Stable machine-readable rule id, e.g. "unknown-component", "attr-type". */
   rule: string;
@@ -10,16 +10,16 @@ export interface Issue {
   endColumn?: number;
   component?: string;
   attr?: string;
-}
+};
 
 export function hasErrors(issues: Issue[]): boolean {
   return issues.some((i) => i.severity === "error");
 }
 
-interface PositionLike {
+type PositionLike = {
   start?: { line?: number; column?: number };
   end?: { line?: number; column?: number };
-}
+};
 
 /** Copy position info from an mdast node onto an issue. */
 export function at(issue: Issue, pos: PositionLike | undefined): Issue {

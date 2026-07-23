@@ -29,12 +29,12 @@ export class CubeMediaError extends Error {
   }
 }
 
-export interface MediaActor {
+export type MediaActor = {
   id?: number | null;
   name: string;
-}
+};
 
-export interface UploadMediaInput {
+export type UploadMediaInput = {
   name: string;
   body: Uint8Array | Readable;
   contentType?: string;
@@ -43,9 +43,9 @@ export interface UploadMediaInput {
   uploader: MediaActor;
   /** In-memory buffering cap (v1); default DEFAULT_MAX_UPLOAD_BYTES. */
   maxBytes?: number;
-}
+};
 
-export interface UploadMediaResult {
+export type UploadMediaResult = {
   id: number;
   name: string;
   sha256: string;
@@ -54,9 +54,9 @@ export interface UploadMediaResult {
   created: boolean;
   overwrote: boolean;
   noop: boolean;
-}
+};
 
-export interface MediaRow {
+export type MediaRow = {
   id: number;
   name: string;
   storageKey: string;
@@ -65,9 +65,9 @@ export interface MediaRow {
   mime: string | null;
   uploadedBy: number | null;
   uploadedAt: Date;
-}
+};
 
-export interface MediaRevisionRow {
+export type MediaRevisionRow = {
   id: number;
   storageKey: string;
   sha256: string | null;
@@ -76,7 +76,7 @@ export interface MediaRevisionRow {
   uploadedBy: number | null;
   uploadedAt: Date;
   note: string | null;
-}
+};
 
 /** Canonical (dbkey) media name; matches cube_link's to_slug for kind=media. */
 function mediaName(name: string): string {
@@ -260,12 +260,12 @@ export async function listMediaRevisions(pool: Pool, name: string): Promise<Medi
   }));
 }
 
-export interface DeleteMediaInput {
+export type DeleteMediaInput = {
   name: string;
   actor: MediaActor;
   /** Delete even while cube_link rows still reference the name. */
   force?: boolean;
-}
+};
 
 /**
  * Soft delete (deleted_at). The blob stays in storage: keys are
@@ -304,13 +304,13 @@ export async function deleteMedia(pool: Pool, input: DeleteMediaInput): Promise<
   });
 }
 
-export interface MediaSearchHit {
+export type MediaSearchHit = {
   name: string;
   sha256: string | null;
   size: number | null;
   mime: string | null;
   uploadedAt: Date;
-}
+};
 
 export async function searchMedia(pool: Pool, q: string, limit = 20): Promise<MediaSearchHit[]> {
   const res = await pool.query(

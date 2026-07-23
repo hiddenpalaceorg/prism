@@ -9,7 +9,7 @@
 import type { ConversionResult } from "./types";
 import { fetchParsoidHtml, fetchRawWikitext, type FetchedPage } from "./fetch";
 
-export interface SyncSaveInput {
+export type SyncSaveInput = {
   title: string;
   /** Converted markdown, or null when conversion failed. */
   markdown: string | null;
@@ -23,22 +23,22 @@ export interface SyncSaveInput {
   comment: string;
   /** The recent-change ISO timestamp. */
   timestamp: string;
-}
+};
 
-export interface SyncFailure {
+export type SyncFailure = {
   title: string;
   error: string;
-}
+};
 
-export interface SyncResult {
+export type SyncResult = {
   /** Pages fetched, converted, and saved without error. */
   processed: number;
   /** Newest change timestamp seen; pass as `since` on the next run. */
   newSince: string;
   failures: SyncFailure[];
-}
+};
 
-export interface SyncOptions {
+export type SyncOptions = {
   baseUrl: string;
   /** MW ISO timestamp; changes at or after this instant are processed. */
   since: string;
@@ -51,21 +51,21 @@ export interface SyncOptions {
   fetchJson?: (url: string) => Promise<unknown>;
   /** Max recent-change entries to page through per run. Default 500. */
   limit?: number;
-}
+};
 
-interface RecentChange {
+type RecentChange = {
   ns?: number;
   title?: string;
   user?: string;
   comment?: string;
   timestamp?: string;
   revid?: number;
-}
+};
 
-interface RcResponse {
+type RcResponse = {
   continue?: { rccontinue?: string };
   query?: { recentchanges?: RecentChange[] };
-}
+};
 
 async function defaultFetchJson(url: string): Promise<unknown> {
   const res = await fetch(url, { headers: { "user-agent": "cube-import/0.1" } });
@@ -149,7 +149,7 @@ export async function syncRecentChanges(opts: SyncOptions): Promise<SyncResult> 
 
 /* ---- shared one-page import step (also used by the batch importer) ---------- */
 
-export interface FetchConvertOptions {
+export type FetchConvertOptions = {
   baseUrl: string;
   title: string;
   convert: (title: string, html: string) => ConversionResult;
@@ -157,15 +157,15 @@ export interface FetchConvertOptions {
   fetchWikitext?: (baseUrl: string, title: string) => Promise<string>;
   /** Fetch wikitext even when conversion succeeds (two-step history import). */
   alwaysWikitext?: boolean;
-}
+};
 
-export interface FetchConvertResult {
+export type FetchConvertResult = {
   /** Converted markdown, or null when conversion failed. */
   markdown: string | null;
   /** Raw wikitext, fetched only when markdown is null. */
   wikitext: string | null;
   result: ConversionResult;
-}
+};
 
 export async function fetchAndConvert(opts: FetchConvertOptions): Promise<FetchConvertResult> {
   const fetchHtml = opts.fetchHtml ?? fetchParsoidHtml;

@@ -18,14 +18,16 @@ import type { Node as UnistNode } from "unist";
 import type { Issue } from "./issues";
 
 /** Custom inline node produced from [[Target|label]] syntax. */
-export interface WikiLink extends UnistNode {
+export type WikiLink = UnistNode & {
   type: "wikiLink";
   target: string;
   /** Explicit label; undefined means display the target. Empty string = MW pipe trick (display target sans namespace/parens). */
   label?: string;
   position?: Text["position"];
-}
+};
 
+// Declaration merging into mdast's node maps requires interface syntax;
+// type aliases cannot augment an existing interface.
 declare module "mdast" {
   interface PhrasingContentMap {
     wikiLink: WikiLink;
@@ -35,10 +37,10 @@ declare module "mdast" {
   }
 }
 
-export interface ParseResult {
+export type ParseResult = {
   root: Root | null;
   issues: Issue[];
-}
+};
 
 const WIKILINK_RE = /\[\[([^[\]\n|]+?)(?:\|([^[\]\n]*))?\]\]/g;
 

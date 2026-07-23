@@ -4,15 +4,15 @@ import type { MdxJsxFlowElement, MdxJsxTextElement } from "mdast-util-mdx-jsx";
 
 export type JsxElement = MdxJsxFlowElement | MdxJsxTextElement;
 
-export interface RawAttrError {
+export type RawAttrError = {
   attr?: string;
   message: string;
-}
+};
 
-export interface RawAttrsResult {
+export type RawAttrsResult = {
   attrs: Record<string, unknown>;
   errors: RawAttrError[];
-}
+};
 
 /**
  * Extract raw attribute values from a JSX element node.

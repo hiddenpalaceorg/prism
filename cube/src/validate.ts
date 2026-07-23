@@ -12,7 +12,7 @@ import { isComponentName, isJsxElement, rawAttrs, type JsxElement } from "./mdx"
 import type { PageRef, Registry } from "./schema/index";
 import { normalizeAttrs } from "./schema/index";
 
-export interface ComponentInstance {
+export type ComponentInstance = {
   name: string;
   /** Normalized, schema-typed attr values (defaults applied). */
   attrs: Record<string, unknown>;
@@ -21,16 +21,16 @@ export interface ComponentInstance {
   /** Parsed fenced-JSON child, for components with children: "json". */
   childrenJson?: unknown;
   node: JsxElement;
-}
+};
 
-export interface ValidateOptions {
+export type ValidateOptions = {
   /** How to treat components missing from the registry. Default "error". */
   unknownComponents?: "error" | "warning";
   /** Lowercase JSX tags allowed to render as real elements. */
   intrinsicTags?: readonly string[];
   /** How to treat raw markdown HTML nodes. Default "warning" (rendered escaped). */
   rawHtml?: "error" | "warning";
-}
+};
 
 export const DEFAULT_INTRINSIC_TAGS: readonly string[] = [
   "b", "i", "em", "strong", "u", "s", "del", "sub", "sup",
@@ -39,10 +39,10 @@ export const DEFAULT_INTRINSIC_TAGS: readonly string[] = [
 
 const INTRINSIC_ALLOWED_ATTRS = new Set(["class", "title", "id"]);
 
-export interface ValidationResult {
+export type ValidationResult = {
   issues: Issue[];
   components: ComponentInstance[];
-}
+};
 
 export function validateDocument(
   registry: Registry,

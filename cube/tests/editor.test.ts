@@ -15,9 +15,9 @@ import { test } from "node:test";
 
 // jsdom ships no types and cube declares no @types/jsdom; type the small
 // surface this test touches.
-interface MinimalDom {
+type MinimalDom = {
   window: Record<string, unknown> & { document: { createElement(tag: string): unknown } };
-}
+};
 // @ts-expect-error -- no type declarations for jsdom; cast below covers usage
 const jsdomModule = (await import("jsdom")) as unknown as {
   JSDOM: new (html: string, options?: object) => MinimalDom;

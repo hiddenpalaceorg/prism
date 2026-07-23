@@ -7,7 +7,7 @@ import type { Registry } from "./schema/index";
 import { compileQuery, CubeQueryError, type ObjectQuery, type Where } from "./query";
 import type { ComponentInstance } from "./validate";
 
-export interface QueryAttrs {
+export type QueryAttrs = {
   from: string | string[];
   where?: Where;
   select?: string[];
@@ -18,7 +18,7 @@ export interface QueryAttrs {
   render?: string;
   groupBy?: string;
   headers?: string[];
-}
+};
 
 /** Build the DSL query a <Query> instance runs, given the page it sits on. */
 export function toObjectQuery(

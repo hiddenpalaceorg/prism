@@ -14,7 +14,7 @@ import type { Element as HastElement, Root as HastRoot } from "hast";
 import { fromHtml } from "hast-util-from-html";
 import type { TemplateCall } from "./types";
 
-export interface ExtractedTransclusion {
+export type ExtractedTransclusion = {
   aboutId: string | null;
   /** data-mw.parts in order: template objects converted to TemplateCall,
    * literal wikitext string parts (hand-written surrounding markup) kept. */
@@ -24,17 +24,17 @@ export interface ExtractedTransclusion {
   nodes: HastElement[];
   /** True when the first node is phrasing-level (span/a/small ...). */
   inline: boolean;
-}
+};
 
-export interface ExtractedExtension {
+export type ExtractedExtension = {
   /** Extension tag name from typeof mw:Extension/<kind>. */
   kind: string;
   node: HastElement;
   /** Verbatim inner source (data-mw body.extsrc), null when absent. */
   extsrc: string | null;
-}
+};
 
-export interface ExtractHtmlResult {
+export type ExtractHtmlResult = {
   /** Parsed tree; transclusion/extension node refs point into it. */
   root: HastRoot;
   /** One entry per about-group, duplicate annotations removed. */
@@ -42,31 +42,31 @@ export interface ExtractHtmlResult {
   extensions: ExtractedExtension[];
   /** Plain category titles ("./Category:Foo_bar" -> "Foo bar"). */
   categories: string[];
-}
+};
 
 /* -------------------------------------------------------------------------
  * data-mw JSON shapes (only the fields the extractor reads).
  * ---------------------------------------------------------------------- */
 
-interface DataMwTarget {
+type DataMwTarget = {
   wt?: string;
   href?: string;
   function?: string;
-}
+};
 
-interface DataMwTemplate {
+type DataMwTemplate = {
   target?: DataMwTarget;
   params?: Record<string, { wt?: string }>;
   i?: number;
-}
+};
 
 type DataMwPart = string | { template?: DataMwTemplate };
 
-interface DataMw {
+type DataMw = {
   parts?: DataMwPart[];
   name?: string;
   body?: { extsrc?: string };
-}
+};
 
 /** Tags treated as phrasing-level for `inline` detection. */
 const PHRASING_TAGS = new Set([
@@ -162,7 +162,7 @@ function partsToCalls(parts: DataMwPart[]): Array<string | TemplateCall> {
 }
 
 /** A typeof=mw:Transclusion node carrying parsed parts, pre-dedupe. */
-interface MarkedRoot {
+type MarkedRoot = {
   node: HastElement;
   about: string | null;
   parts: DataMwPart[];
@@ -170,7 +170,7 @@ interface MarkedRoot {
   partsKey: string;
   /** Element ancestor chain at visit time (document order, outermost first). */
   ancestors: HastElement[];
-}
+};
 
 export function extractHtml(html: string): ExtractHtmlResult {
   const root = fromHtml(html);

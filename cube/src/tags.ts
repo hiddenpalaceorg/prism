@@ -23,10 +23,10 @@ export function serializeAttr(name: string, value: unknown): string | null {
   return `${name}={${JSON.stringify(value)}}`;
 }
 
-export interface SerializeTagOptions {
+export type SerializeTagOptions = {
   /** Children markdown to place between open/close tags. */
   children?: string;
-}
+};
 
 export function serializeComponentTag(
   name: string,
@@ -61,11 +61,11 @@ export function serializeComponentTag(
   return `${open} />`;
 }
 
-export interface ParsedTag {
+export type ParsedTag = {
   name: string;
   attrs: Record<string, unknown>;
   hasChildren: boolean;
-}
+};
 
 export type ParseTagError = { error: string };
 

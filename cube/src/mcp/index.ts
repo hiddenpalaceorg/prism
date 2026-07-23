@@ -15,12 +15,12 @@ import { CubeConflictError, CubeValidationError } from "../issues";
 import { CubeQueryError } from "../query";
 import type { Cube } from "../index";
 
-export interface McpOptions {
+export type McpOptions = {
   /** Acting identity for writes; omit for read-only tool registration. */
   user?: CubeUser | null;
   /** Allow create_page/update_page. Default: only when a user is provided. */
   allowWrites?: boolean;
-}
+};
 
 function text(value: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 1) }] };

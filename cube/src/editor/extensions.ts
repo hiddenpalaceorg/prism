@@ -20,9 +20,9 @@ import type { ComponentSpec, Registry } from "../schema/index";
 /* ---- helpers -------------------------------------------------------------- */
 
 /** Minimal DOM surface used by parse rules (cube's tsconfig carries no DOM lib). */
-interface DomElement {
+type DomElement = {
   getAttribute(name: string): string | null;
-}
+};
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
@@ -258,9 +258,9 @@ const NestableCode = Code.extend({ excludes: "" });
 
 /* ---- extension set ------------------------------------------------------------ */
 
-export interface BuildExtensionsOptions {
+export type BuildExtensionsOptions = {
   placeholder?: string;
-}
+};
 
 export function buildExtensions(registry: Registry, options: BuildExtensionsOptions = {}): Extensions {
   return [

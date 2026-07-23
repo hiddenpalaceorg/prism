@@ -34,12 +34,12 @@ export function splitList(value: string, sep: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-interface Scanned {
+type Scanned = {
   /** null when the span is not a usable call (e.g. empty name "{{}}"). */
   call: TemplateCall | null;
   /** Index just past the closing "}}". */
   end: number;
-}
+};
 
 function buildCall(segs: string[], eqs: number[]): TemplateCall | null {
   const head = segs[0] ?? "";

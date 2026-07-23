@@ -11,7 +11,7 @@ import type { Cube } from "../../index";
 import { CubeValidationError, type Issue } from "../../issues";
 import { isTitleError, normalizeTitle } from "../../slug";
 
-export interface ImportRevisionInput {
+export type ImportRevisionInput = {
   title: string;
   wikitext: string;
   mwRevId: number;
@@ -20,16 +20,16 @@ export interface ImportRevisionInput {
   mwComment: string;
   /** Converted markdown for this revision, or null to leave wikitext as head. */
   markdown: string | null;
-}
+};
 
-export interface ImportRevisionResult {
+export type ImportRevisionResult = {
   /** "imported" | "converted" (wikitext already present, conversion added) | "skipped" (mw rev already imported and converted). */
   outcome: "imported" | "converted" | "skipped";
   headRevId: number;
   /** Set when the converted markdown failed registry validation; the
    * wikitext revision stays head. */
   validationIssues?: Issue[];
-}
+};
 
 export async function importRevision(cube: Cube, input: ImportRevisionInput): Promise<ImportRevisionResult> {
   const ref = normalizeTitle(input.title, cube.slug);

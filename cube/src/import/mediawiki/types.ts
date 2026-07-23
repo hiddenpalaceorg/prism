@@ -21,15 +21,15 @@ export type WarningCode =
   | "EXTENSION_UNSUPPORTED"
   | "VALIDATION_FAILED";
 
-export interface ConversionWarning {
+export type ConversionWarning = {
   code: WarningCode;
   message: string;
   severity: "info" | "warning" | "error";
   detail?: unknown;
-}
+};
 
 /** One template or parser-function call, args verbatim from the revision. */
-export interface TemplateCall {
+export type TemplateCall = {
   kind: "template" | "function";
   /** Normalized name: no Template: prefix, first-cap, underscores as spaces,
    * trailing whitespace stripped. Parser functions lowercase without '#'. */
@@ -38,7 +38,7 @@ export interface TemplateCall {
    * raw wikitext. Named param values arrive whitespace-trimmed from Parsoid;
    * positional ones do not (probe finding): mapping code trims as needed. */
   params: Record<string, string>;
-}
+};
 
 /** What a template call becomes in the output document. */
 export type MappingResult =
@@ -56,7 +56,7 @@ export type MappingResult =
   | { kind: "drop" }
   | { kind: "verbatim" };
 
-export interface MapCtx {
+export type MapCtx = {
   pageTitle: string;
   warn(code: WarningCode, message: string, detail?: unknown): void;
   /** Split a param's raw wikitext into literal text and nested calls
@@ -65,22 +65,22 @@ export interface MapCtx {
   /** MW-style fuzzy date ("Sep 29, 1992", "1992", "May 1992") to ISO partial.
    * Returns null when unparseable (caller warns DATE_UNPARSEABLE). */
   parseDate(text: string): string | null;
-}
+};
 
-export interface TemplateMapping {
+export type TemplateMapping = {
   /** Decide what one call becomes. Called once per about-group. */
   map(call: TemplateCall, ctx: MapCtx): MappingResult;
-}
+};
 
-export interface ConvertOptions {
+export type ConvertOptions = {
   pageTitle: string;
   mapping: TemplateMapping;
   /** "drop" (default): categories only collected into the result;
    * "keep": also emitted as <Category> tags. */
   categories?: "drop" | "keep";
-}
+};
 
-export interface ConversionResult {
+export type ConversionResult = {
   /** Converted markdown, or null when conversion failed hard
    * (caller stores the original wikitext with wikitext_fallback). */
   markdown: string | null;
@@ -88,10 +88,10 @@ export interface ConversionResult {
   warnings: ConversionWarning[];
   /** Raw category titles found on the page (MW categorylinks side channel). */
   categories: string[];
-}
+};
 
 /** Parsed representation of one {{#ask:}} call. */
-export interface AskQuery {
+export type AskQuery = {
   /** Raw condition string(s), e.g. "[[Has article type::Video]]". */
   conditions: string;
   /** Printouts: ?Has game=Game -> { property: "Has game", label: "Game" }. */
@@ -104,4 +104,4 @@ export interface AskQuery {
   mainlabel?: string;
   /** Any parameters not otherwise recognized. */
   extra: Record<string, string>;
-}
+};

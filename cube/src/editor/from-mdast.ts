@@ -25,30 +25,30 @@ import { serializeMdast } from "./to-markdown";
 
 /* ---- ProseMirror JSON shapes ------------------------------------------------ */
 
-export interface PMMarkJSON {
+export type PMMarkJSON = {
   type: string;
   attrs?: Record<string, unknown>;
-}
+};
 
-export interface PMNodeJSON {
+export type PMNodeJSON = {
   type: string;
   attrs?: Record<string, unknown>;
   marks?: PMMarkJSON[];
   content?: PMNodeJSON[];
   text?: string;
-}
+};
 
-export interface PMDocJSON {
+export type PMDocJSON = {
   type: "doc";
   content: PMNodeJSON[];
-}
+};
 
 /* ---- entry ------------------------------------------------------------------- */
 
-interface Ctx {
+type Ctx = {
   registry: Registry;
   source?: string;
-}
+};
 
 export function mdastToDoc(root: Root, registry: Registry, source?: string): PMDocJSON {
   const ctx: Ctx = { registry, ...(source !== undefined && { source }) };

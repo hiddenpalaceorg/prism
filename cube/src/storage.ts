@@ -17,29 +17,29 @@ import { dirname, join, normalize, sep } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-export interface StoragePutMeta {
+export type StoragePutMeta = {
   contentType?: string;
   size?: number;
   /** Content-Disposition filename for anonymous downloads. */
   downloadName?: string;
-}
+};
 
-export interface CubeStorageAdapter {
+export type CubeStorageAdapter = {
   put(key: string, body: Readable | Uint8Array, meta?: StoragePutMeta): Promise<void>;
   get(key: string): Promise<{ body: Readable; contentType?: string; size?: number } | null>;
   has(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
   /** Public URL for direct serving, or null to stream through the app. */
   publicUrl(key: string): string | null;
-}
+};
 
 /* ---- local directory ------------------------------------------------------ */
 
-export interface LocalDirStorageOptions {
+export type LocalDirStorageOptions = {
   dir: string;
   /** Base URL if the directory is served statically; else null = stream. */
   publicBase?: string;
-}
+};
 
 export function localDirStorage(opts: LocalDirStorageOptions): CubeStorageAdapter {
   const safePath = (key: string): string => {
@@ -83,7 +83,7 @@ export function localDirStorage(opts: LocalDirStorageOptions): CubeStorageAdapte
 
 /* ---- S3-compatible -------------------------------------------------------- */
 
-export interface S3StorageOptions {
+export type S3StorageOptions = {
   endpoint: string;
   bucket: string;
   accessKey: string;
@@ -96,7 +96,7 @@ export interface S3StorageOptions {
   forcePathStyle?: boolean;
   /** Skip TLS verification (self-signed internal MinIO). */
   insecureTls?: boolean;
-}
+};
 
 export function s3Storage(opts: S3StorageOptions): CubeStorageAdapter {
   const region = opts.region ?? "us-east-1";
@@ -200,7 +200,7 @@ async function insecureDispatcher(): Promise<unknown> {
 
 /* ---- AWS SigV4 (self-contained) ------------------------------------------- */
 
-interface SignInput {
+type SignInput = {
   method: string;
   url: URL;
   region: string;
@@ -208,7 +208,7 @@ interface SignInput {
   secretKey: string;
   body?: Uint8Array;
   headers: Record<string, string>;
-}
+};
 
 export function signV4(input: SignInput): Record<string, string> {
   const now = new Date();

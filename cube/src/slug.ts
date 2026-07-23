@@ -6,16 +6,16 @@
  * existing hiddenpalace.org/<Title> URLs resolve unchanged.
  */
 
-export interface TitleRef {
+export type TitleRef = {
   ns: string;
   /** dbkey form: "Sonic_the_Hedgehog_2_(Nick_Arcade_prototype)" */
   slug: string;
   /** display form: slug with underscores as spaces */
   title: string;
   fragment?: string;
-}
+};
 
-export interface SlugConfig {
+export type SlugConfig = {
   /**
    * Lowercased namespace prefix (spaces, not underscores) -> cube namespace id.
    * Includes aliases, e.g. { file: "file", image: "file", "user talk": "user_talk" }.
@@ -23,7 +23,7 @@ export interface SlugConfig {
   namespacePrefixes: Record<string, string>;
   /** Uppercase the first letter (MW $wgCapitalLinks). Default true. */
   capitalLinks?: boolean;
-}
+};
 
 export const DEFAULT_NAMESPACE_PREFIXES: Record<string, string> = {
   talk: "talk",

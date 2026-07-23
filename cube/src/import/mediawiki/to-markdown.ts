@@ -215,11 +215,11 @@ function isFileNode(node: HastElement): boolean {
 
 /* ---- conversion ------------------------------------------------------------- */
 
-export interface HastToMarkdownResult {
+export type HastToMarkdownResult = {
   markdown: string;
   /** True when the output contains colspan/rowspan tables (flattened by GFM). */
   lostTableAttrs: boolean;
-}
+};
 
 export function hastToMarkdown(root: HastNodes): HastToMarkdownResult {
   let lostTableAttrs = false;

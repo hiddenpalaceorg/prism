@@ -77,10 +77,10 @@ export function parseAsk(call: TemplateCall): AskQuery {
   return q;
 }
 
-export interface ShowQuery {
+export type ShowQuery = {
   page: string;
   printout?: string;
-}
+};
 
 export function parseShow(call: TemplateCall): ShowQuery {
   const page = (call.params["1"] ?? "").trim();
@@ -101,14 +101,14 @@ export function parseShow(call: TemplateCall): ShowQuery {
   return { page, printout };
 }
 
-export interface ParsedConditions {
+export type ParsedConditions = {
   articleTypes: string[];
   propertyEquals: { property: string; value: string }[];
   propertyExists: string[];
   /** Raw condition text the converter does not model (Category:, page
    * names, comparators, OR connectors between blocks, malformed input). */
   unsupported: string[];
-}
+};
 
 export function parseConditions(conditions: string): ParsedConditions {
   const out: ParsedConditions = {

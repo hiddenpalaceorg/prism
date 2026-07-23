@@ -14,7 +14,7 @@ import type { CubeAuthor } from "./save";
 
 const exec = promisify(execFile);
 
-export interface GitExportConfig {
+export type GitExportConfig = {
   /** Working repo directory (created + `git init` on first run). */
   dir: string;
   remote?: string;
@@ -22,19 +22,19 @@ export interface GitExportConfig {
   /** Author identity for commits; default derives a noreply address. */
   author?: (a: CubeAuthor) => { name: string; email: string };
   emailDomain?: string;
-}
+};
 
 const ADVISORY_LOCK_KEY = 42_001_001;
 
-export interface DrainResult {
+export type DrainResult = {
   processed: number;
   /** False when another worker holds the lock. */
   locked: boolean;
   pushError?: string;
   itemError?: { queueId: number; message: string };
-}
+};
 
-interface QueueItem {
+type QueueItem = {
   id: number;
   action: "save" | "move" | "delete";
   detail: { ns?: string; slug?: string; title?: string; from?: { ns: string; slug: string }; to?: { ns: string; slug: string } };
@@ -44,7 +44,7 @@ interface QueueItem {
   comment: string | null;
   author_name: string | null;
   created_at: Date | null;
-}
+};
 
 export async function processGitQueue(
   pool: Pool,

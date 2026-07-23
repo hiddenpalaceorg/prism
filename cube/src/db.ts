@@ -24,7 +24,7 @@ export async function withTx<T>(pool: Pool, fn: (client: PoolClient) => Promise<
   }
 }
 
-export interface PageRow {
+export type PageRow = {
   id: number;
   ns: string;
   slug: string;
@@ -38,9 +38,9 @@ export interface PageRow {
   deleted_at: Date | null;
   created_at: Date;
   updated_at: Date;
-}
+};
 
-export interface RevisionRow {
+export type RevisionRow = {
   id: number;
   page_id: number;
   parent_rev_id: number | null;
@@ -53,4 +53,4 @@ export interface RevisionRow {
   wikitext_fallback: boolean;
   mw_rev_id: number | null;
   created_at: Date;
-}
+};

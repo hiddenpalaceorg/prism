@@ -8,22 +8,22 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Pool } from "pg";
 import { hashPassword, needsRehash, verifyPassword } from "./passwords";
 
-export interface CubeUser {
+export type CubeUser = {
   id: number;
   name: string;
   roles: string[];
-}
+};
 
 export type CubeAction = "read" | "edit" | "create" | "move" | "delete" | "upload" | "protect" | "admin";
 
-export interface PagePolicyInput {
+export type PagePolicyInput = {
   ns: string;
   slug: string;
   visibility?: "public" | "moderator";
   protection?: Record<string, string>;
-}
+};
 
-export interface CubeAuthAdapter {
+export type CubeAuthAdapter = {
   /** Ambient session -> user; null = anonymous. */
   getUser(req: { headers: Headers }): Promise<CubeUser | null>;
   /** Capability check; cube falls back to defaultCan when omitted. */
@@ -33,7 +33,7 @@ export interface CubeAuthAdapter {
     req: Request,
   ): Promise<{ user: CubeUser; setCookies: string[] } | null>;
   logout?(req: Request): Promise<{ setCookies: string[] }>;
-}
+};
 
 /** Anonymous read, logged-in write, moderators for destructive/protected ops. */
 export function defaultCan(user: CubeUser | null, action: CubeAction, page?: PagePolicyInput): boolean {
@@ -58,13 +58,13 @@ export function defaultCan(user: CubeUser | null, action: CubeAction, page?: Pag
   }
 }
 
-export interface NativeAuthOptions {
+export type NativeAuthOptions = {
   pool: Pool | (() => Pool);
   cookieName?: string;
   sessionTtlDays?: number;
   /** Set the Secure cookie flag (default true; disable for local dev). */
   secure?: boolean;
-}
+};
 
 function sha256hex(s: string): string {
   return createHash("sha256").update(s).digest("hex");

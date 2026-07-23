@@ -25,16 +25,16 @@ import type {
   Root as HastRoot,
 } from "hast";
 
-export interface HexDumpLine {
+export type HexDumpLine = {
   /** Offset column verbatim (e.g. "00000100"). */
   offset: string;
   /** Hex bytes normalized to single-space separation ("53 45 47 41 ..."). */
   bytes: string;
   /** ASCII column verbatim, when present. */
   ascii?: string;
-}
+};
 
-export interface HexDumpAnnotation {
+export type HexDumpAnnotation = {
   /** Index into HexDumpData.lines. */
   line: number;
   /** First annotated byte (byte index within the line's hex bytes). */
@@ -45,14 +45,14 @@ export interface HexDumpAnnotation {
   field: string;
   /** Decoded value (the span's title). */
   value: string;
-}
+};
 
-export interface HexDumpData {
+export type HexDumpData = {
   lines: HexDumpLine[];
   annotations: HexDumpAnnotation[];
-}
+};
 
-export interface HexSnippetGroup {
+export type HexSnippetGroup = {
   /** The hex-snippet elements of the group, in document order. */
   snippets: HastElement[];
   /** Contiguous sibling range covered (snippets plus separators between
@@ -62,7 +62,7 @@ export interface HexSnippetGroup {
   parent: HastParents;
   /** Parsed dump, or null when unparseable (caller keeps the markup). */
   data: HexDumpData | null;
-}
+};
 
 const BYTES_PER_LINE = 16;
 /** Columns are separated by at most two spaces; wider gaps are padding. */
@@ -132,11 +132,11 @@ export function parseHexSnippets(root: HastRoot): HexSnippetGroup[] {
 /* ---- snippet flattening -------------------------------------------------- */
 
 /** One run of text; annotated when it came from a hover-link span. */
-interface Segment {
+type Segment = {
   text: string;
   field?: string;
   value?: string;
-}
+};
 
 function textOf(node: HastNodes): string {
   if (node.type === "text") return node.value;
@@ -190,10 +190,10 @@ function splitLines(segs: Segment[]): Segment[][] {
 
 /* ---- line parsing --------------------------------------------------------- */
 
-interface ParsedLine {
+type ParsedLine = {
   line: HexDumpLine;
   annotations: Omit<HexDumpAnnotation, "line">[];
-}
+};
 
 function parseLine(segs: Segment[]): ParsedLine | null {
   const text = segs.map((s) => s.text).join("");

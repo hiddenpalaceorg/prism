@@ -36,11 +36,11 @@ import type { Cube } from "../index";
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type CubeHandlers = Record<Method, (req: Request) => Promise<Response>>;
 
-interface AuthResult {
+type AuthResult = {
   user: CubeUser | null;
   via: "session" | "token" | "anon";
   scopes: Set<string>;
-}
+};
 
 const SESSION_SCOPES = ["read", "query"];
 const SESSION_WRITE_SCOPES = ["read", "query", "write", "media"];

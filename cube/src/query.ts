@@ -10,7 +10,7 @@ import type { QueryableField, Registry } from "./schema/index";
 
 export type WhereScalar = string | number | boolean;
 
-export interface WhereOps {
+export type WhereOps = {
   eq?: WhereScalar;
   ne?: WhereScalar;
   in?: WhereScalar[];
@@ -21,7 +21,7 @@ export interface WhereOps {
   /** Glob match; * is the wildcard (SMW ~ / "like:"). */
   like?: string;
   exists?: boolean;
-}
+};
 
 export type Where =
   | { and: Where[] }
@@ -29,7 +29,7 @@ export type Where =
   | { not: Where }
   | { [field: string]: WhereScalar | WhereOps };
 
-export interface ObjectQuery {
+export type ObjectQuery = {
   /** Component name(s) to query. */
   from: string | string[];
   where?: Where;
@@ -42,24 +42,24 @@ export interface ObjectQuery {
   groupBy?: string;
   /** Restrict to objects on one page (Download's self-query shape). */
   page?: { ns: string; slug: string };
-}
+};
 
-export interface QueryRow {
+export type QueryRow = {
   page: { ns: string; slug: string; title: string; displayTitle: string | null };
   component: string;
   data: Record<string, unknown>;
-}
+};
 
-export interface QueryRowsResult {
+export type QueryRowsResult = {
   kind: "rows";
   rows: QueryRow[];
   truncated: boolean;
-}
+};
 
-export interface QueryAggResult {
+export type QueryAggResult = {
   kind: "agg";
   rows: Record<string, unknown>[];
-}
+};
 
 export type QueryResult = QueryRowsResult | QueryAggResult;
 
@@ -82,17 +82,17 @@ const PSEUDO_FIELDS: Record<string, { expr: string; sortType: "text" | "date" }>
   _modified: { expr: "p.updated_at", sortType: "date" },
 };
 
-interface Compiled {
+type Compiled = {
   text: string;
   values: unknown[];
   limit: number;
   isAgg: boolean;
-}
+};
 
-export interface CompileOptions {
+export type CompileOptions = {
   /** Include moderator-visibility pages (host passes for privileged views). */
   includeHidden?: boolean;
-}
+};
 
 class ParamSink {
   values: unknown[] = [];

@@ -42,7 +42,7 @@ import {
 import type { CubeStorageAdapter } from "./storage";
 import type { ValidateOptions } from "./validate";
 
-export interface RevisionEvent {
+export type RevisionEvent = {
   ns: string;
   slug: string;
   title: string;
@@ -50,9 +50,9 @@ export interface RevisionEvent {
   author: string;
   comment: string;
   minor: boolean;
-}
+};
 
-export interface CubeConfig {
+export type CubeConfig = {
   db: { pool: Pool | (() => Pool) };
   /** Site component schemas; cube built-ins are always included. */
   components?: ComponentSpec[];
@@ -73,9 +73,9 @@ export interface CubeConfig {
   notify?: {
     revisionSaved?: (ev: RevisionEvent) => void;
   };
-}
+};
 
-export interface Page {
+export type Page = {
   id: number;
   ns: string;
   slug: string;
@@ -90,9 +90,9 @@ export interface Page {
   /** True when this revision holds original MediaWiki wikitext, not markdown. */
   wikitextFallback: boolean;
   updatedAt: Date;
-}
+};
 
-export interface RevisionMeta {
+export type RevisionMeta = {
   id: number;
   parentRevId: number | null;
   author: string;
@@ -101,23 +101,23 @@ export interface RevisionMeta {
   wikitextFallback: boolean;
   createdAt: Date;
   bytes: number;
-}
+};
 
-export interface ResolveResult {
+export type ResolveResult = {
   ns: string;
   slug: string;
   redirectedFrom?: { ns: string; slug: string };
-}
+};
 
-export interface SearchHit {
+export type SearchHit = {
   ns: string;
   slug: string;
   title: string;
   snippet: string;
   rank: number;
-}
+};
 
-export interface CubeLocalApi {
+export type CubeLocalApi = {
   resolve(title: string): Promise<ResolveResult | null>;
   getPage(ref: { ns: string; slug: string }, opts?: { revId?: number }): Promise<Page | null>;
   savePage(input: SaveInput): Promise<SaveResult>;
@@ -130,9 +130,9 @@ export interface CubeLocalApi {
   listComponents(): ComponentSchemaJson[];
   /** Parse+validate without saving (preview/editor lint). */
   validateMarkdown(ref: { ns: string; slug: string }, markdown: string): Promise<Issue[]>;
-}
+};
 
-export interface Cube {
+export type Cube = {
   registry: Registry;
   config: CubeConfig;
   slug: SlugConfig;
@@ -141,7 +141,7 @@ export interface Cube {
   api: CubeLocalApi;
   /** Fetch-standard route handlers; mount at site.apiBasePath. */
   handlers: CubeHandlers;
-}
+};
 
 export function createCube(config: CubeConfig): Cube {
   const registry = createRegistry([...builtinComponents, ...(config.components ?? [])]);
