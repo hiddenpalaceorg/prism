@@ -1,134 +1,115 @@
 /*
- * Wiki article styling. cube ships no CSS and almost no classes: the renderer
- * emits plain elements plus state markers CSS cannot infer (cube-redlink,
- * cube-missing-media, cube-query-*, cube-gallery modes, cube-toc-d* depths).
- * Everything else is styled here through the .cube-root wrapper this site
- * owns. The cube-link/cube-code/cube-table classes below are applied by this
- * site's own pages (history/source views), not by the renderer.
+ * Wiki article styling, Tailwind idiom throughout. The cube renderer emits
+ * bare elements plus state markers CSS cannot infer (cube-redlink,
+ * cube-missing-media, cube-query-*, cube-gallery modes, cube-toc-d* depths);
+ * everything routes through Tailwind utilities via @apply under the
+ * .cube-root wrapper this site owns. Page chrome (history/source tables,
+ * nav links) uses inline utilities in the components instead.
  */
+@reference "../globals.css";
 
 .cube-root {
-  --cube-fg: #1a1a1a;
-  --cube-bg: #ffffff;
-  --cube-muted: #6b7280;
-  --cube-accent: #2563eb;
-  --cube-red: #b91c1c;
-  --cube-border: #e5e7eb;
-  --cube-surface: #f7f7f8;
-  --cube-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--cube-fg);
-  line-height: 1.6;
-  overflow-wrap: break-word;
-}
-
-@media (prefers-color-scheme: dark) {
-  .cube-root {
-    --cube-fg: #e7e7ea;
-    --cube-bg: #111113;
-    --cube-muted: #9ca3af;
-    --cube-accent: #60a5fa;
-    --cube-red: #f87171;
-    --cube-border: #2a2a2e;
-    --cube-surface: #1a1a1e;
-  }
+  @apply leading-relaxed break-words text-neutral-900 dark:text-neutral-200;
 }
 
 .cube-root h1, .cube-root h2, .cube-root h3, .cube-root h4 {
-  line-height: 1.25;
-  scroll-margin-top: 4rem;
+  @apply leading-tight scroll-mt-16;
 }
-.cube-root h2 { border-bottom: 1px solid var(--cube-border); padding-bottom: 0.2em; }
-
-.cube-root .wiki-article a, .cube-root a.cube-link { color: var(--cube-accent); text-decoration: none; }
-.cube-root .wiki-article a:hover, .cube-root a.cube-link:hover { text-decoration: underline; }
-.cube-root a.cube-redlink { color: var(--cube-red); text-decoration: none; }
-.cube-root a.cube-redlink:hover { text-decoration: underline dashed; }
-.cube-root .wiki-article a[href^="http"]::after { content: "\2197"; font-size: 0.75em; margin-left: 0.15em; }
-.cube-invalid-link { color: var(--cube-muted); text-decoration: line-through; }
-
-.cube-root .wiki-article pre, .cube-code {
-  background: var(--cube-surface);
-  border: 1px solid var(--cube-border);
-  border-radius: 6px;
-  padding: 0.75em 1em;
-  overflow-x: auto;
-  font-family: var(--cube-font-mono);
-  font-size: 0.875em;
+.cube-root h2 {
+  @apply border-b border-neutral-200 pb-1 dark:border-neutral-800;
 }
-.cube-root code { font-family: var(--cube-font-mono); font-size: 0.925em; }
 
-.cube-root .wiki-article table, .cube-table { border-collapse: collapse; margin: 1em 0; }
-.cube-root .wiki-article th, .cube-root .wiki-article td, .cube-table th, .cube-table td {
-  border: 1px solid var(--cube-border);
-  padding: 0.35em 0.7em;
-  text-align: left;
+.cube-root .wiki-article a {
+  @apply text-blue-600 no-underline hover:underline dark:text-blue-400;
 }
-.cube-root .wiki-article th, .cube-table th { background: var(--cube-surface); }
+.cube-root a.cube-redlink {
+  @apply text-red-700 no-underline hover:underline hover:decoration-dashed dark:text-red-400;
+}
+.cube-root .wiki-article a[href^="http"] {
+  @apply after:ml-0.5 after:text-[0.75em] after:content-['\2197'];
+}
+.cube-invalid-link {
+  @apply text-neutral-500 line-through dark:text-neutral-400;
+}
+
+.cube-root .wiki-article pre {
+  @apply overflow-x-auto rounded-md border border-neutral-200 bg-neutral-50 px-4 py-3 font-mono text-sm dark:border-neutral-800 dark:bg-neutral-900;
+}
+.cube-root code {
+  @apply font-mono text-[0.925em];
+}
+
+.cube-root .wiki-article table {
+  @apply my-4 border-collapse;
+}
+.cube-root .wiki-article th, .cube-root .wiki-article td {
+  @apply border border-neutral-200 px-3 py-1.5 text-left dark:border-neutral-800;
+}
+.cube-root .wiki-article th {
+  @apply bg-neutral-50 dark:bg-neutral-900;
+}
 
 .cube-raw {
-  font-family: var(--cube-font-mono);
-  font-size: 0.875em;
-  color: var(--cube-muted);
-  background: var(--cube-surface);
-  padding: 0 0.25em;
-  border-radius: 3px;
+  @apply rounded-sm bg-neutral-50 px-1 font-mono text-sm text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400;
 }
 
 .cube-missing-media, .cube-missing-binding {
-  color: var(--cube-muted);
-  font-style: italic;
-  border: 1px dashed var(--cube-border);
-  padding: 0 0.4em;
-  border-radius: 4px;
+  @apply rounded border border-dashed border-neutral-200 px-1.5 italic text-neutral-500 dark:border-neutral-800 dark:text-neutral-400;
 }
 
-.cube-root .wiki-article figure { margin: 1em 0; }
+.cube-root .wiki-article figure {
+  @apply my-4;
+}
 .cube-root .wiki-article figcaption {
-  color: var(--cube-muted);
-  font-size: 0.85em;
-  text-align: center;
-  margin-top: 0.3em;
+  @apply mt-1 text-center text-sm text-neutral-500 dark:text-neutral-400;
 }
 
 .cube-gallery {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 1em 0;
+  @apply my-4 flex flex-wrap gap-3;
 }
-.cube-gallery figure { margin: 0; }
-.cube-gallery img { border-radius: 4px; display: block; }
-.cube-gallery-nolines img { border-radius: 0; }
-.cube-gallery-packed { align-items: flex-end; }
+.cube-gallery figure {
+  @apply m-0;
+}
+.cube-gallery img {
+  @apply block rounded;
+}
+.cube-gallery-nolines img {
+  @apply rounded-none;
+}
+.cube-gallery-packed {
+  @apply items-end;
+}
 
 .cube-root .wiki-article nav[aria-label="Contents"] {
-  border: 1px solid var(--cube-border);
-  background: var(--cube-surface);
-  border-radius: 6px;
-  padding: 0.6em 1em;
-  display: inline-block;
-  font-size: 0.925em;
+  @apply inline-block rounded-md border border-neutral-200 bg-neutral-50 px-4 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-900;
 }
-.cube-root .wiki-article nav[aria-label="Contents"] ul { list-style: none; margin: 0; padding: 0; }
-.cube-toc-d3 { padding-left: 1em; }
-.cube-toc-d4 { padding-left: 2em; }
+.cube-root .wiki-article nav[aria-label="Contents"] ul {
+  @apply m-0 list-none p-0;
+}
+.cube-toc-d3 {
+  @apply pl-4;
+}
+.cube-toc-d4 {
+  @apply pl-8;
+}
 
 .cube-query-table caption.cube-query-truncated {
-  caption-side: bottom;
-  color: var(--cube-muted);
-  font-size: 0.85em;
-  text-align: right;
+  @apply text-right text-sm text-neutral-500 [caption-side:bottom] dark:text-neutral-400;
 }
-.cube-query-table td { font-variant-numeric: tabular-nums; }
-.cube-query-error { color: var(--cube-red); font-style: italic; }
-.cube-query-placeholder { color: var(--cube-muted); font-style: italic; }
+.cube-query-table td {
+  @apply tabular-nums;
+}
+.cube-query-error {
+  @apply italic text-red-700 dark:text-red-400;
+}
+.cube-query-placeholder {
+  @apply italic text-neutral-500 dark:text-neutral-400;
+}
 
 .cube-root .wiki-article iframe {
-  aspect-ratio: 16 / 9;
-  width: 100%;
-  max-width: 640px;
-  border: 0;
-  border-radius: 6px;
+  @apply aspect-video w-full max-w-2xl rounded-md border-0;
 }
 
-.cube-root blockquote { border-left: 3px solid var(--cube-border); margin-left: 0; padding-left: 1em; color: var(--cube-muted); }
+.cube-root blockquote {
+  @apply border-l-2 border-neutral-200 pl-4 text-neutral-500 dark:border-neutral-800 dark:text-neutral-400;
+}

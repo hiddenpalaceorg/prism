@@ -23,7 +23,11 @@ export async function renderWikiMarkdown(
   if (!root) {
     // Wikitext-fallback revisions and unparseable history render as source.
     return {
-      node: <pre className="cube-code whitespace-pre-wrap">{markdown}</pre>,
+      node: (
+        <pre className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 px-4 py-3 font-mono text-sm dark:border-neutral-800 dark:bg-neutral-900">
+          {markdown}
+        </pre>
+      ),
       headings: [],
       parseFailed: true,
     };
