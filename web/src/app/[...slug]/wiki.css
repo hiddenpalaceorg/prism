@@ -1,7 +1,10 @@
 /*
- * Wiki article styling. cube ships no CSS: the renderer emits stable
- * cube-* class hooks and this site owns their appearance. Colors route
- * through --cube-* custom properties so dark mode is one override block.
+ * Wiki article styling. cube ships no CSS and almost no classes: the renderer
+ * emits plain elements plus state markers CSS cannot infer (cube-redlink,
+ * cube-missing-media, cube-query-*, cube-gallery modes, cube-toc-d* depths).
+ * Everything else is styled here through the .cube-root wrapper this site
+ * owns. The cube-link/cube-code/cube-table classes below are applied by this
+ * site's own pages (history/source views), not by the renderer.
  */
 
 .cube-root {
@@ -36,15 +39,14 @@
 }
 .cube-root h2 { border-bottom: 1px solid var(--cube-border); padding-bottom: 0.2em; }
 
-.cube-root a.cube-link { color: var(--cube-accent); text-decoration: none; }
-.cube-root a.cube-link:hover { text-decoration: underline; }
+.cube-root .wiki-article a, .cube-root a.cube-link { color: var(--cube-accent); text-decoration: none; }
+.cube-root .wiki-article a:hover, .cube-root a.cube-link:hover { text-decoration: underline; }
 .cube-root a.cube-redlink { color: var(--cube-red); text-decoration: none; }
 .cube-root a.cube-redlink:hover { text-decoration: underline dashed; }
-.cube-root a.cube-external { color: var(--cube-accent); }
-.cube-root a.cube-external::after { content: "\2197"; font-size: 0.75em; margin-left: 0.15em; }
+.cube-root .wiki-article a[href^="http"]::after { content: "\2197"; font-size: 0.75em; margin-left: 0.15em; }
 .cube-invalid-link { color: var(--cube-muted); text-decoration: line-through; }
 
-.cube-code {
+.cube-root .wiki-article pre, .cube-code {
   background: var(--cube-surface);
   border: 1px solid var(--cube-border);
   border-radius: 6px;
@@ -55,13 +57,13 @@
 }
 .cube-root code { font-family: var(--cube-font-mono); font-size: 0.925em; }
 
-.cube-table { border-collapse: collapse; margin: 1em 0; }
-.cube-table th, .cube-table td {
+.cube-root .wiki-article table, .cube-table { border-collapse: collapse; margin: 1em 0; }
+.cube-root .wiki-article th, .cube-root .wiki-article td, .cube-table th, .cube-table td {
   border: 1px solid var(--cube-border);
   padding: 0.35em 0.7em;
   text-align: left;
 }
-.cube-table th { background: var(--cube-surface); }
+.cube-root .wiki-article th, .cube-table th { background: var(--cube-surface); }
 
 .cube-raw {
   font-family: var(--cube-font-mono);
@@ -80,8 +82,8 @@
   border-radius: 4px;
 }
 
-.cube-figure { margin: 1em 0; }
-.cube-figure figcaption, .cube-gallery-item figcaption {
+.cube-root .wiki-article figure { margin: 1em 0; }
+.cube-root .wiki-article figcaption {
   color: var(--cube-muted);
   font-size: 0.85em;
   text-align: center;
@@ -94,12 +96,12 @@
   gap: 0.75rem;
   margin: 1em 0;
 }
-.cube-gallery-item { margin: 0; }
-.cube-gallery-item img { border-radius: 4px; display: block; }
-.cube-gallery-nolines .cube-gallery-item img { border-radius: 0; }
+.cube-gallery figure { margin: 0; }
+.cube-gallery img { border-radius: 4px; display: block; }
+.cube-gallery-nolines img { border-radius: 0; }
 .cube-gallery-packed { align-items: flex-end; }
 
-.cube-toc {
+.cube-root .wiki-article nav[aria-label="Contents"] {
   border: 1px solid var(--cube-border);
   background: var(--cube-surface);
   border-radius: 6px;
@@ -107,10 +109,9 @@
   display: inline-block;
   font-size: 0.925em;
 }
-.cube-toc ul { list-style: none; margin: 0; padding: 0; }
+.cube-root .wiki-article nav[aria-label="Contents"] ul { list-style: none; margin: 0; padding: 0; }
 .cube-toc-d3 { padding-left: 1em; }
 .cube-toc-d4 { padding-left: 2em; }
-.cube-toc a { color: var(--cube-accent); text-decoration: none; }
 
 .cube-query-table caption.cube-query-truncated {
   caption-side: bottom;
@@ -118,11 +119,11 @@
   font-size: 0.85em;
   text-align: right;
 }
-.cube-query-value { font-variant-numeric: tabular-nums; }
+.cube-query-table td { font-variant-numeric: tabular-nums; }
 .cube-query-error { color: var(--cube-red); font-style: italic; }
 .cube-query-placeholder { color: var(--cube-muted); font-style: italic; }
 
-.cube-youtube {
+.cube-root .wiki-article iframe {
   aspect-ratio: 16 / 9;
   width: 100%;
   max-width: 640px;
