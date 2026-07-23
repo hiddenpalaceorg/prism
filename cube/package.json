@@ -33,8 +33,7 @@
     "./import/mediawiki/fetch": {
       "types": "./src/import/mediawiki/fetch.ts",
       "default": "./src/import/mediawiki/fetch.ts"
-    },
-    "./styles.css": "./styles/cube.css"
+    }
   },
   "scripts": {
     "test": "node --import tsx --test tests/*.test.ts",
