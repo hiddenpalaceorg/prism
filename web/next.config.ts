@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { NextConfig } from "next";
 
 // Baseline security headers on every response. Kept conservative so they can't
@@ -14,6 +15,10 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  // cube ships TS/TSX source with "use client" directives (workspace package).
+  transpilePackages: ["cube"],
+  // Keep file tracing rooted at the workspace, not misdetected via lockfiles.
+  outputFileTracingRoot: join(__dirname, ".."),
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },

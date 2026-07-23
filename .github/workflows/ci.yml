@@ -265,9 +265,45 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: package-lock.json
+      # npm workspaces: the lockfile and install root are the repo root.
       - run: npm ci
+        working-directory: .
       - run: npx tsc --noEmit
+      - run: npm test
+
+  cube:
+    name: cube (tsc + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cube
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+        working-directory: .
+      - run: npm run typecheck
       - run: npm test
 
   adapter:

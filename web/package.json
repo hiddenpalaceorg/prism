@@ -22,6 +22,7 @@
     "@smithy/node-http-handler": "^4.9.7",
     "@types/pngjs": "^6.0.5",
     "bmp-js": "^0.1.0",
+    "cube": "*",
     "diff": "^9.0.0",
     "discord.js": "^14.27.0",
     "highlight.js": "^11.11.1",

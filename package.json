@@ -1,0 +1,12 @@
+{
+  "name": "curator-js",
+  "private": true,
+  "workspaces": [
+    "web",
+    "cube"
+  ],
+  "scripts": {
+    "test": "npm test -w cube -w web",
+    "typecheck": "npm run typecheck -w cube && npx tsc --noEmit -p web"
+  }
+}
