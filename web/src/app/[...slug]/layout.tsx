@@ -1,4 +1,4 @@
-import "cube/styles.css";
+import "./wiki.css";
 import type { ReactNode } from "react";
 
 export default function WikiLayout({ children }: { children: ReactNode }) {
