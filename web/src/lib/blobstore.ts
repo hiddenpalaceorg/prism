@@ -292,10 +292,10 @@ export async function openBlobStream(
 
 /** A whole blob in memory, or null when it is missing from the store.
  *  Callers cap sizes (convert/preview paths); don't hand this a DVD image. */
-export async function readBlob(sha256: string): Promise<Buffer | null> {
+export async function readBlob(sha256: string, ns = ""): Promise<Buffer | null> {
   if (s3Enabled()) {
     try {
-      const r = await s3().send(new GetObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256) }));
+      const r = await s3().send(new GetObjectCommand({ Bucket: s3Bucket(), Key: s3Key(sha256, ns) }));
       return Buffer.from(await r.Body!.transformToByteArray());
     } catch (err) {
       if (isMissing(err)) return null;
@@ -303,7 +303,7 @@ export async function readBlob(sha256: string): Promise<Buffer | null> {
     }
   }
   try {
-    return await fsp.readFile(assetBlobPath(sha256));
+    return await fsp.readFile(assetBlobPath(sha256, ns));
   } catch {
     return null;
   }
@@ -434,14 +434,15 @@ export async function storeBlobBytes(sha256: string, data: Uint8Array): Promise<
  *  file it can seek). Returns null when the blob is missing from the store. */
 export async function withBlobFile<T>(
   sha256: string,
-  fn: (localPath: string) => Promise<T>
+  fn: (localPath: string) => Promise<T>,
+  ns = ""
 ): Promise<T | null> {
   if (!s3Enabled()) {
-    const p = assetBlobPath(sha256);
+    const p = assetBlobPath(sha256, ns);
     if (!fs.existsSync(p)) return null;
     return fn(p);
   }
-  const stream = await openBlobStream(sha256);
+  const stream = await openBlobStream(sha256, undefined, ns);
   if (!stream) return null;
   const dir = path.join(assetStoreDir(), ".fetch");
   await fsp.mkdir(dir, { recursive: true });

@@ -23,6 +23,24 @@ export function isMediaKind(v: unknown): v is MediaKind {
   return typeof v === "string" && (MEDIA_KINDS as readonly string[]).includes(v);
 }
 
+/** What a physical-media photo shows. NULL in the DB (pre-label uploads)
+ *  reads as "other". The OG card prefers the first 'front' photo. */
+export const MEDIA_LABELS = ["front", "back", "other"] as const;
+export type MediaLabel = (typeof MEDIA_LABELS)[number];
+
+export function isMediaLabel(v: unknown): v is MediaLabel {
+  return typeof v === "string" && (MEDIA_LABELS as readonly string[]).includes(v);
+}
+
+/** Guess a physical photo's label from its filename — uploads arrive named
+ *  "… Front.png" / "… Back.png" far more often than anyone touches the label
+ *  selector afterward. An explicit label always wins over this. */
+export function inferMediaLabel(filename: string): MediaLabel {
+  if (/(^|[^a-z])front([^a-z]|$)/i.test(filename)) return "front";
+  if (/(^|[^a-z])back([^a-z]|$)/i.test(filename)) return "back";
+  return "other";
+}
+
 /** Upload size caps. Images stay modest; videos get room for real captures. */
 export const IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 export const VIDEO_MAX_BYTES = 512 * 1024 * 1024;
@@ -87,6 +105,8 @@ export interface MediaSession {
   filename: string;
   size: number;
   author: string;
+  /** Physical photos only. */
+  label?: MediaLabel;
   /** Sniffed at the first chunk; absent until then. */
   contentType?: string;
 }
@@ -170,6 +190,8 @@ export interface BuildMediaRow {
   content_type: string;
   size: number;
   author: string;
+  /** Physical photos only; NULL rows predate labels and read as "other". */
+  label: MediaLabel | null;
   created_at: string;
 }
 
@@ -211,7 +233,7 @@ export const NO_SKIPS: SkipFlags = {
 };
 
 const MEDIA_COLS =
-  "id::int AS id, build_sha256, kind, sha256, poster_sha256, filename, content_type, size::float8 AS size, author, created_at::text AS created_at";
+  "id::int AS id, build_sha256, kind, sha256, poster_sha256, filename, content_type, size::float8 AS size, author, label, created_at::text AS created_at";
 
 const NOTE_COLS = "id::int AS id, build_sha256, body, author, created_at::text AS created_at, edited_at::text AS edited_at";
 
@@ -244,14 +266,15 @@ export async function insertMedia(
     content_type: string;
     size: number;
     author: string;
+    label: MediaLabel | null;
   }
 ): Promise<BuildMediaRow> {
   const r = await pool.query(
-    `INSERT INTO build_media (build_sha256, kind, sha256, poster_sha256, filename, content_type, size, author)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `INSERT INTO build_media (build_sha256, kind, sha256, poster_sha256, filename, content_type, size, author, label)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      ON CONFLICT (build_sha256, kind, sha256) DO NOTHING
      RETURNING ${MEDIA_COLS}`,
-    [m.build_sha256, m.kind, m.sha256, m.poster_sha256, m.filename, m.content_type, m.size, m.author]
+    [m.build_sha256, m.kind, m.sha256, m.poster_sha256, m.filename, m.content_type, m.size, m.author, m.label]
   );
   if (r.rows[0]) return r.rows[0] as BuildMediaRow;
   const existing = await pool.query(
@@ -259,6 +282,21 @@ export async function insertMedia(
     [m.build_sha256, m.kind, m.sha256]
   );
   return existing.rows[0] as BuildMediaRow;
+}
+
+/** Relabel one physical photo; returns the updated row, or null when the id
+ *  is missing or not a physical photo. */
+export async function updateMediaLabel(
+  pool: Pool,
+  buildSha: string,
+  id: number,
+  label: MediaLabel
+): Promise<BuildMediaRow | null> {
+  const r = await pool.query(
+    `UPDATE build_media SET label=$3 WHERE build_sha256=$1 AND id=$2 AND kind='physical' RETURNING ${MEDIA_COLS}`,
+    [buildSha, id, label]
+  );
+  return (r.rows[0] as BuildMediaRow) ?? null;
 }
 
 export async function deleteMedia(pool: Pool, buildSha: string, id: number): Promise<boolean> {

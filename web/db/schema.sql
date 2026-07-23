@@ -227,6 +227,7 @@ CREATE TABLE build_media (
     content_type  TEXT NOT NULL,          -- sniffed server-side, not the client's claim
     size          BIGINT NOT NULL,
     author        TEXT NOT NULL,          -- wiki username
+    label         TEXT CHECK (label IN ('front','back','other')),  -- physical photos only; NULL elsewhere
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (build_sha256, kind, sha256)
 );

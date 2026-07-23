@@ -167,6 +167,12 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
   const filteredContentHash = build.record.composites?.filtered_content_hash;
   const discTitle = build.record.info?.title as string | undefined;
 
+  // Small identity shot beside the hashes: the front physical photo when one
+  // is labeled, else the first physical photo (same order the gallery uses).
+  const mediaItems = media.map(mediaView);
+  const photos = mediaItems.filter((m) => m.kind === "physical");
+  const previewPhoto = photos.find((m) => m.label === "front") ?? photos[0];
+
   return (
     <main className="mx-auto max-w-none px-4 py-10 sm:px-8">
       {/* One lightbox for the whole page (gallery + file tree); it rewrites the
@@ -174,9 +180,13 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
       <AssetViewerHost assets={assets} buildHref={href} returnHref={href}>
       <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
 
+      {/* Header block with the photo as a right column: flush with the title,
+          spanning title, chips, and hashes. */}
+      <div className="mt-3 flex items-start gap-10">
+      <div className="min-w-0">
       {/* The name column is the display identity everywhere (lists, search, rename);
           the disc's own title stays visible as a subtitle when it differs. */}
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight">{build.name}</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{build.name}</h1>
       {discTitle && discTitle !== build.name && (
         <p className="mt-1 text-sm text-neutral-500">{discTitle}</p>
       )}
@@ -218,6 +228,18 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
           <Hash label="Filtered content hash" value={filteredContentHash} />
         )}
       </dl>
+      </div>
+      {previewPhoto && (
+        <a href={previewPhoto.url} target="_blank" rel="noreferrer" className="shrink-0" title={previewPhoto.filename}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`/api/media/${previewPhoto.sha256}/thumb?w=500`}
+            alt={previewPhoto.filename}
+            className="h-44 w-44 rounded-md border border-neutral-200 object-cover dark:border-neutral-800"
+          />
+        </a>
+      )}
+      </div>
 
       <ModeratorTools
         key={`${build.name}\0${build.lot ?? ""}\0${build.game ?? ""}\0${build.game_system ?? ""}\0${build.private}\0${lotPrivate}\0${JSON.stringify(skips)}`}
@@ -301,7 +323,7 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
         </section>
       )}
 
-      <MediaSection sha256={sha256} items={media.map(mediaView)} skips={skips} />
+      <MediaSection sha256={sha256} items={mediaItems} skips={skips} />
 
       <NotesSection sha256={sha256} notes={notes} skipped={skips.skip_notes} />
 
