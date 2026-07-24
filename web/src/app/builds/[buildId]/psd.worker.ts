@@ -83,6 +83,7 @@ const post = (msg: unknown, transfer?: Transferable[]) =>
   );
 
 let doc: Psd | null = null;
+let bounds = { x: 0, y: 0, width: 0, height: 0 };
 const layerCanvasCache = new WeakMap<Layer, OffscreenCanvas | null>();
 
 self.onmessage = (e: MessageEvent) => {
@@ -103,8 +104,42 @@ function load(buf: ArrayBuffer) {
   if (doc.width * doc.height > MAX_PIXELS) {
     throw new Error(`PSD too large: ${doc.width}x${doc.height}`);
   }
+  bounds = unionBounds(doc);
   const layers = (doc.children ?? []).map((l, i) => layerMeta(l, String(i)));
-  post({ type: "loaded", width: doc.width, height: doc.height, layers });
+  post({ type: "loaded", width: bounds.width, height: bounds.height, layers });
+}
+
+/** The union of the document canvas and every layer's pixel bounds. Press
+ *  files link art far larger than the crop area — clipping to the canvas
+ *  (what Photoshop shows) would hide most of it, and seeing the whole layer
+ *  is the point of this viewer. Falls back to the document canvas when the
+ *  union blows the pixel budget (layer offsets are attacker-controlled). */
+function unionBounds(psd: Psd): { x: number; y: number; width: number; height: number } {
+  let minX = 0;
+  let minY = 0;
+  let maxX = psd.width;
+  let maxY = psd.height;
+  const walk = (layers: Layer[] | undefined) => {
+    for (const l of layers ?? []) {
+      if (l.children) {
+        walk(l.children);
+        continue;
+      }
+      const img = l.imageData;
+      if (!img?.data?.length) continue;
+      minX = Math.min(minX, l.left ?? 0);
+      minY = Math.min(minY, l.top ?? 0);
+      maxX = Math.max(maxX, (l.left ?? 0) + img.width);
+      maxY = Math.max(maxY, (l.top ?? 0) + img.height);
+    }
+  };
+  walk(psd.children);
+  const width = maxX - minX;
+  const height = maxY - minY;
+  if (width * height > MAX_PIXELS) {
+    return { x: 0, y: 0, width: psd.width, height: psd.height };
+  }
+  return { x: minX, y: minY, width, height };
 }
 
 /** CMYK documents (which ag-psd refuses) through the shared hand-rolled
@@ -150,13 +185,14 @@ function layerMeta(l: Layer, id: string): WorkerLayer {
 
 function render(visibility: Record<string, boolean>) {
   if (!doc) throw new Error("no document loaded");
-  const scale = Math.min(1, Math.sqrt(RENDER_MAX_PIXELS / (doc.width * doc.height)));
+  const scale = Math.min(1, Math.sqrt(RENDER_MAX_PIXELS / (bounds.width * bounds.height)));
   const canvas = new OffscreenCanvas(
-    Math.max(1, Math.round(doc.width * scale)),
-    Math.max(1, Math.round(doc.height * scale))
+    Math.max(1, Math.round(bounds.width * scale)),
+    Math.max(1, Math.round(bounds.height * scale))
   );
   const ctx = canvas.getContext("2d")!;
   ctx.scale(scale, scale);
+  ctx.translate(-bounds.x, -bounds.y);
 
   if (doc.children?.length) {
     compositeInto(ctx, doc.children, "", visibility);
