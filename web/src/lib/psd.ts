@@ -8,6 +8,7 @@
 
 import { initializeCanvas, readPsd, type Layer, type Psd } from "ag-psd";
 import { PNG } from "pngjs";
+import { isCmykPsd, parseCmykPsd, type CmykPsd } from "./psd-cmyk";
 
 // Node has no ImageData (or canvas) global; ag-psd asks for one when decoding
 // bitmaps even in useImageData mode. A bare width/height/data triple is all
@@ -32,6 +33,10 @@ const MAX_PIXELS = 32_000_000;
 
 /** Convert a PSD/PSB to a flattened PNG. Throws on malformed input. */
 export function psdToPng(bytes: Buffer): Buffer {
+  // Print-press files are CMYK, which ag-psd refuses outright ("Color mode
+  // not supported") — those go through the hand-rolled parser instead.
+  if (isCmykPsd(bytes)) return cmykToPng(bytes);
+
   // useImageData keeps ag-psd off the DOM canvas API (absent in Node); the
   // composite arrives as raw RGBA instead.
   const psd = readPsd(bytes, {
@@ -66,6 +71,54 @@ function rgba8(data: Uint8Array | Uint8ClampedArray | Uint16Array | Float32Array
     for (let i = 0; i < data.length; i++) out[i] = data[i] >> 8;
   } else {
     for (let i = 0; i < data.length; i++) out[i] = Math.max(0, Math.min(255, data[i] * 255));
+  }
+  return out;
+}
+
+// --- CMYK path ---------------------------------------------------------------
+//
+// ag-psd refuses CMYK outright; psd-cmyk.ts is the shared hand-rolled parser
+// (the browser worker uses it too). Corpus reality check that shaped this:
+// the Interplay press PSDs are saved without "Maximize Compatibility" (blank
+// white composite) AND with every layer hidden — even Photoshop's embedded
+// thumbnail is blank. A thumbnail of nothing helps no one, so an all-hidden
+// stack flattens as if visible; anything else honors the flags.
+
+function cmykToPng(bytes: Buffer): Buffer {
+  const psd = parseCmykPsd(bytes);
+  const withPixels = psd.layers.filter((l) => l.rgba);
+  let rgba: Uint8ClampedArray | null = null;
+  if (withPixels.length > 0) {
+    rgba = flattenCmyk(psd, withPixels.every((l) => l.hidden));
+  }
+  rgba ??= psd.composite();
+  const png = new PNG({ width: psd.width, height: psd.height });
+  Buffer.from(rgba.buffer, rgba.byteOffset, rgba.length).copy(png.data);
+  return PNG.sync.write(png);
+}
+
+/** Source-over flatten of the CMYK layer stack (bottom-to-top, file order)
+ *  onto white paper. Normal blend only — fidelity lives in the layer viewer. */
+function flattenCmyk(psd: CmykPsd, ignoreHidden: boolean): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(psd.width * psd.height * 4).fill(255);
+  for (const layer of psd.layers) {
+    if (!layer.rgba || (layer.hidden && !ignoreHidden)) continue;
+    const src = layer.rgba;
+    for (let y = 0; y < layer.rows; y++) {
+      const dy = layer.top + y;
+      if (dy < 0 || dy >= psd.height) continue;
+      for (let x = 0; x < layer.cols; x++) {
+        const dx = layer.left + x;
+        if (dx < 0 || dx >= psd.width) continue;
+        const s = (y * layer.cols + x) * 4;
+        const a = (src[s + 3] / 255) * layer.opacity;
+        if (a === 0) continue;
+        const d = (dy * psd.width + dx) * 4;
+        for (let c = 0; c < 3; c++) {
+          out[d + c] = Math.round(src[s + c] * a + out[d + c] * (1 - a));
+        }
+      }
+    }
   }
   return out;
 }

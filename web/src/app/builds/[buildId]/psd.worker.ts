@@ -15,6 +15,7 @@
 // reported disabled.
 
 import { initializeCanvas, readPsd, type Layer, type LayerMaskData, type Psd } from "ag-psd";
+import { isCmykPsd, parseCmykPsd } from "../../../lib/psd-cmyk";
 
 // Workers have no document, so ag-psd needs its canvas/ImageData factories
 // pointed at the worker-native equivalents (same dance as lib/psd.ts on the
@@ -95,12 +96,42 @@ self.onmessage = (e: MessageEvent) => {
 };
 
 function load(buf: ArrayBuffer) {
-  doc = readPsd(new Uint8Array(buf), { skipThumbnail: true, useImageData: true });
+  const bytes = new Uint8Array(buf);
+  doc = isCmykPsd(bytes)
+    ? cmykAsDoc(bytes)
+    : readPsd(bytes, { skipThumbnail: true, useImageData: true });
   if (doc.width * doc.height > MAX_PIXELS) {
     throw new Error(`PSD too large: ${doc.width}x${doc.height}`);
   }
   const layers = (doc.children ?? []).map((l, i) => layerMeta(l, String(i)));
   post({ type: "loaded", width: doc.width, height: doc.height, layers });
+}
+
+/** CMYK documents (which ag-psd refuses) through the shared hand-rolled
+ *  parser, shaped like an ag-psd Psd so the compositor below needs no second
+ *  code path. The corpus's press files are saved with every layer hidden —
+ *  the initial canvas is honestly blank and the panel is how the art is
+ *  revealed. A flattened CMYK file has no layer records to show; throwing
+ *  hands it to the parent's server-PNG fallback. */
+function cmykAsDoc(bytes: Uint8Array): Psd {
+  const cmyk = parseCmykPsd(bytes);
+  const children: Layer[] = cmyk.layers.map((l) => ({
+    name: l.name,
+    top: l.top,
+    left: l.left,
+    blendMode: l.blendMode as Layer["blendMode"],
+    opacity: l.opacity,
+    hidden: l.hidden,
+    clipping: l.clipping,
+    imageData:
+      l.rgba && l.cols > 0 && l.rows > 0
+        ? { width: l.cols, height: l.rows, data: l.rgba }
+        : undefined,
+  }));
+  if (!children.some((l) => l.imageData)) {
+    throw new Error("flattened CMYK file — use the composite fallback");
+  }
+  return { width: cmyk.width, height: cmyk.height, children } as Psd;
 }
 
 function layerMeta(l: Layer, id: string): WorkerLayer {
