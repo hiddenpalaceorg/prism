@@ -4,6 +4,7 @@ import { readBlob } from "@/lib/blobstore";
 import { gsAvailable, gsRenderable, gsToPng } from "@/lib/gs";
 import { IMMUTABLE_CACHE, contentDisposition } from "@/lib/http";
 import { pngConvertible, toPng, WEB_SAFE_IMAGE } from "@/lib/imgpng";
+import { psdConvertible, psdToPng } from "@/lib/psd";
 import { isSha256 } from "@/lib/validate";
 
 export const runtime = "nodejs";
@@ -30,7 +31,10 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
     return Response.redirect(new URL(`/api/asset/${sha256}`, _request.url), 308);
   }
   const viaGs = gsRenderable(meta.mime) && (await gsAvailable());
-  if ((!pngConvertible(meta.mime) && !viaGs) || meta.size > MAX_CONVERT_BYTES) {
+  if (
+    (!pngConvertible(meta.mime) && !psdConvertible(meta.mime) && !viaGs) ||
+    meta.size > MAX_CONVERT_BYTES
+  ) {
     return Response.json({ error: `no PNG conversion for ${meta.mime}` }, { status: 415 });
   }
 
@@ -41,7 +45,11 @@ export async function GET(_request: NextRequest, ctx: { params: Promise<{ sha256
 
   let png: Buffer;
   try {
-    png = viaGs ? await gsToPng(meta.mime, bytes) : toPng(meta.mime, bytes);
+    png = viaGs
+      ? await gsToPng(meta.mime, bytes)
+      : psdConvertible(meta.mime)
+        ? psdToPng(bytes)
+        : toPng(meta.mime, bytes);
   } catch {
     return Response.json({ error: "undecodable image" }, { status: 415 });
   }

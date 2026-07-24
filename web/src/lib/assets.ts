@@ -32,11 +32,19 @@ export const getAssetMeta = unstable_cache(
  *  sniffed body qualifies — the gateway has no extensions to type by, so
  *  text/PDF display and download filenames still need the app's headers. SVG
  *  is excluded: opened as a document on the gateway origin it could script,
- *  and there is no CSP sandbox out there. */
+ *  and there is no CSP sandbox out there. PSD is excluded too: the layer
+ *  viewer fetch()es the raw bytes, and the gateway guarantees no CORS
+ *  headers, so those reads must stay same-origin. */
 export function publicAssetUrl(sha256: string, mime: string): string | null {
   const base = process.env.ASSET_PUBLIC_BASE;
   if (!base) return null;
-  if (!/^(image|audio|video)\/[\w.+-]+$/.test(mime) || mime === "image/svg+xml") return null;
+  if (
+    !/^(image|audio|video)\/[\w.+-]+$/.test(mime) ||
+    mime === "image/svg+xml" ||
+    mime === "image/vnd.adobe.photoshop"
+  ) {
+    return null;
+  }
   return `${base.replace(/\/+$/, "")}/${sha256.slice(0, 2)}/${sha256}`;
 }
 

@@ -13,7 +13,7 @@ import { type ViewableAsset } from "./AssetViewer";
 import { useOpenAsset } from "./AssetViewerHost";
 
 // Chip label on viewable file rows, by asset kind.
-const KIND_TAG: Record<string, string> = { image: "img", audio: "aud", video: "vid", source: "src", text: "txt", binary: "hex" };
+const KIND_TAG: Record<string, string> = { image: "img", audio: "aud", video: "vid", document: "doc", source: "src", text: "txt", binary: "hex" };
 
 function formatDate(date?: string): string {
   if (!date) return "—";

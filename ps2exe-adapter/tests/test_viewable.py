@@ -118,6 +118,35 @@ def test_sniff_documents():
     assert not viewable.sniff(b"%PDF-1.4 pdf bytes under a .ai name", "application/postscript")
 
 
+def test_classify_photoshop():
+    assert viewable.classify("/ART/TITLE.PSD") == ("image", "image/vnd.adobe.photoshop")
+    assert viewable.classify("/art/huge.psb") == ("image", "image/vnd.adobe.photoshop")
+
+
+def test_sniff_photoshop():
+    # 8BPS + version: 1 = PSD, 2 = PSB. Anything else is an imposter.
+    assert viewable.sniff(b"8BPS\x00\x01" + bytes(20), "image/vnd.adobe.photoshop")
+    assert viewable.sniff(b"8BPS\x00\x02" + bytes(20), "image/vnd.adobe.photoshop")
+    assert not viewable.sniff(b"8BPS\x00\x03" + bytes(20), "image/vnd.adobe.photoshop")
+    assert not viewable.sniff(b"MZ\x90\x00", "image/vnd.adobe.photoshop")
+
+
+def test_resolve_confirms_and_remaps():
+    # Plain confirmation passes through untouched.
+    assert viewable.resolve(b"%!PS-Adobe-3.0 ", "document", "application/postscript") == (
+        "document",
+        "application/postscript",
+    )
+    # Modern Illustrator .ai is PDF under the hood — remapped, not rejected.
+    assert viewable.resolve(b"%PDF-1.4\r%\xe2\xe3\xcf\xd3", "document", "application/postscript") == (
+        "document",
+        "application/pdf",
+    )
+    # Bytes that are neither: same rejection sniff() gives.
+    assert viewable.resolve(b"\x00\x00\x00\x00C\xfa\x02\xae", "document", "application/postscript") is None
+    assert viewable.resolve(b"MZ\x90\x00", "image", "image/png") is None
+
+
 def test_sniff_text_accepts_legacy_encodings_rejects_binary():
     # Shift-JIS bytes are >= 0x80 — must pass the text heuristic.
     assert viewable.sniff("日本語のテキスト".encode("shift_jis"), "text/plain")

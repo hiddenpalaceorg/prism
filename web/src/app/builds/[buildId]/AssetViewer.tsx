@@ -7,7 +7,11 @@
 import { useEffect, useState } from "react";
 import { humanSize } from "@/lib/format";
 import { hexDump } from "@/lib/hexdump";
+import PdfViewer from "./PdfViewer";
+import PsdViewer from "./PsdViewer";
 import SourceCode from "./SourceCode";
+import SvgViewer from "./SvgViewer";
+import ZoomPan from "./ZoomPan";
 
 /** Mirrors queries.ts BuildAsset — redeclared here so client components don't
  *  import the server-only queries module (it pulls in pg). */
@@ -23,14 +27,18 @@ export function assetUrl(a: ViewableAsset): string {
   return `/api/asset/${a.sha256}`;
 }
 
-/** Where <img> should point: web-safe mimes load raw, while TGA, TIFF, and
- *  BMP go through the server's PNG conversion. BMP is not browser-safe:
+/** Where <img> should point: web-safe mimes load raw, while TGA, TIFF, BMP,
+ *  and PSD go through the server's PNG conversion. BMP is not browser-safe:
  *  WebKit rejects common legacy variants (biClrUsed=2^24, as written by
- *  90s-era tools) even when served as image/bmp. Kept in sync with
- *  pngConvertible (imgpng.ts) — not imported: that module pulls the decoders
- *  into the client bundle. */
+ *  90s-era tools) even when served as image/bmp. PSD renders flattened here —
+ *  the viewer body uses the client-side layer renderer instead. Kept in sync
+ *  with pngConvertible (imgpng.ts) and psdConvertible (psd.ts) — not
+ *  imported: those modules pull the decoders into the client bundle. */
 export function imageSrc(a: ViewableAsset): string {
-  return a.mime === "image/bmp" || a.mime === "image/x-tga" || a.mime === "image/tiff"
+  return a.mime === "image/bmp" ||
+    a.mime === "image/x-tga" ||
+    a.mime === "image/tiff" ||
+    a.mime === "image/vnd.adobe.photoshop"
     ? `${assetUrl(a)}/png`
     : assetUrl(a);
 }
@@ -286,31 +294,100 @@ function VideoBody({ asset }: { asset: ViewableAsset }) {
   );
 }
 
-// PDFs embed the browser's own viewer; PostScript/EPS goes through the
-// server's Ghostscript rasterization. Either can be unavailable (mobile
-// browsers won't embed PDFs; the server may lack Ghostscript), so both
-// fall back to a download card rather than an error.
-function DocumentBody({ asset }: { asset: ViewableAsset }) {
+// Raster images in a zoom/pan viewport. The probe <img> measures the natural
+// size ZoomPan needs for its fit scale; the blob is immutable and hard-cached,
+// so the visible <img> re-uses the fetched bytes.
+function ImageBody({ asset }: { asset: ViewableAsset }) {
   const [failed, setFailed] = useState(false);
-  const url = assetUrl(asset);
-  const fallback = <DownloadCard asset={asset} />;
-  if (asset.mime === "application/pdf") {
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  if (failed) {
+    return <p className="p-6 text-sm text-red-500">Failed to load media.</p>;
+  }
+  if (!size) {
     return (
-      <object data={url} type="application/pdf" className="h-[75vh] w-[min(70rem,90vw)] rounded" aria-label={asset.path}>
-        {fallback}
-      </object>
+      <>
+        <p className="p-6 text-sm text-neutral-400">Loading…</p>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={imageSrc(asset)}
+          alt=""
+          className="hidden"
+          onLoad={(e) =>
+            setSize({ width: e.currentTarget.naturalWidth || 1, height: e.currentTarget.naturalHeight || 1 })
+          }
+          onError={() => setFailed(true)}
+        />
+      </>
     );
   }
-  if (failed) return fallback;
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`${url}/png`}
-      alt={asset.path}
-      className="max-h-[75vh] max-w-[90vw] rounded object-contain"
-      onError={() => setFailed(true)}
-    />
+    <div className="relative h-[75vh] w-[min(85rem,92vw)]">
+      <ZoomPan contentSize={size} className="h-full w-full rounded bg-neutral-900">
+        {(scale) => (
+          // Not next/image: blobs are local, immutable, and served with hard
+          // cache headers — optimization would only re-encode them.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={imageSrc(asset)}
+            alt={asset.path}
+            draggable={false}
+            className="h-full w-full"
+            // Sprites and screenshots read texel-crisp when magnified.
+            style={{ imageRendering: scale > 1 ? "pixelated" : "auto" }}
+          />
+        )}
+      </ZoomPan>
+    </div>
   );
+}
+
+// SVG renders inline (sanitized) so zoom stays vector-sharp and top-level
+// groups become layer toggles; anything unparseable degrades to the plain
+// <img> body, where SVG cannot script by construction.
+function SvgBody({ asset }: { asset: ViewableAsset }) {
+  const [inlineFailed, setInlineFailed] = useState(false);
+  if (inlineFailed) return <ImageBody asset={asset} />;
+  return (
+    <SvgViewer url={assetUrl(asset)} label={asset.path} onUnavailable={() => setInlineFailed(true)} />
+  );
+}
+
+// PSD parses client-side for layer toggles; when the worker can't handle the
+// file (exotic color mode, oversized) the server's flattened PNG still shows
+// the artwork.
+function PsdBody({ asset }: { asset: ViewableAsset }) {
+  const [workerFailed, setWorkerFailed] = useState(false);
+  if (workerFailed) return <ImageBody asset={asset} />;
+  return (
+    <PsdViewer url={assetUrl(asset)} label={asset.path} onUnavailable={() => setWorkerFailed(true)} />
+  );
+}
+
+// Documents render through pdf.js — works on mobile (the old <object> embed
+// didn't), re-rasterizes on zoom so vectors stay sharp, and surfaces PDF
+// layer groups (Illustrator's layer mechanism in PDF-compatible files) as
+// toggles. PostScript/EPS/classic-AI go through the server's vector-
+// preserving PDF conversion first. Fallback ladder: the static Ghostscript
+// PNG, then a download card (no Ghostscript on the server at all).
+function DocumentBody({ asset }: { asset: ViewableAsset }) {
+  const [phase, setPhase] = useState<"pdf" | "png" | "download">("pdf");
+  const url = assetUrl(asset);
+  if (phase === "pdf") {
+    const src = asset.mime === "application/pdf" ? url : `${url}/pdf`;
+    return <PdfViewer url={src} label={asset.path} onUnavailable={() => setPhase("png")} />;
+  }
+  if (phase === "png") {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={`${url}/png`}
+        alt={asset.path}
+        className="max-h-[75vh] max-w-[90vw] rounded object-contain"
+        onError={() => setPhase("download")}
+      />
+    );
+  }
+  return <DownloadCard asset={asset} />;
 }
 
 function Body({ asset }: { asset: ViewableAsset }) {
@@ -320,17 +397,9 @@ function Body({ asset }: { asset: ViewableAsset }) {
   }
   switch (asset.kind) {
     case "image":
-      return (
-        // Not next/image: blobs are local, immutable, and served with hard
-        // cache headers — optimization would only re-encode them.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={imageSrc(asset)}
-          alt={asset.path}
-          className="max-h-[75vh] max-w-[90vw] rounded object-contain"
-          onError={() => setFailed(true)}
-        />
-      );
+      if (asset.mime === "image/svg+xml") return <SvgBody asset={asset} />;
+      if (asset.mime === "image/vnd.adobe.photoshop") return <PsdBody asset={asset} />;
+      return <ImageBody asset={asset} />;
     case "audio":
       return (
         <audio controls src={audioSrc(asset)} className="w-[min(40rem,85vw)]" onError={() => setFailed(true)} />

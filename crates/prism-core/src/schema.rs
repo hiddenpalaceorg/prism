@@ -21,9 +21,11 @@ pub const FINGERPRINT_PROFILE: &str = "v1";
 /// their members' assets riding under `<archive path>/...`; 8 = the shared
 /// asset cap raised from 20 to 64 MiB (files between the two previously fell
 /// back to head snippets); 9 = AVI classified as video (previously a head
-/// snippet). A record below the current value gets its assets re-extracted
-/// on the next analyze.
-pub const ASSET_PROFILE: u32 = 9;
+/// snippet); 10 = PSD/PSB classified as images, and PDF-compatible .ai
+/// (Illustrator 9+) as PDF documents (both previously head snippets). A
+/// record below the current value gets its assets re-extracted on the next
+/// analyze.
+pub const ASSET_PROFILE: u32 = 10;
 
 /// A fully analyzed disc image / container — image-independent and self-describing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
