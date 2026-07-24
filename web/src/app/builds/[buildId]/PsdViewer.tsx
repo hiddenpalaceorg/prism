@@ -12,8 +12,15 @@ import LayerPanel, { type LayerNode } from "./LayerPanel";
 import ZoomPan from "./ZoomPan";
 import type { WorkerLayer } from "./psd.worker";
 
+interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 type WorkerOut =
-  | { type: "loaded"; width: number; height: number; layers: WorkerLayer[] }
+  | { type: "loaded"; width: number; height: number; crop: CropRect; layers: WorkerLayer[] }
   | { type: "frame"; bitmap: ImageBitmap }
   | { type: "error"; message: string };
 
@@ -51,6 +58,7 @@ export default function PsdViewer({
   const pendingFrame = useRef<ImageBitmap | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const [crop, setCrop] = useState<CropRect | null>(null);
   const [layers, setLayers] = useState<LayerNode[]>([]);
   const [painted, setPainted] = useState(false);
 
@@ -89,6 +97,16 @@ export default function PsdViewer({
       const msg = e.data;
       if (msg.type === "loaded") {
         setSize({ width: msg.width, height: msg.height });
+        // Only meaningful when layers extend past the document canvas —
+        // hugging the render's edge would just read as a picture frame.
+        setCrop(
+          msg.crop.x > 0 ||
+            msg.crop.y > 0 ||
+            msg.crop.width < msg.width ||
+            msg.crop.height < msg.height
+            ? msg.crop
+            : null
+        );
         setLayers(msg.layers);
         worker.postMessage({ type: "render", visibility: visibilityMap(msg.layers) });
       } else if (msg.type === "frame") {
@@ -136,14 +154,31 @@ export default function PsdViewer({
     <div className="relative h-[75vh] w-[min(85rem,92vw)]">
       <ZoomPan contentSize={size} className="h-full w-full rounded bg-neutral-900">
         {(scale) => (
-          <canvas
-            ref={canvasRef}
-            aria-label={label}
-            className={`h-full w-full ${painted ? "" : "invisible"}`}
-            // Game art wants crisp texels when magnified, smooth minification
-            // otherwise.
-            style={{ imageRendering: scale > 1 ? "pixelated" : "auto" }}
-          />
+          <div className="relative h-full w-full">
+            <canvas
+              ref={canvasRef}
+              aria-label={label}
+              className={`h-full w-full ${painted ? "" : "invisible"}`}
+              // Game art wants crisp texels when magnified, smooth minification
+              // otherwise.
+              style={{ imageRendering: scale > 1 ? "pixelated" : "auto" }}
+            />
+            {crop && painted && (
+              // The document canvas (Photoshop's crop) over the full-extent
+              // render. A DOM border stays one pixel at any zoom; the dark
+              // outer ring keeps the dashes legible on light art.
+              <div
+                aria-hidden
+                className="pointer-events-none absolute border border-dashed border-white/80 shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
+                style={{
+                  left: crop.x * scale,
+                  top: crop.y * scale,
+                  width: crop.width * scale,
+                  height: crop.height * scale,
+                }}
+              />
+            )}
+          </div>
         )}
       </ZoomPan>
       {!painted && (

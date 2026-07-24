@@ -106,7 +106,15 @@ function load(buf: ArrayBuffer) {
   }
   bounds = unionBounds(doc);
   const layers = (doc.children ?? []).map((l, i) => layerMeta(l, String(i)));
-  post({ type: "loaded", width: bounds.width, height: bounds.height, layers });
+  post({
+    type: "loaded",
+    width: bounds.width,
+    height: bounds.height,
+    // The document canvas (Photoshop's crop area) in render space, so the
+    // viewer can outline it over the full-extent composite.
+    crop: { x: -bounds.x, y: -bounds.y, width: doc.width, height: doc.height },
+    layers,
+  });
 }
 
 /** The union of the document canvas and every layer's pixel bounds. Press
