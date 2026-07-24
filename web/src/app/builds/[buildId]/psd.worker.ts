@@ -109,9 +109,7 @@ function load(buf: ArrayBuffer) {
 
 /** CMYK documents (which ag-psd refuses) through the shared hand-rolled
  *  parser, shaped like an ag-psd Psd so the compositor below needs no second
- *  code path. The corpus's press files are saved with every layer hidden —
- *  the initial canvas is honestly blank and the panel is how the art is
- *  revealed. A flattened CMYK file has no layer records to show; throwing
+ *  code path. A flattened CMYK file has no layer records to show; throwing
  *  hands it to the parent's server-PNG fallback. */
 function cmykAsDoc(bytes: Uint8Array): Psd {
   const cmyk = parseCmykPsd(bytes);
@@ -138,7 +136,11 @@ function layerMeta(l: Layer, id: string): WorkerLayer {
   return {
     id,
     name: l.name || "Layer",
-    visible: !l.hidden,
+    // Everything defaults to visible, whatever the file's flags say: the
+    // corpus's press PSDs are saved with every layer hidden, and opening to
+    // a blank canvas reads as broken. Unchecking is one click; discovering
+    // that checkboxes are how you make art appear is not.
+    visible: true,
     // Groups always toggle; a leaf without pixels (adjustment, fill, empty)
     // has nothing this renderer can draw.
     disabled: !l.children && !l.imageData?.data?.length,
@@ -178,7 +180,7 @@ function compositeInto(
   for (let i = 0; i < layers.length; i++) {
     const layer = layers[i];
     const id = idPrefix ? `${idPrefix}.${i}` : String(i);
-    if (!(visibility[id] ?? !layer.hidden)) continue;
+    if (!(visibility[id] ?? true)) continue; // panel state; default matches layerMeta
 
     if (layer.children) {
       const passThrough =
@@ -226,7 +228,7 @@ function compositeInto(
     uctx.globalAlpha = 1;
     uctx.drawImage(content, layer.left ?? 0, layer.top ?? 0);
     for (const c of clipped) {
-      if (!(visibility[c.id] ?? !c.layer.hidden)) continue;
+      if (!(visibility[c.id] ?? true)) continue;
       const cc = layerCanvas(c.layer);
       if (!cc) continue;
       drawLayer(uctx, c.layer, cc);
