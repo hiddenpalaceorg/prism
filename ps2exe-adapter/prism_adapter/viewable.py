@@ -43,6 +43,11 @@ _IMAGE = {
     "webp": "image/webp",
     "ico": "image/x-icon",
     "svg": "image/svg+xml",
+    # Photoshop documents — press discs carry source artwork as .psd. The web
+    # viewer parses these client-side (layer toggles); thumbnails come from the
+    # server's flattened-PNG conversion.
+    "psd": "image/vnd.adobe.photoshop",
+    "psb": "image/vnd.adobe.photoshop",
 }
 
 _AUDIO = {
@@ -167,6 +172,8 @@ _MAGIC = {
     "image/webp": lambda h: h[:4] == b"RIFF" and h[8:12] == b"WEBP",
     "image/x-icon": lambda h: h.startswith((b"\x00\x00\x01\x00", b"\x00\x00\x02\x00")),
     "image/svg+xml": lambda h: _looks_text(h) and b"<svg" in h.lower(),
+    # 8BPS signature, version 1 (PSD) or 2 (PSB large-document variant).
+    "image/vnd.adobe.photoshop": lambda h: h.startswith((b"8BPS\x00\x01", b"8BPS\x00\x02")),
     "audio/wav": lambda h: h[:4] == b"RIFF" and h[8:12] == b"WAVE",
     "audio/mpeg": lambda h: h.startswith(b"ID3")
     or (len(h) >= 2 and h[0] == 0xFF and (h[1] & 0xE0) == 0xE0),
@@ -190,3 +197,16 @@ def sniff(head, mime):
     """True when the leading bytes are plausibly the claimed mime."""
     check = _MAGIC.get(mime)
     return bool(check and check(head))
+
+
+def resolve(head, kind, mime):
+    """(kind, mime) confirmed — or remapped — from the real leading bytes,
+    else None when the extension's claim and the bytes disagree.
+
+    The one remap: Illustrator 9+ writes .ai as PDF with the AI data riding
+    in a private stream. Those files fail the %!PS sniff but are perfectly
+    viewable — as PDFs.
+    """
+    if mime == "application/postscript" and head.startswith(b"%PDF-"):
+        return kind, "application/pdf"
+    return (kind, mime) if sniff(head, mime) else None

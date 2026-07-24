@@ -7,6 +7,7 @@ import { getBuildAssets, resolveBuild, type BuildAsset } from "@/lib/queries";
 import { assetExcerpts, assetTotals, orderAssets } from "@/lib/assets";
 import { gsAvailable, gsRenderable } from "@/lib/gs";
 import { pngConvertible, WEB_SAFE_IMAGE } from "@/lib/imgpng";
+import { psdConvertible } from "@/lib/psd";
 import { humanSize } from "@/lib/meta";
 import { canonicalBuildId, parseBuildParam, safeDecodeSegment } from "@/lib/slug";
 import AssetGallery from "../../AssetGallery";
@@ -75,14 +76,14 @@ export async function generateMetadata({
       description,
       siteName: "Hidden Palace",
       // Image assets unfurl as themselves — directly when the format is
-      // web-safe, via PNG conversion when it isn't (BMP/TGA/TIFF). Documents
-      // unfurl as their rasterized first page/artwork when the server has
-      // Ghostscript; everything else (audio/video/text, ico/svg) gets the
-      // build card.
+      // web-safe, via PNG conversion when it isn't (BMP/TGA/TIFF, flattened
+      // PSD). Documents unfurl as their rasterized first page/artwork when
+      // the server has Ghostscript; everything else (audio/video/text,
+      // ico/svg) gets the build card.
       images: [
         asset.kind === "image" && WEB_SAFE_IMAGE.test(asset.mime)
           ? `/api/asset/${asset.sha256}`
-          : asset.kind === "image" && pngConvertible(asset.mime)
+          : asset.kind === "image" && (pngConvertible(asset.mime) || psdConvertible(asset.mime))
             ? `/api/asset/${asset.sha256}/png`
             : asset.kind === "document" && gsRenderable(asset.mime) && (await gsAvailable())
               ? `/api/asset/${asset.sha256}/png`

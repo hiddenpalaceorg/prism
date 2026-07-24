@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PNG } from "pngjs";
-import { gsAvailable, gsRenderable, gsToPng, patchStrippedIllustrator } from "../src/lib/gs";
+import { gsAvailable, gsRenderable, gsToPdf, gsToPng, patchStrippedIllustrator, pdfConvertible } from "../src/lib/gs";
 
 // Rasterization tests need real Ghostscript and skip without it (set
 // GHOSTSCRIPT_BIN when `gs` on PATH is something else, e.g. git-spice).
@@ -52,6 +52,40 @@ function centerPixel(png: Buffer): number[] {
   const o = ((img.height >> 1) * img.width + (img.width >> 1)) * 4;
   return [...img.data.subarray(o, o + 4)];
 }
+
+test("pdfConvertible covers exactly PostScript", () => {
+  assert.equal(pdfConvertible("application/postscript"), true);
+  assert.equal(pdfConvertible("application/pdf"), false);
+  assert.equal(pdfConvertible("image/vnd.adobe.photoshop"), false);
+});
+
+test("gsToPdf converts an EPS to a PDF cropped to its BoundingBox", async (t) => {
+  if (!(await gsAvailable())) return t.skip("ghostscript not installed");
+  const pdf = await gsToPdf(EPS);
+  assert.ok(pdf.subarray(0, 5).equals(Buffer.from("%PDF-")), "output is a PDF");
+  // Round-trip through the rasterizer: the 8x4pt page must survive with the
+  // red fill centered — proof the BoundingBox crop carried into the PDF.
+  const png = PNG.sync.read(await gsToPng("application/pdf", pdf));
+  assert.ok(png.width >= 15 && png.width <= 19, `width ${png.width}`);
+  assert.ok(png.height >= 7 && png.height <= 11, `height ${png.height}`);
+  const o = ((png.height >> 1) * png.width + (png.width >> 1)) * 4;
+  assert.deepEqual([...png.data.subarray(o, o + 4)], [255, 0, 0, 255]);
+});
+
+test("gsToPdf converts prolog-stripped Illustrator art", async (t) => {
+  if (!(await gsAvailable())) return t.skip("ghostscript not installed");
+  const pdf = await gsToPdf(STRIPPED_AI);
+  assert.ok(pdf.subarray(0, 5).equals(Buffer.from("%PDF-")), "output is a PDF");
+  const png = PNG.sync.read(await gsToPng("application/pdf", pdf));
+  const o = ((png.height >> 1) * png.width + (png.width >> 1)) * 4;
+  const [r, g, b] = png.data.subarray(o, o + 3);
+  assert.ok(r < 100 && g > 130 && b > 200, `cyan-ish center, got ${r},${g},${b}`);
+});
+
+test("gsToPdf throws on garbage input", async (t) => {
+  if (!(await gsAvailable())) return t.skip("ghostscript not installed");
+  await assert.rejects(gsToPdf(Buffer.from("not postscript at all")));
+});
 
 test("gsToPng rasterizes an EPS at its BoundingBox", async (t) => {
   if (!(await gsAvailable())) return t.skip("ghostscript not installed");

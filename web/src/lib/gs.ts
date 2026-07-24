@@ -21,6 +21,10 @@ const GS_TIMEOUT_MS = 15_000;
 // Refuse to hand back absurd rasters (a hostile BoundingBox can demand acres).
 const MAX_PNG_BYTES = 32_000_000;
 
+// pdfwrite output cap — matches the 64 MiB asset cap, so any stored
+// PostScript asset has room to convert.
+const MAX_PDF_BYTES = 64 * 1024 * 1024;
+
 // Target resolution, and the raster-size cap a huge BoundingBox degrades
 // against (the render drops below 150dpi rather than exploding).
 const GS_DPI = 150;
@@ -29,6 +33,11 @@ const MAX_PIXELS = 16_000_000;
 /** Mimes gsToPng can rasterize. */
 export function gsRenderable(mime: string): boolean {
   return mime === "application/pdf" || mime === "application/postscript";
+}
+
+/** Mimes gsToPdf converts (PDF itself is already a PDF — served raw). */
+export function pdfConvertible(mime: string): boolean {
+  return mime === "application/postscript";
 }
 
 // Feature detection, memoized for the process lifetime. A `gs` on PATH is not
@@ -219,6 +228,58 @@ export async function gsToPng(mime: string, bytes: Buffer): Promise<Buffer> {
       throw new Error(`gs raster out of range: ${png.length} bytes`);
     }
     return png;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Convert a PostScript/EPS asset to PDF with the vectors intact — the web
+ * viewer renders the result client-side (pdf.js), so zoom stays sharp at any
+ * scale. Same crop treatment as gsToPng: the page is sized to the declared
+ * BoundingBox so EPS art fills its page instead of drifting on letter paper.
+ * Multi-page PostScript converts to a multi-page PDF. Throws when Ghostscript
+ * is missing, times out, errors on the input, or the output is outlandish.
+ */
+export async function gsToPdf(bytes: Buffer): Promise<Buffer> {
+  if (!(await gsAvailable())) throw new Error("ghostscript not available");
+
+  bytes = patchStrippedIllustrator(bytes) ?? bytes;
+  let media: string[] = [];
+  let translate: string[] = [];
+  const bb = epsBoundingBox(bytes);
+  if (bb) {
+    media = [
+      `-dDEVICEWIDTHPOINTS=${bb.x2 - bb.x1}`,
+      `-dDEVICEHEIGHTPOINTS=${bb.y2 - bb.y1}`,
+      "-dFIXEDMEDIA",
+    ];
+    translate = ["-c", `${-bb.x1} ${-bb.y1} translate`, "-f"];
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), `gs-${randomBytes(4).toString("hex")}-`));
+  try {
+    const input = join(dir, "input");
+    await writeFile(input, bytes);
+    const args = [
+      "-dSAFER",
+      "-dBATCH",
+      "-dNOPAUSE",
+      "-q",
+      "-P-",
+      "-sstdout=%stderr",
+      "-sDEVICE=pdfwrite",
+      ...media,
+      "-sOutputFile=" + join(dir, "out.pdf"),
+      ...translate,
+      input,
+    ];
+    await execFileP(GS_BIN, args, { timeout: GS_TIMEOUT_MS, maxBuffer: 4_000_000 });
+    const pdf = await readFile(join(dir, "out.pdf"));
+    if (pdf.length === 0 || pdf.length > MAX_PDF_BYTES) {
+      throw new Error(`gs pdf out of range: ${pdf.length} bytes`);
+    }
+    return pdf;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

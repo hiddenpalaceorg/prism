@@ -990,7 +990,9 @@ def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
                         asset = None
                 else:
                     data = _read_capped(reader, f, viewable.MAX_ASSET_SIZE)
-                    if data and viewable.sniff(data[: viewable.SNIFF_BYTES], mime):
+                    resolved = viewable.resolve(data[: viewable.SNIFF_BYTES], kind, mime) if data else None
+                    if resolved is not None:
+                        kind, mime = resolved
                         asset = (data, mime, kind)
                     elif data:
                         # Extension claimed a viewable type but the bytes disagree —
