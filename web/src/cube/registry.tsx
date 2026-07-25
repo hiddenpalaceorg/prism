@@ -270,8 +270,10 @@ function DownloadView({ attrs, data }: ComponentViewProps) {
   const a = attrs as { file?: string; external?: unknown; raw?: string; title?: string };
   const d = (data ?? {}) as Partial<DownloadData>;
   const label = a.title ?? a.file ?? "file";
+  // Only http(s) mirror URLs: `external` is a page-authored json attribute, so
+  // an unfiltered href here would allow javascript:/data: XSS in an <a>.
   const external = (Array.isArray(a.external) ? a.external : []).filter(
-    (u): u is string => typeof u === "string" && u !== "",
+    (u): u is string => typeof u === "string" && /^https?:\/\//i.test(u),
   );
 
   return (
