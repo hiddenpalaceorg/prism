@@ -1,9 +1,9 @@
 import type { NextRequest } from "next/server";
-import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { submissionStatus, setSubmissionStatus } from "@/lib/queries";
 import { ingestRecord, refreshAudioIdf } from "@/lib/ingest";
 import { requireModerator } from "@/lib/auth";
+import { revalidateEverywhere } from "@/lib/revalidate";
 import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
 import type { BuildRecord } from "@/lib/types";
@@ -114,8 +114,6 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   // The canonical slug path is what everything links to; the bare-sha path
   // serves a cached redirect, so refresh both (plus the assets subpage).
   const canonical = buildHref(sha256, name);
-  revalidatePath(canonical);
-  revalidatePath(`${canonical}/assets`);
-  revalidatePath(`/builds/${sha256}`);
+  revalidateEverywhere([canonical, `${canonical}/assets`, `/builds/${sha256}`]);
   return Response.json({ sha256, status: "accepted", kind });
 }

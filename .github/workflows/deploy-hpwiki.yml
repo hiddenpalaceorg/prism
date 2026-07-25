@@ -31,8 +31,6 @@ jobs:
     env:
       APP: /home/thedrx/curator-web
       PORT: "6800"
-      SESSION: deploy
-      BOT_SESSION: bot
 
     steps:
       - uses: actions/checkout@v4
@@ -67,89 +65,63 @@ jobs:
       # source, plus the exact node_modules npm installed here. Syncing the
       # modules is what keeps the app dir from drifting into a hand-curated
       # state. .env.local and asset-store are the server's own and must never
-      # be deleted (see the never-wipe rules in the deploy skill).
+      # be deleted (see the never-wipe rules in the deploy skill). .next-* are
+      # the slots' build directories and belong to the box.
+      #
+      # node_modules lands additively here: both slots are still serving the
+      # OLD build and can still lazily require a file that this install would
+      # have deleted. The prune pass runs after the swap, once nothing is
+      # running the old code.
       - name: sync tree into the app dir
         run: |
           rsync -a --delete \
-            --exclude node_modules --exclude .next --exclude .git \
+            --exclude node_modules --exclude '.next*' --exclude .git \
             --exclude tsconfig.tsbuildinfo --exclude .env.local \
             --exclude asset-store \
             hp-web/ "$APP"/
+          rsync -a --exclude /cube node_modules/ "$APP"/node_modules/
+          rsync -a --exclude node_modules cube/ "$APP"/node_modules/cube/
+
+      # The swap itself: build into .next-stage while both slots keep serving
+      # their own build directory, then move them onto it one at a time,
+      # checking each is answering (including a real database round trip)
+      # before the other is touched. A slot that will not come up goes back on
+      # its previous build and the deploy stops there, with the other slot
+      # still serving. The site does not go down for any of this.
+      #
+      # The procedure lives in the app tree (hp-web/deploy/slots.sh), shared
+      # with the manual deploy and the watchdog cron, and holds a lock so no
+      # two of them can restart the same slot at once.
+      - name: build and roll the slots
+        run: |
+          "$APP/deploy/slots.sh" deploy
+          echo "BUILD_ID=$(cat "$APP/.next-stage/BUILD_ID")" >> "$GITHUB_ENV"
+
+      # Now that no process is running the old build, drop whatever this
+      # install removed from node_modules.
+      - name: prune node_modules
+        run: |
           rsync -a --delete --exclude /cube node_modules/ "$APP"/node_modules/
           rsync -a --delete --exclude node_modules cube/ "$APP"/node_modules/cube/
 
-      - name: build, restart, verify
-        run: |
-          set -euo pipefail
-
-          start_app() {
-            tmux kill-session -t "$SESSION" 2>/dev/null || true
-            tmux new-session -d -s "$SESSION"
-            tmux send-keys -t "$SESSION" \
-              "export PATH=\$HOME/node22/bin:\$PATH; cd $APP; npx next start -p $PORT 2>&1 | tee ~/server.log" C-m
-            # if/fi rather than `grep && break`: a failing && compound under
-            # set -e would abort the script on the first not-yet-bound poll.
-            for _ in $(seq 1 15); do
-              if ss -ltn | grep -q ":$PORT"; then break; fi
-              sleep 1
-            done
-          }
-
-          verify() {
-            ss -ltn | grep -q ":$PORT" || return 1
-            # / alone can answer 200 with Postgres down, /builds cannot.
-            for path in / /builds; do
-              code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT$path")
-              echo "  GET $path -> $code"
-              [ "$code" = 200 ] || return 1
-            done
-          }
-
-          # Hardlink copy, so keeping a rollback build costs no disk. The
-          # source tree is already the new code at this point, so a rollback
-          # leaves the tree ahead of the running build until the next green
-          # deploy. That is deliberate: serving beats matching.
-          rm -rf "$APP/.next.prev"
-          if [ -d "$APP/.next" ]; then cp -al "$APP/.next" "$APP/.next.prev"; fi
-
-          rollback() {
-            echo "::error::deploy failed, restoring the previous build"
-            rm -rf "$APP/.next"
-            if [ -d "$APP/.next.prev" ]; then mv "$APP/.next.prev" "$APP/.next"; fi
-            start_app
-            verify || echo "::error::rollback did not come up cleanly, check ~/server.log"
-            exit 1
-          }
-          trap rollback ERR
-
-          # next build rewrites .next, so the server has to be down for it.
-          # This is the only window where the site is unavailable (seconds).
-          tmux kill-session -t "$SESSION" 2>/dev/null || true
-          ( cd "$APP" && npm run build )
-          start_app
-          verify
-
-          trap - ERR
-          rm -rf "$APP/.next.prev"
-          echo "BUILD_ID=$(cat "$APP/.next/BUILD_ID")" >> "$GITHUB_ENV"
-
-      # The Discord bot runs the same tree, so it needs restarting too. Only
+      # The Discord bot runs the same tree, so it needs restarting too, and
+      # unlike the app it stays a single process (one gateway session). Only
       # where a DISCORD_TOKEN is configured, and a failure here does not roll
       # the site back: the app is already up and verified.
       - name: restart the discord bot
         continue-on-error: true
         run: |
+          "$APP/deploy/slots.sh" restart-bot
+
+      # End to end, through the port hiddenpalace.org actually talks to.
+      - name: verify the front door
+        run: |
           set -euo pipefail
-          grep -q '^DISCORD_TOKEN=' "$APP/.env.local" || { echo "no DISCORD_TOKEN, skipped"; exit 0; }
-          tmux kill-session -t "$BOT_SESSION" 2>/dev/null || true
-          tmux new-session -d -s "$BOT_SESSION"
-          tmux send-keys -t "$BOT_SESSION" \
-            "export PATH=\$HOME/node22/bin:\$PATH; cd $APP; npm run bot 2>&1 | tee ~/bot.log" C-m
-          for _ in $(seq 1 20); do
-            if grep -q 'logged in as' ~/bot.log 2>/dev/null; then break; fi
-            sleep 1
+          for path in /healthz / /builds; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "http://localhost:$PORT$path")
+            echo "  GET $path -> $code"
+            [ "$code" = 200 ] || exit 1
           done
-          grep -m1 'logged in as' ~/bot.log || { echo "bot did not log in:"; tail -5 ~/bot.log; exit 1; }
 
       - name: summary
         if: always()
