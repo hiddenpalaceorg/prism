@@ -1,5 +1,5 @@
 // Stdio MCP server for the cube wiki (local dev).
-// Register with: claude mcp add cube-wiki -- npx tsx web/scripts/cube-mcp.mts
+// Register with: claude mcp add cube-wiki -- npx tsx hp-web/scripts/cube-mcp.mts
 // Writes are attributed to the CUBE_MCP_USER name (default "mcp-agent").
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

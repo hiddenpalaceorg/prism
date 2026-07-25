@@ -48,7 +48,7 @@ jobs:
         run: npm ci
 
       - name: typecheck and tests
-        working-directory: web
+        working-directory: hp-web
         run: |
           npx tsc --noEmit
           npm test
@@ -58,7 +58,7 @@ jobs:
       # build needs DATABASE_URL (build-time page generation reads Postgres),
       # which only exists in the server's own .env.local.
       - name: preflight build
-        working-directory: web
+        working-directory: hp-web
         run: |
           ln -sfn "$APP/.env.local" .env.local
           npm run build
@@ -74,7 +74,7 @@ jobs:
             --exclude node_modules --exclude .next --exclude .git \
             --exclude tsconfig.tsbuildinfo --exclude .env.local \
             --exclude asset-store \
-            web/ "$APP"/
+            hp-web/ "$APP"/
           rsync -a --delete --exclude /cube node_modules/ "$APP"/node_modules/
           rsync -a --delete --exclude node_modules cube/ "$APP"/node_modules/cube/
 

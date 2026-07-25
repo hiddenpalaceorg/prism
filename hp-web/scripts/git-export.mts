@@ -1,5 +1,5 @@
 // Drain the cube git-export queue into a local mirror repo.
-//   npx tsx web/scripts/git-export.mts [--dir <path>]
+//   npx tsx hp-web/scripts/git-export.mts [--dir <path>]
 
 import pg from "pg";
 import { processGitQueue } from "cube";

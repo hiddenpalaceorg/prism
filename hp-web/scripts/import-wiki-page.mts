@@ -3,8 +3,8 @@
 // verbatim first (original author/timestamp/comment, mw_rev_id provenance),
 // then the converted markdown lands on top.
 //
-//   npx tsx web/scripts/import-wiki-page.mts "Sonic the Hedgehog 2 (Nick Arcade prototype)"
-//   npx tsx web/scripts/import-wiki-page.mts "Some Page" --save
+//   npx tsx hp-web/scripts/import-wiki-page.mts "Sonic the Hedgehog 2 (Nick Arcade prototype)"
+//   npx tsx hp-web/scripts/import-wiki-page.mts "Some Page" --save
 //
 // Flags: --save (write into DATABASE_URL, default postgres:///curator),
 //        --wikitext (print the source wikitext too), --quiet (markdown only)

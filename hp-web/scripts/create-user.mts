@@ -1,5 +1,5 @@
 // Create a local cube wiki account:
-//   CUBE_PASSWORD=... npx tsx web/scripts/create-user.mts <name> [role,...]
+//   CUBE_PASSWORD=... npx tsx hp-web/scripts/create-user.mts <name> [role,...]
 // The password comes from $CUBE_PASSWORD (or an stdin prompt) so it never lands
 // in the process table (ps) or shell history the way an argv password would.
 

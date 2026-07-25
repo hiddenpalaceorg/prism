@@ -32,7 +32,7 @@ node_modules
 cube/spikes/
 
 # cube dev artifacts
-web/.wiki-git/
-web/cube-media/
-web/.wiki-sync-state.json
-web/.wiki-import-failures.log
+hp-web/.wiki-git/
+hp-web/cube-media/
+hp-web/.wiki-sync-state.json
+hp-web/.wiki-import-failures.log

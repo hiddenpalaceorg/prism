@@ -7,7 +7,7 @@
 
 /// Refuse to decode absurd dimensions (decode allocates width*height*4 up
 /// front, and headers are attacker-controlled bytes). Matches the web
-/// converter's cap (web/src/lib/imgpng.ts).
+/// converter's cap (hp-web/src/lib/imgpng.ts).
 const MAX_PIXELS: u32 = 32_000_000;
 
 struct Decoded {
