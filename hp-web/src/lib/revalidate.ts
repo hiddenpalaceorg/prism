@@ -74,24 +74,31 @@ export function peerRevalidateRequest(
  * Revalidate these paths and tags on this process and on the sibling slot.
  * Pass `mirror: false` when already handling a mirrored request, so two slots
  * cannot bounce one bust back and forth.
+ *
+ * The local bust is synchronous. The returned promise settles when the mirror
+ * has landed. Ignoring it keeps the old fire-and-forget behaviour, which is
+ * what a bulk mutation wants. Await it when the caller is about to tell a
+ * browser "done" and that browser will immediately re-fetch the page: the
+ * refresh is load-balanced across both slots, so returning before the mirror
+ * lands is a live race against serving the stale page back. It never rejects.
  */
 export function revalidateEverywhere(
   paths: Iterable<string>,
   tags: Iterable<string> = [],
   opts: { mirror?: boolean } = {}
-): void {
+): Promise<void> {
   const p = [...new Set(paths)];
   const t = [...new Set(tags)];
   for (const path of p) revalidatePath(path);
   for (const tag of t) revalidateTag(tag, "max");
 
-  if (opts.mirror === false) return;
+  if (opts.mirror === false) return Promise.resolve();
   const req = peerRevalidateRequest(p, t);
-  if (!req) return;
-  // Fire and forget: the mutation this follows has already succeeded, and a
-  // sibling that cannot be reached right now is a stale page for a while, not
-  // a failed request for the caller. Logged so it is not silent.
-  void fetch(req.url, req.init).then(
+  if (!req) return Promise.resolve();
+  // A sibling that cannot be reached right now is a stale page for a while,
+  // not a failed request for the caller, so this resolves either way. Logged
+  // so it is not silent.
+  return fetch(req.url, req.init).then(
     (r) => {
       if (!r.ok) console.warn(`peer revalidate: ${req.url} -> ${r.status}`);
     },

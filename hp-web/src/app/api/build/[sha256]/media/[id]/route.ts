@@ -68,7 +68,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
 
   const row = await updateMediaLabel(gate.pool, sha256, gate.row.id, body.label);
   if (!row) return Response.json({ error: "not found" }, { status: 404 });
-  revalidateBuildPages(sha256, gate.target.name);
+  await revalidateBuildPages(sha256, gate.target.name);
   return Response.json({ media: mediaView(row) });
 }
 
@@ -81,6 +81,6 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ sha2
   if (!gate.ok) return gate.response;
 
   await deleteMedia(gate.pool, sha256, gate.row.id);
-  revalidateBuildPages(sha256, gate.target.name);
+  await revalidateBuildPages(sha256, gate.target.name);
   return Response.json({ deleted: true });
 }

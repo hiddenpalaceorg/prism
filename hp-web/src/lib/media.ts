@@ -109,6 +109,13 @@ export interface MediaSession {
   label?: MediaLabel;
   /** Sniffed at the first chunk; absent until then. */
   contentType?: string;
+  /** Video poster blob, once extracted. Cached here so a finalize that has to
+   *  be retried does not run ffmpeg over the whole capture a second time. */
+  poster?: string | null;
+  /** Set once the row exists. The session outlives its payload in this state
+   *  so a client that never saw the reply can PUT again and be told the same
+   *  answer instead of a 404 for an upload that in fact succeeded. */
+  done?: BuildMediaView;
 }
 
 const SESSION_TTL_MS = 24 * 3600_000;
@@ -133,7 +140,7 @@ export async function createMediaSession(token: string, session: MediaSession): 
   const dir = path.join(assetStoreDir(), ".staging");
   await fsp.mkdir(dir, { recursive: true });
   await reapStaleSessions(dir).catch(() => {});
-  await fsp.writeFile(mediaSessionPath(token), JSON.stringify(session));
+  await updateMediaSession(token, session);
   await fsp.writeFile(mediaStagingPath(token), Buffer.alloc(0));
 }
 
@@ -145,13 +152,55 @@ export async function readMediaSession(token: string): Promise<MediaSession | nu
   }
 }
 
+/** Replace the sidecar. Written to a temp name and renamed, so a process that
+ *  dies mid-write leaves the previous session rather than truncated JSON that
+ *  reads back as "no such upload session". */
 export async function updateMediaSession(token: string, session: MediaSession): Promise<void> {
-  await fsp.writeFile(mediaSessionPath(token), JSON.stringify(session));
+  const dest = mediaSessionPath(token);
+  const tmp = `${dest}.tmp${process.pid}`;
+  await fsp.writeFile(tmp, JSON.stringify(session));
+  await fsp.rename(tmp, dest);
 }
 
 export async function dropMediaSession(token: string): Promise<void> {
   await fsp.rm(mediaSessionPath(token), { force: true });
   await fsp.rm(mediaStagingPath(token), { force: true });
+}
+
+/** Retire a finished session: drop the payload, keep the sidecar carrying the
+ *  row it produced. A duplicate PUT (the client timed out, or a proxy ate the
+ *  reply) then replays that answer instead of 404-ing an upload that worked.
+ *  The reaper clears the sidecar a day later. */
+export async function finishMediaSession(
+  token: string,
+  session: MediaSession,
+  media: BuildMediaView
+): Promise<void> {
+  await updateMediaSession(token, { ...session, done: media });
+  await fsp.rm(mediaStagingPath(token), { force: true });
+}
+
+// One in-flight request per token, so a retry that arrives while the request
+// it is retrying is still running waits instead of appending over it (two
+// appends at the same offset both pass the stat check and corrupt the file).
+// Chunks for one token are pinned to one slot by the front door, so a
+// per-process lock is the whole story (see deploy/nginx.conf).
+const sessionLocks = new Map<string, Promise<unknown>>();
+
+export function withMediaSession<T>(token: string, fn: () => Promise<T>): Promise<T> {
+  const prev = sessionLocks.get(token) ?? Promise.resolve();
+  // Runs whichever way the one in front settled: a failed request must not
+  // wedge the token for everything queued behind it.
+  const run = prev.then(fn, fn);
+  const gate: Promise<void> = run.then(
+    () => {},
+    () => {}
+  );
+  sessionLocks.set(token, gate);
+  void gate.then(() => {
+    if (sessionLocks.get(token) === gate) sessionLocks.delete(token);
+  });
+  return run;
 }
 
 async function reapStaleSessions(dir: string): Promise<void> {

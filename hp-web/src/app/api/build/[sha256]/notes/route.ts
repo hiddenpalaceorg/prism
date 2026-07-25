@@ -43,6 +43,6 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ sha256
   }
 
   const note = await insertNote(pool, sha256, body, contributor.name);
-  revalidateBuildPages(sha256, target.name);
+  await revalidateBuildPages(sha256, target.name);
   return Response.json({ note });
 }

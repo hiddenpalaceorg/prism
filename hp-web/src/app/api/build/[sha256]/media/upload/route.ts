@@ -16,8 +16,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Uploads per contributor per hour. Generous for a photo session of one
-// build, tight enough to stop a script hosing the bucket.
-const CREATE_LIMIT = 60;
+// build, tight enough to stop a script hosing the bucket. A real session is a
+// disc's worth of screenshots plus front/back/media scans, and a retried file
+// spends another slot, so this sits well above what one sitting needs: the
+// client cannot recover from a 429 the way it recovers from a dropped chunk.
+const CREATE_LIMIT = 240;
 const CREATE_WINDOW_MS = 3600_000;
 
 // POST /api/build/<sha256>/media/upload { kind, filename, size, label? }:
