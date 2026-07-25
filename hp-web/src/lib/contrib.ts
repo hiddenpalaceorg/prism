@@ -3,10 +3,10 @@
 // (wiki group or shared token) can also touch private builds and other
 // people's contributions.
 
-import { revalidatePath } from "next/cache";
 import type { NextRequest } from "next/server";
 import type { Pool } from "pg";
 import { getModerator } from "./auth";
+import { revalidateEverywhere } from "./revalidate";
 import { buildHref } from "./slug";
 import { wikiUserFromCookies } from "./wiki-auth";
 
@@ -74,8 +74,8 @@ export async function contributionTarget(pool: Pool, sha256: string): Promise<Co
   return (r.rows[0] as ContributionTarget) ?? null;
 }
 
-/** Surface a contribution on the ISR-cached build page right away. */
+/** Surface a contribution on the ISR-cached build page right away, on every
+ *  app slot (see lib/revalidate.ts). */
 export function revalidateBuildPages(sha256: string, name: string): void {
-  revalidatePath(buildHref(sha256, name));
-  revalidatePath(`/builds/${sha256}`);
+  revalidateEverywhere([buildHref(sha256, name), `/builds/${sha256}`]);
 }

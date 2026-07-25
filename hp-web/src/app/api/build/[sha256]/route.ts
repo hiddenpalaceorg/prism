@@ -1,9 +1,9 @@
 import type { NextRequest } from "next/server";
-import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { deriveQueryFeatures } from "@/lib/fingerprint";
 import { getBuild, findSimilar, findByEmbeddingOf, getLotBuilds, updateBuildMeta, setLotPrivate, setBuildGame } from "@/lib/queries";
 import { getModerator, requireModerator } from "@/lib/auth";
+import { revalidateEverywhere } from "@/lib/revalidate";
 import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
 
@@ -139,7 +139,6 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
   // section on every sibling page (in the lot joined and the one left), so
   // refresh those too — including private siblings, whose pages stay
   // reachable by direct URL.
-  revalidatePath("/builds");
   const touched = new Set([
     buildHref(sha256, prev.name),
     buildHref(sha256, fields.name ?? prev.name),
@@ -155,10 +154,12 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
   for (const lot of lotsTouched) {
     for (const b of await getLotBuilds(pool, lot, true)) touched.add(buildHref(b.sha256, b.name));
   }
+  const paths = new Set(["/builds"]);
   for (const path of touched) {
-    revalidatePath(path);
-    revalidatePath(`${path}/assets`);
+    paths.add(path);
+    paths.add(`${path}/assets`);
   }
+  revalidateEverywhere(paths);
   return Response.json({
     sha256,
     name: fields.name ?? prev.name,

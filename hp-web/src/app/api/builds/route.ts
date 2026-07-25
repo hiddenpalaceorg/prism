@@ -1,8 +1,8 @@
 import type { NextRequest } from "next/server";
-import { revalidatePath } from "next/cache";
 import { getPool } from "@/lib/db";
 import { bulkUpdateBuilds } from "@/lib/queries";
 import { requireModerator } from "@/lib/auth";
+import { revalidateEverywhere } from "@/lib/revalidate";
 import { buildHref } from "@/lib/slug";
 import { isSha256 } from "@/lib/validate";
 
@@ -72,13 +72,14 @@ export async function POST(request: NextRequest) {
 
   // Build pages are ISR-cached; surface the new chips now. The game pages
   // themselves are dynamic and need no revalidation.
-  revalidatePath("/builds");
+  const touched = new Set(["/builds"]);
   for (const b of updated) {
     for (const path of [buildHref(b.sha256, b.name), `/builds/${b.sha256}`]) {
-      revalidatePath(path);
-      revalidatePath(`${path}/assets`);
+      touched.add(path);
+      touched.add(`${path}/assets`);
     }
   }
+  revalidateEverywhere(touched);
 
   return Response.json({
     updated: updated.length,

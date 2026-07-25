@@ -15,6 +15,12 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  // Which build directory this process uses. Production serves the app from
+  // two slots off one checkout (.next-a and .next-b, see deploy/slots.sh), so
+  // a deploy can rebuild and swap one while the other keeps serving; each slot
+  // sets NEXT_DIST_DIR for both its build and its `next start`. Unset in dev
+  // and CI, which keep writing plain .next.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // cube ships TS/TSX source with "use client" directives (workspace package).
   transpilePackages: ["cube"],
   // Keep file tracing rooted at the workspace, not misdetected via lockfiles.

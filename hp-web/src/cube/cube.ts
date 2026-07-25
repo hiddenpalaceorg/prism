@@ -2,9 +2,9 @@
 // mirroring lib/db.ts getPool(). Server-only.
 
 import { join } from "node:path";
-import { revalidatePath } from "next/cache";
 import { createCube, cubeNativeAuth, localDirStorage, type Cube } from "cube";
 import { getPool } from "@/lib/db";
+import { revalidateEverywhere } from "@/lib/revalidate";
 import { hpComponents } from "./schemas";
 
 let instance: Cube | undefined;
@@ -30,14 +30,16 @@ export function getCube(): Cube {
       },
       onInvalidate: (tags, pages) => {
         // Wiki pages live at root; revalidate the edited page and every page
-        // whose queries depend on the changed objects.
+        // whose queries depend on the changed objects, on both app slots.
+        const paths = new Set<string>();
         for (const tag of tags) {
           const m = /^cube:page:main:(.+)$/.exec(tag);
-          if (m) revalidatePath(`/${m[1]}`);
+          if (m) paths.add(`/${m[1]}`);
         }
         for (const p of pages) {
-          revalidatePath(p.ns === "main" ? `/${p.slug}` : `/${nsPrefix(p.ns)}:${p.slug}`);
+          paths.add(p.ns === "main" ? `/${p.slug}` : `/${nsPrefix(p.ns)}:${p.slug}`);
         }
+        revalidateEverywhere(paths);
       },
     });
   }
