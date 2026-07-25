@@ -19,7 +19,7 @@ import type { ComponentSpec, Registry } from "../schema/index";
 
 /* ---- helpers -------------------------------------------------------------- */
 
-/** Minimal DOM surface used by parse rules (cube's tsconfig carries no DOM lib). */
+/** Minimal DOM surface used by parse rules; TipTap types `el` loosely here. */
 type DomElement = {
   getAttribute(name: string): string | null;
 };
@@ -69,7 +69,7 @@ export const WikiLinkNode = Node.create({
       {
         "data-cube-wikilink": target,
         ...(label !== null && { "data-label": label }),
-        class: "cube-ed-wikilink",
+        class: "cube-editor-wikilink",
       },
       label !== null && label !== "" ? label : target,
     ];
@@ -91,7 +91,7 @@ export const ImageNode = Node.create({
     return [{ tag: "img[src]" }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ["img", { ...HTMLAttributes, class: "cube-ed-image" }];
+    return ["img", { ...HTMLAttributes, class: "cube-editor-image" }];
   },
 });
 
@@ -118,7 +118,7 @@ export const CubeUnknown = Node.create({
   },
   renderHTML({ node }) {
     const raw = node.attrs.raw as string;
-    return ["div", { "data-cube-unknown": raw, class: "cube-ed-unknown" }, truncate(raw, 160)];
+    return ["div", { "data-cube-unknown": raw, class: "cube-editor-unknown" }, truncate(raw, 160)];
   },
 });
 
@@ -144,7 +144,7 @@ export const CubeUnknownInline = Node.create({
   },
   renderHTML({ node }) {
     const raw = node.attrs.raw as string;
-    return ["span", { "data-cube-unknown": raw, class: "cube-ed-unknown cube-ed-inline" }, truncate(raw, 60)];
+    return ["span", { "data-cube-unknown": raw, class: "cube-editor-unknown cube-editor-inline" }, truncate(raw, 60)];
   },
 });
 
@@ -169,7 +169,7 @@ export const CubeRawBlock = Node.create({
   },
   renderHTML({ node }) {
     const raw = node.attrs.raw as string;
-    return ["div", { "data-cube-raw": raw, class: "cube-ed-raw" }, raw];
+    return ["div", { "data-cube-raw": raw, class: "cube-editor-raw" }, raw];
   },
 });
 
@@ -233,17 +233,17 @@ export function componentNode(spec: ComponentSpec): Node {
       const summary = attrSummary(node.attrs as Record<string, unknown>);
       const label = `<${spec.name}>` + (summary === "" ? "" : ` ${summary}`);
       if (inline) {
-        return ["span", { ...meta, class: "cube-ed-component cube-ed-inline" }, label];
+        return ["span", { ...meta, class: "cube-editor-component cube-editor-inline" }, label];
       }
       if (content !== undefined) {
         return [
           "div",
-          { ...meta, class: "cube-ed-component" },
-          ["div", { class: "cube-ed-component-head", contenteditable: "false" }, label],
-          ["div", { class: "cube-ed-component-body" }, 0],
+          { ...meta, class: "cube-editor-component" },
+          ["div", { class: "cube-editor-component-head", contenteditable: "false" }, label],
+          ["div", { class: "cube-editor-component-body" }, 0],
         ];
       }
-      return ["div", { ...meta, class: "cube-ed-component" }, label];
+      return ["div", { ...meta, class: "cube-editor-component" }, label];
     },
   });
 }

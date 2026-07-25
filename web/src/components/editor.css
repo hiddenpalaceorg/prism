@@ -1,0 +1,158 @@
+/*
+ * Editor styling, Tailwind idiom throughout. cube ships the editor components
+ * but zero CSS: they emit cube-editor-* state markers and plain elements, and
+ * this site supplies the whole look - same arrangement as the article side in
+ * app/[...slug]/wiki.css. Markers exist only where the element cannot identify
+ * the role on its own, so most rules here select by structure.
+ */
+@reference "../app/globals.css";
+
+.cube-editor {
+  @apply space-y-3;
+}
+
+/* ---- mode tabs ---- */
+
+.cube-editor-tabs {
+  @apply flex gap-1 text-sm;
+}
+.cube-editor-tabs button {
+  @apply rounded-t border border-b-0 border-transparent px-3 py-1 text-neutral-500;
+}
+/* Hover feedback belongs to the tab you can switch to, not the current one. */
+.cube-editor-tabs button:not([aria-pressed="true"]) {
+  @apply hover:text-neutral-800 dark:hover:text-neutral-200;
+}
+.cube-editor-tabs button[aria-pressed="true"] {
+  @apply border-neutral-300 bg-white font-medium text-inherit dark:border-neutral-700 dark:bg-neutral-950;
+}
+
+/* ---- source mode ---- */
+
+.cube-editor-source {
+  @apply h-[32rem] w-full resize-y rounded border border-neutral-300 bg-white p-3 font-mono text-sm leading-relaxed dark:border-neutral-700 dark:bg-neutral-950;
+}
+
+/* ---- visual mode ---- */
+
+.cube-editor-surface {
+  @apply min-h-[32rem] rounded border border-neutral-300 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950;
+}
+.cube-editor-loading {
+  @apply py-12 text-center text-sm text-neutral-500;
+}
+.cube-editor-visual {
+  @apply space-y-2;
+}
+
+.cube-editor-toolbar {
+  @apply flex flex-wrap items-center gap-1.5;
+}
+.cube-editor-toolbar button, .cube-editor-toolbar select {
+  @apply rounded border border-neutral-300 px-2 py-1 text-sm leading-none dark:border-neutral-700;
+  @apply hover:bg-neutral-100 dark:hover:bg-neutral-800;
+}
+.cube-editor-toolbar select {
+  @apply bg-transparent;
+}
+
+.cube-editor-content {
+  @apply min-h-[32rem] w-full rounded border border-neutral-300 bg-white p-3 text-sm leading-relaxed dark:border-neutral-700 dark:bg-neutral-950;
+  @apply focus:outline-none;
+}
+
+/* TipTap's Placeholder extension marks the empty first paragraph; attr() has
+   no utility form, so the content declaration stays raw. */
+.cube-editor-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-neutral-400 dark:text-neutral-500;
+}
+
+.cube-editor-content table {
+  @apply border-collapse;
+}
+.cube-editor-content th, .cube-editor-content td {
+  @apply min-w-12 border border-neutral-200 px-2 py-0.5 dark:border-neutral-800;
+}
+
+/* ---- document markers (emitted by cube's editor nodes) ---- */
+
+.cube-editor-component {
+  @apply my-2 rounded border border-slate-400 bg-slate-400/8 px-1.5 py-0.5 dark:border-slate-600;
+}
+.cube-editor-component-head {
+  @apply select-none font-mono text-xs text-slate-500 dark:text-slate-400;
+}
+/* A component with no body renders as its label alone. */
+.cube-editor-component:not(.cube-editor-inline):not(:has(.cube-editor-component-body)) {
+  @apply font-mono text-xs text-slate-500 dark:text-slate-400;
+}
+/* my-0/py-0 undo the block rules above: an inline chip sits in the text flow. */
+.cube-editor-component.cube-editor-inline, .cube-editor-unknown.cube-editor-inline {
+  @apply mx-px my-0 inline whitespace-nowrap px-1 py-0 font-mono text-xs;
+}
+
+.cube-editor-unknown {
+  @apply rounded border border-dashed border-amber-500 bg-amber-500/8 px-1.5 py-0.5 font-mono text-xs whitespace-pre-wrap;
+}
+
+.cube-editor-raw {
+  @apply rounded border border-dashed border-slate-400 px-1.5 py-0.5 font-mono text-xs whitespace-pre-wrap text-slate-500 dark:border-slate-600 dark:text-slate-400;
+}
+
+.cube-editor-wikilink {
+  @apply rounded-sm bg-blue-600/8 px-0.5 text-blue-600 dark:text-blue-400;
+}
+
+/* ---- validation, conflicts, errors ---- */
+
+.cube-editor-parse-error {
+  @apply rounded border border-amber-500 bg-amber-50 px-3 py-2 text-sm dark:bg-amber-950;
+}
+.cube-editor-parse-error ul {
+  @apply mt-1 list-disc pl-5;
+}
+
+.cube-editor-issues {
+  @apply rounded border border-neutral-300 text-sm dark:border-neutral-700;
+}
+.cube-editor-issues li {
+  @apply flex gap-2 border-b border-neutral-200 px-3 py-1.5 last:border-b-0 dark:border-neutral-800;
+}
+.cube-editor-issue-error {
+  @apply text-red-600 dark:text-red-400;
+}
+.cube-editor-issue-warning {
+  @apply text-amber-600 dark:text-amber-400;
+}
+.cube-editor-issue-line {
+  @apply text-neutral-500;
+}
+
+.cube-editor-conflict {
+  @apply rounded border border-amber-500 bg-amber-50 px-3 py-2 text-sm dark:bg-amber-950;
+}
+.cube-editor-error {
+  @apply rounded border border-red-500 bg-red-50 px-3 py-2 text-sm dark:bg-red-950;
+}
+.cube-editor-conflict a, .cube-editor-error a {
+  @apply underline;
+}
+
+/* ---- save bar ---- */
+
+.cube-editor-actions {
+  @apply flex flex-wrap items-center gap-3 border-t border-neutral-200 pt-3 dark:border-neutral-800;
+}
+.cube-editor-actions input[type="text"] {
+  @apply min-w-64 flex-1 rounded border border-neutral-300 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-950;
+}
+.cube-editor-actions label {
+  @apply flex items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400;
+}
+.cube-editor-save {
+  @apply rounded bg-neutral-900 px-4 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900;
+}
+.cube-editor-cancel {
+  @apply text-sm text-neutral-500 hover:underline;
+}
