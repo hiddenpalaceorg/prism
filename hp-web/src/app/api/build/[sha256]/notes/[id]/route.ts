@@ -57,7 +57,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
 
   const note = await updateNote(getPool(), r.sha256, r.noteId, body);
   if (!note) return Response.json({ error: "not found" }, { status: 404 });
-  revalidateBuildPages(r.sha256, r.name);
+  await revalidateBuildPages(r.sha256, r.name);
   return Response.json({ note });
 }
 
@@ -66,6 +66,6 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ sha2
   const r = await resolveNote(request, ctx);
   if (!r.ok) return r.response;
   await deleteNote(getPool(), r.sha256, r.noteId);
-  revalidateBuildPages(r.sha256, r.name);
+  await revalidateBuildPages(r.sha256, r.name);
   return Response.json({ deleted: true });
 }

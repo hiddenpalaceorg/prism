@@ -13,7 +13,21 @@ interface Upload {
   key: number;
   label: string;
   pct: number;
+  /** Waiting for a slot in the upload window. */
+  queued: boolean;
+  /** Set while backing off between attempts, e.g. "retrying 2/6". */
+  retry?: string;
   error?: string;
+}
+
+/** What a failed upload needs to pick up where it stopped. The token is kept
+ *  because the session on the server still holds the bytes already sent: a
+ *  retry resumes at that offset instead of re-uploading from zero. */
+interface Job {
+  key: number;
+  file: File;
+  kind: MediaKind;
+  token?: string;
 }
 
 interface Props {
@@ -23,6 +37,79 @@ interface Props {
 }
 
 const CHUNK = 8 * 1024 * 1024;
+
+// How many files upload at once. The bottleneck is one person's uplink, so a
+// wider window does not finish the batch sooner. It just makes every file
+// slower and every request likelier to sit past a proxy timeout. Picking 20
+// photos used to start 20 streams at once, which is where "flaky with several
+// files" came from.
+const CONCURRENCY = 3;
+
+// Every request in this protocol is safe to repeat: a chunk the server already
+// has answers 409 with the true offset, and a session whose row exists replays
+// its reply. So a dropped connection, a rate-limit reply, or a slot restarting
+// mid-deploy is worth waiting out rather than losing the file for.
+const MAX_ATTEMPTS = 6;
+const RETRY_BASE_MS = 700;
+const RETRY_CAP_MS = 15_000;
+const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+// One refresh once the batch settles, not one per file: concurrent refreshes
+// race, and the loser can be an older payload that drops just-uploaded items
+// back off the page.
+const REFRESH_DEBOUNCE_MS = 800;
+
+// A 409 moves the client to whatever the server actually holds, in either
+// direction (a chunk that never landed rewinds it). That makes a plain
+// monotonic check the wrong guard, so a run of them with no chunk accepted in
+// between is what counts as going nowhere.
+const MAX_STALLS = 5;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** An upload that stopped. `resumable` false means the server rejected the
+ *  file outright (format, size, permission) and dropped the session with it,
+ *  so there is nothing left to offer to resume. */
+class UploadError extends Error {
+  constructor(
+    message: string,
+    readonly resumable: boolean
+  ) {
+    super(message);
+  }
+}
+
+function retryDelay(attempt: number, retryAfter: string | null): number {
+  const ra = Number(retryAfter);
+  if (Number.isFinite(ra) && ra > 0) return Math.min(ra * 1000, 60_000);
+  // Jittered, so files that tripped the same limit together do not all come
+  // back in lockstep and trip it again.
+  return Math.min(RETRY_BASE_MS * 2 ** attempt, RETRY_CAP_MS) * (0.5 + Math.random());
+}
+
+/** fetch that rides out the failures the resume protocol exists to absorb.
+ *  Returns the first reply that is not a transient failure (and the last one
+ *  when the attempts run out, so the caller reports the server's own error),
+ *  throws only when the request could not be made at all. */
+async function sendWithRetry(
+  url: string,
+  init: RequestInit,
+  onRetry: (note: string) => void
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const last = attempt + 1 >= MAX_ATTEMPTS;
+    try {
+      const res = await fetch(url, init);
+      if (!RETRYABLE.has(res.status) || last) return res;
+      onRetry(`retrying ${attempt + 2}/${MAX_ATTEMPTS}`);
+      await sleep(retryDelay(attempt, res.headers.get("retry-after")));
+    } catch (e) {
+      if (last) throw e instanceof Error ? e : new Error(String(e));
+      onRetry(`retrying ${attempt + 2}/${MAX_ATTEMPTS}`);
+      await sleep(retryDelay(attempt, null));
+    }
+  }
+}
 
 const SECTIONS: Array<{
   kind: MediaKind;
@@ -61,12 +148,22 @@ const SECTIONS: Array<{
 // Community media gallery + uploader. Uploads go in 8MB chunks (the chunk
 // route resumes on 409), so even long captures pass the proxy body limit.
 // Gating here is cosmetic: the routes re-check the wiki session server-side.
+//
+// A finished file is drawn from the row the upload itself returned, not from a
+// re-render of the page. The build page is ISR-cached and served by either app
+// slot, so waiting on a refresh to see your own upload is a race the uploader
+// used to lose often enough that a hard reload was the reliable way to see it.
 export default function MediaSection({ sha256, items, skips }: Props) {
   const router = useRouter();
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
+  const [added, setAdded] = useState<BuildMediaView[]>([]);
   const [note, setNote] = useState("");
   const nextKey = useRef(1);
+  const queue = useRef<Job[]>([]);
+  const failed = useRef(new Map<number, Job>());
+  const running = useRef(0);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,47 +176,129 @@ export default function MediaSection({ sha256, items, skips }: Props) {
     };
   }, []);
 
+  useEffect(() => () => void (refreshTimer.current && clearTimeout(refreshTimer.current)), []);
+
   const loggedIn = !!viewer?.name || !!viewer?.moderator;
 
   const patchUpload = (key: number, patch: Partial<Upload>) =>
     setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...patch } : x)));
 
-  async function uploadFile(file: File, kind: MediaKind) {
-    const key = nextKey.current++;
-    setUploads((u) => [...u, { key, label: file.name, pct: 0 }]);
-    try {
-      const create = await fetch(`/api/build/${sha256}/media/upload`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, filename: file.name, size: file.size }),
+  function scheduleRefresh() {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      router.refresh();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+
+  function enqueue(jobs: Job[]) {
+    queue.current.push(...jobs);
+    pump();
+  }
+
+  function pump() {
+    while (running.current < CONCURRENCY && queue.current.length > 0) {
+      const job = queue.current.shift()!;
+      running.current++;
+      patchUpload(job.key, { queued: false });
+      void runJob(job).finally(() => {
+        running.current--;
+        pump();
       });
-      const cj = await create.json().catch(() => ({}));
-      if (!create.ok) throw new Error(cj.error ?? create.statusText);
+    }
+  }
+
+  async function runJob(job: Job) {
+    const { key, file, kind } = job;
+    const onRetry = (retry: string) => patchUpload(key, { retry });
+    try {
+      let token = job.token;
+      if (!token) {
+        // A create that succeeded but whose reply was lost is retried here and
+        // opens a second session. The orphan holds no bytes and the reaper
+        // clears it. Losing the file instead would be the worse trade.
+        const create = await sendWithRetry(
+          `/api/build/${sha256}/media/upload`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind, filename: file.name, size: file.size }),
+          },
+          onRetry
+        );
+        const cj = await create.json().catch(() => ({}));
+        if (!create.ok) throw new UploadError(cj.error ?? create.statusText, create.status >= 500);
+        token = cj.token as string;
+        job.token = token; // a later retry resumes this session
+      }
 
       let offset = 0;
       let stalls = 0;
+      let media: BuildMediaView | undefined;
       for (;;) {
+        patchUpload(key, { retry: undefined });
         const end = Math.min(offset + CHUNK, file.size);
-        const res = await fetch(`/api/build/${sha256}/media/upload/${cj.token}?offset=${offset}`, {
-          method: "PUT",
-          body: file.slice(offset, end),
-        });
+        const res = await sendWithRetry(
+          `/api/build/${sha256}/media/upload/${token}?offset=${offset}`,
+          { method: "PUT", body: file.slice(offset, end) },
+          onRetry
+        );
         const j = await res.json().catch(() => ({}));
         if (res.status === 409 && typeof j.offset === "number") {
-          if (++stalls > 3 && j.offset <= offset) throw new Error("upload stalled");
+          if (++stalls > MAX_STALLS) throw new UploadError("upload stalled", true);
           offset = j.offset;
+          patchUpload(key, { pct: offset / file.size });
           continue;
         }
-        if (!res.ok) throw new Error(j.error ?? res.statusText);
-        if (j.done) break;
+        if (!res.ok) {
+          // Resumable only if the session survived: a 4xx here is the server
+          // refusing the file itself, and it drops the session saying so.
+          throw new UploadError(j.error ?? res.statusText, res.status >= 500 || res.status === 429);
+        }
+        stalls = 0;
+        if (j.done) {
+          media = j.media as BuildMediaView | undefined;
+          break;
+        }
         offset = typeof j.offset === "number" ? j.offset : end;
         patchUpload(key, { pct: offset / file.size });
       }
+      // Finalised without a row: nothing to draw, and resuming is right, because
+      // the session replays its answer once it has one.
+      if (!media) throw new UploadError("upload finished without a record", true);
+
+      failed.current.delete(key);
       setUploads((u) => u.filter((x) => x.key !== key));
-      router.refresh();
+      setAdded((a) => (a.some((m) => m.id === media.id) ? a : [...a, media]));
+      scheduleRefresh();
     } catch (e) {
-      patchUpload(key, { error: e instanceof Error ? e.message : String(e) });
+      if (!(e instanceof UploadError) || e.resumable) failed.current.set(key, job);
+      patchUpload(key, { retry: undefined, error: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  function start(files: File[], kind: MediaKind) {
+    const jobs: Job[] = [];
+    const rows: Upload[] = [];
+    for (const file of files) {
+      const key = nextKey.current++;
+      if (file.size === 0) {
+        rows.push({ key, label: file.name, pct: 0, queued: false, error: "file is empty" });
+        continue;
+      }
+      jobs.push({ key, file, kind });
+      rows.push({ key, label: file.name, pct: 0, queued: true });
+    }
+    setUploads((u) => [...u, ...rows]);
+    enqueue(jobs);
+  }
+
+  function retryUpload(key: number) {
+    const job = failed.current.get(key);
+    if (!job) return;
+    failed.current.delete(key);
+    patchUpload(key, { error: undefined, retry: undefined, queued: true });
+    enqueue([job]);
   }
 
   async function remove(id: number) {
@@ -130,6 +309,7 @@ export default function MediaSection({ sha256, items, skips }: Props) {
       setNote(`Error: ${j.error ?? res.statusText}`);
       return;
     }
+    setAdded((a) => a.filter((m) => m.id !== id));
     router.refresh();
   }
 
@@ -145,10 +325,17 @@ export default function MediaSection({ sha256, items, skips }: Props) {
       setNote(`Error: ${j.error ?? res.statusText}`);
       return;
     }
+    setAdded((a) => a.map((m) => (m.id === id ? { ...m, label } : m)));
     router.refresh();
   }
 
-  const total = items.length;
+  // Server rows plus uploads this page finished that a refresh has not brought
+  // back yet (see the note on the component). Reconciled here rather than by an
+  // effect, so an item is never briefly in both lists or in neither.
+  const serverIds = new Set(items.map((m) => m.id));
+  const pending = added.filter((m) => !serverIds.has(m.id));
+  const shown = pending.length === 0 ? items : [...items, ...pending];
+  const total = shown.length;
   return (
     <section className="mt-8">
       <h2 className="text-lg font-medium">
@@ -159,7 +346,7 @@ export default function MediaSection({ sha256, items, skips }: Props) {
       )}
       <div className="mt-3 grid gap-8">
         {SECTIONS.map((s) => {
-          const mine = items.filter((m) => m.kind === s.kind);
+          const mine = shown.filter((m) => m.kind === s.kind);
           const skipped = skips[s.skipKey] && mine.length === 0;
           return (
             <div key={s.kind}>
@@ -170,7 +357,7 @@ export default function MediaSection({ sha256, items, skips }: Props) {
                     label={s.add}
                     accept={s.accept}
                     multiple={s.multiple}
-                    onFiles={(files) => files.forEach((f) => uploadFile(f, s.kind))}
+                    onFiles={(files) => start(files, s.kind)}
                   />
                 )}
               </div>
@@ -233,17 +420,32 @@ export default function MediaSection({ sha256, items, skips }: Props) {
               {u.error ? (
                 <>
                   <span className="text-red-500">{u.error}</span>
+                  {failed.current.has(u.key) && (
+                    <button
+                      onClick={() => retryUpload(u.key)}
+                      title="Resume from where it stopped"
+                      className="text-neutral-400 hover:text-neutral-600"
+                    >
+                      retry
+                    </button>
+                  )}
                   <button
-                    onClick={() => setUploads((x) => x.filter((y) => y.key !== u.key))}
+                    onClick={() => {
+                      failed.current.delete(u.key);
+                      setUploads((x) => x.filter((y) => y.key !== u.key));
+                    }}
                     className="text-neutral-400 hover:text-neutral-600"
                   >
                     dismiss
                   </button>
                 </>
+              ) : u.queued ? (
+                <span className="text-neutral-400">queued</span>
               ) : (
                 <>
                   <progress value={u.pct} max={1} className="h-1.5 w-40" />
                   <span className="tabular-nums">{Math.round(u.pct * 100)}%</span>
+                  {u.retry && <span className="text-amber-600 dark:text-amber-500">{u.retry}</span>}
                 </>
               )}
             </li>

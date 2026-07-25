@@ -7,6 +7,7 @@ import { extractStill } from "@/lib/ffmpeg";
 import {
   MEDIA_NS,
   dropMediaSession,
+  finishMediaSession,
   hashFile,
   inferMediaLabel,
   insertMedia,
@@ -16,6 +17,7 @@ import {
   readMediaSession,
   sniffMedia,
   updateMediaSession,
+  withMediaSession,
 } from "@/lib/media";
 import { isSha256 } from "@/lib/validate";
 
@@ -32,6 +34,12 @@ const MAX_CHUNK_BYTES = 32 * 1024 * 1024;
 // resume. When the staged bytes reach the claimed size the file is hashed,
 // stored under the media/ namespace (with a poster still for videos), and
 // recorded; the response carries { done: true, media }.
+//
+// Every step here is safe to repeat, because the client retries: an offset the
+// server has already consumed answers 409 with the truth, and a session whose
+// row already exists replays { done: true } rather than 404-ing bytes that did
+// in fact land. One token is served one request at a time (withMediaSession),
+// so a retry arriving alongside the request it is retrying queues behind it.
 export async function PUT(
   request: NextRequest,
   ctx: { params: Promise<{ sha256: string; token: string }> }
@@ -45,10 +53,49 @@ export async function PUT(
   if (!gate.ok) return gate.response;
   const { target } = gate;
 
+  const offset = Number(request.nextUrl.searchParams.get("offset") ?? "0");
+
+  // Advisory pre-check, before the body is pulled over the wire. A resume, or
+  // a retry of a chunk that did land, is answered from what is already on disk:
+  // making a client push 8MB only to be told 409 is the wrong move on exactly
+  // the flaky connections this protocol exists for. Racy by nature (no lock
+  // yet), so it only ever short-circuits. The binding checks are in append().
+  const known = await readMediaSession(token);
+  if (known && known.build === sha256) {
+    if (known.done) return Response.json({ done: true, media: known.done });
+    const st = await fsp.stat(mediaStagingPath(token)).catch(() => null);
+    if (st && st.size < known.size && offset !== st.size) {
+      return Response.json({ offset: st.size }, { status: 409 });
+    }
+  }
+
+  // Read the body outside the lock: it streams from the client, and holding
+  // the token while it arrives would serialise a retry behind the very request
+  // it is meant to overtake. A client that stalls mid-body would wedge its own
+  // rescue for the whole client_body_timeout.
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_CHUNK_BYTES) {
+    return Response.json({ error: "chunk too large" }, { status: 413 });
+  }
+  const chunk = Buffer.from(await request.arrayBuffer());
+
+  return withMediaSession(token, () => append(pool, sha256, token, target, chunk, offset));
+}
+
+async function append(
+  pool: ReturnType<typeof getPool>,
+  sha256: string,
+  token: string,
+  target: { name: string },
+  chunk: Buffer,
+  offset: number
+): Promise<Response> {
   const session = await readMediaSession(token);
   if (!session || session.build !== sha256) {
     return Response.json({ error: "no such upload session" }, { status: 404 });
   }
+  // Already finalised: hand back the same row this session produced.
+  if (session.done) return Response.json({ done: true, media: session.done });
   const staging = mediaStagingPath(token);
   const st = await fsp.stat(staging).catch(() => null);
   if (!st) return Response.json({ error: "no such upload session" }, { status: 404 });
@@ -59,17 +106,11 @@ export async function PUT(
   }
 
   if (staged < session.size) {
-    const offset = Number(request.nextUrl.searchParams.get("offset") ?? "0");
     if (!Number.isInteger(offset) || offset < 0) {
       return Response.json({ error: "invalid offset" }, { status: 400 });
     }
     if (offset !== staged) return Response.json({ offset: staged }, { status: 409 });
 
-    const declared = Number(request.headers.get("content-length") ?? "0");
-    if (declared > MAX_CHUNK_BYTES) {
-      return Response.json({ error: "chunk too large" }, { status: 413 });
-    }
-    const chunk = Buffer.from(await request.arrayBuffer());
     if (!chunk.length) return Response.json({ error: "empty chunk" }, { status: 400 });
     if (chunk.length > MAX_CHUNK_BYTES) {
       return Response.json({ error: "chunk too large" }, { status: 413 });
@@ -118,8 +159,8 @@ export async function PUT(
   }
   const blobSha = await hashFile(staging);
 
-  let poster: string | null = null;
-  if (session.contentType.startsWith("video/")) {
+  let poster = session.poster ?? null;
+  if (session.poster === undefined && session.contentType.startsWith("video/")) {
     const posterTmp = `${staging}.poster.jpg`;
     try {
       await extractStill(staging, posterTmp);
@@ -130,10 +171,19 @@ export async function PUT(
       await fsp.rm(posterTmp, { force: true });
       poster = null;
     }
+    // Remember the verdict either way, so a retried finalize does not run
+    // ffmpeg over a multi-hundred-MB capture again.
+    session.poster = poster;
+    await updateMediaSession(token, session);
   }
 
-  await storeBlobFromFile(blobSha, staging, { ns: MEDIA_NS });
-  await dropMediaSession(token);
+  // keepSource: the staged bytes stay put until the row exists. Storing is
+  // content-addressed and idempotent, so a retry after a failed insert redoes
+  // it for free, whereas consuming the file here would strand an upload whose
+  // blob landed but whose insert did not, with nothing left to retry from.
+  // Costs the local backend a copy where it used to rename (the s3 backend
+  // this runs on in production streams the file and never consumed it anyway).
+  await storeBlobFromFile(blobSha, staging, { ns: MEDIA_NS, keepSource: true });
 
   const row = await insertMedia(pool, {
     build_sha256: sha256,
@@ -146,6 +196,10 @@ export async function PUT(
     author: session.author,
     label: session.kind === "physical" ? (session.label ?? inferMediaLabel(session.filename)) : null,
   });
-  revalidateBuildPages(sha256, target.name);
-  return Response.json({ done: true, media: mediaView(row) });
+  const media = mediaView(row);
+  await finishMediaSession(token, session, media);
+  // Awaited: the client refreshes the build page the moment it reads this, and
+  // that refresh can land on either slot.
+  await revalidateBuildPages(sha256, target.name);
+  return Response.json({ done: true, media });
 }

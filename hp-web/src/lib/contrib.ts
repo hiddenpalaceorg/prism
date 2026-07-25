@@ -75,7 +75,9 @@ export async function contributionTarget(pool: Pool, sha256: string): Promise<Co
 }
 
 /** Surface a contribution on the ISR-cached build page right away, on every
- *  app slot (see lib/revalidate.ts). */
-export function revalidateBuildPages(sha256: string, name: string): void {
-  revalidateEverywhere([buildHref(sha256, name), `/builds/${sha256}`]);
+ *  app slot (see lib/revalidate.ts). Await the result before answering a
+ *  browser that will refresh the page on the reply, or its refresh can beat
+ *  the mirror to the sibling slot and render the pre-contribution page. */
+export function revalidateBuildPages(sha256: string, name: string): Promise<void> {
+  return revalidateEverywhere([buildHref(sha256, name), `/builds/${sha256}`]);
 }

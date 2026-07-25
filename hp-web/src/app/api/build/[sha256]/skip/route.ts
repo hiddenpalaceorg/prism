@@ -48,6 +48,6 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ sha25
   if (!target) return Response.json({ error: "not found" }, { status: 404 });
 
   const saved = await upsertSkip(pool, sha256, flags);
-  revalidateBuildPages(sha256, target.name);
+  await revalidateBuildPages(sha256, target.name);
   return Response.json({ sha256, ...saved });
 }
