@@ -1,0 +1,7 @@
+# Paths whose changes need the owner's review.
+#
+# The deploy workflow runs on a self-hosted runner, as the user that owns the
+# hiddenpalace.org wiki install on that box. Editing it is how someone would
+# widen its triggers and reach that shell from a fork, so it does not change
+# without a review here.
+/.github/workflows/deploy-hpwiki.yml @drx
