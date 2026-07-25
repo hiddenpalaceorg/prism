@@ -211,17 +211,6 @@ export const RegionDate = defineComponent({
   },
 });
 
-export const TcrfLink = defineComponent({
-  name: "TcrfLink",
-  // Renders as a standalone panel on real pages ({{Tcrf link}} sits alone
-  // under a heading), so block despite looking chip-like.
-  placement: "block",
-  description: "Panel linking to the matching tcrf.net article",
-  attrs: {
-    page: { type: "string", required: true },
-  },
-});
-
 export const hpComponents: ComponentSpec[] = [
   Prototype,
   Board,
@@ -234,5 +223,4 @@ export const hpComponents: ComponentSpec[] = [
   GameNav,
   HardwareSystem,
   RegionDate,
-  TcrfLink,
 ];

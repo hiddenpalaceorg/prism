@@ -1,13 +1,13 @@
 /**
  * Hidden Palace template mapping tests. The mapping lives with the site
- * components in web/src/cube/mapping.ts; MapCtx is stubbed here (warnings
+ * components in src/cube/mapping.ts; MapCtx is stubbed here (warnings
  * collected, parseDate a fixed table, parseCalls a tiny brace splitter).
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AskQuery, MapCtx, TemplateCall, WarningCode } from "../src/import/mediawiki/types";
-import { hpMapping, mapAsk } from "../../web/src/cube/mapping";
+import type { AskQuery, MapCtx, TemplateCall, WarningCode } from "cube/import/mediawiki";
+import { hpMapping, mapAsk } from "../src/cube/mapping";
 
 // ---------------------------------------------------------------------------
 // MapCtx stub
@@ -29,9 +29,15 @@ function tinyParseCalls(wikitext: string): Array<string | TemplateCall> {
       let depth = 1;
       let j = i + 2;
       while (j < wikitext.length && depth > 0) {
-        if (wikitext.startsWith("{{", j)) (depth++, (j += 2));
-        else if (wikitext.startsWith("}}", j)) (depth--, (j += 2));
-        else j++;
+        if (wikitext.startsWith("{{", j)) {
+          depth++;
+          j += 2;
+        } else if (wikitext.startsWith("}}", j)) {
+          depth--;
+          j += 2;
+        } else {
+          j++;
+        }
       }
       if (depth !== 0) break; // unbalanced: rest is text
       if (i > textStart) out.push(wikitext.slice(textStart, i));
@@ -51,9 +57,13 @@ function parseCall(inner: string): TemplateCall {
   let depth = 0;
   let start = 0;
   for (let i = 0; i < inner.length; i++) {
-    if (inner.startsWith("{{", i)) (depth++, i++);
-    else if (inner.startsWith("}}", i)) (depth--, i++);
-    else if (inner[i] === "|" && depth === 0) {
+    if (inner.startsWith("{{", i)) {
+      depth++;
+      i++;
+    } else if (inner.startsWith("}}", i)) {
+      depth--;
+      i++;
+    } else if (inner[i] === "|" && depth === 0) {
       segs.push(inner.slice(start, i));
       start = i + 1;
     }
@@ -350,19 +360,12 @@ test("Video embed extracts the YouTube id from URL forms and bare ids", () => {
   }
 });
 
-test("top-level RegionDate and Tcrf link map to inline components", () => {
+test("top-level RegionDate maps to an inline component", () => {
   const { ctx } = makeCtx();
   const rd = componentOf(hpMapping.map(tpl("RegionDate", { "1": "JP", "2": " Nov 21, 1992 " }), ctx));
   assert.equal(rd.name, "RegionDate");
   assert.equal(rd.placement, "inline");
   assert.deepEqual(rd.attrs, { region: "JP", date: "Nov 21, 1992" });
-
-  const tcrf = componentOf(
-    hpMapping.map(tpl("Tcrf link", { "1": " Proto:Sonic the Hedgehog 2 (Genesis)/Nick Arcade Prototype" }), ctx),
-  );
-  assert.equal(tcrf.name, "TcrfLink");
-  assert.equal(tcrf.placement, "block"); // standalone panel on real pages
-  assert.deepEqual(tcrf.attrs, { page: "Proto:Sonic the Hedgehog 2 (Genesis)/Nick Arcade Prototype" });
 });
 
 test("Prototype Footer unwraps the nested Navbox prototype into GameNav", () => {

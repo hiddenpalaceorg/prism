@@ -18,10 +18,12 @@ type Props = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
+/** A positive integer from a query param, else undefined. Rejects "", NaN,
+ *  negatives and fractions rather than passing them down to SQL. */
 function num(v: string | string[] | undefined): number | undefined {
-  if (typeof v !== "string") return undefined;
+  if (typeof v !== "string" || v.trim() === "") return undefined;
   const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
 export default async function RecentChangesPage({ searchParams }: Props) {
@@ -34,7 +36,7 @@ export default async function RecentChangesPage({ searchParams }: Props) {
   });
 
   return (
-    <main>
+    <main className="mx-auto max-w-5xl px-4 py-6">
       <h1 className="mb-4 text-2xl font-semibold">
         Recent changes{user ? `: ${user}` : ""}
       </h1>

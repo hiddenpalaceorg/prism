@@ -9,7 +9,7 @@
 // surface here is markdown in, markdown out. Emits cube-editor-* state markers
 // only; the host supplies every style (see the styling note in README).
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import {
   buildExtensions,
@@ -26,9 +26,20 @@ export type VisualEditorProps = {
   /** Site component specs; cube built-ins are always included. */
   specs?: ComponentSpec[];
   placeholder?: string;
+  /** Filled with a function that cancels the pending debounce, emits the
+   *  current markdown through onChange and returns it (null when nothing is
+   *  pending). The host calls it before saving so keystrokes younger than the
+   *  debounce window are not dropped. */
+  flushRef?: RefObject<(() => string | null) | null>;
 };
 
-export default function VisualEditor({ markdown, onChange, specs, placeholder }: VisualEditorProps) {
+export default function VisualEditor({
+  markdown,
+  onChange,
+  specs,
+  placeholder,
+  flushRef,
+}: VisualEditorProps) {
   const registry = useMemo(
     () => createRegistry([...builtinComponents, ...(specs ?? [])]),
     [specs],
@@ -48,12 +59,39 @@ export default function VisualEditor({ markdown, onChange, specs, placeholder }:
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (debounce.current) clearTimeout(debounce.current);
-    },
-    [],
-  );
+  // The newest document, parked by onUpdate. Held as ProseMirror JSON rather
+  // than markdown because serializing is the expensive half; emit() converts.
+  // Keeping it here (instead of reading the editor at flush time) is what makes
+  // flushing safe on unmount, where TipTap has already destroyed the instance.
+  const pendingDoc = useRef<PMDocJSON | null>(null);
+
+  const emit = useCallback((): string | null => {
+    if (debounce.current) {
+      clearTimeout(debounce.current);
+      debounce.current = null;
+    }
+    const doc = pendingDoc.current;
+    if (doc === null) return null;
+    pendingDoc.current = null;
+    const md = docToMarkdown(doc, registry);
+    onChangeRef.current(md);
+    return md;
+  }, [registry]);
+
+  const emitRef = useRef(emit);
+  emitRef.current = emit;
+
+  useEffect(() => {
+    if (!flushRef) return;
+    flushRef.current = () => emitRef.current();
+    return () => {
+      flushRef.current = null;
+    };
+  }, [flushRef]);
+
+  // Flush rather than discard: unmount is how switching back to source mode
+  // looks from here, and dropping the timer would lose the last edits.
+  useEffect(() => () => void emitRef.current(), []);
 
   const editor = useEditor(
     {
@@ -62,10 +100,9 @@ export default function VisualEditor({ markdown, onChange, specs, placeholder }:
       immediatelyRender: false,
       editorProps: { attributes: { class: "cube-editor-content" } },
       onUpdate({ editor: ed }) {
+        pendingDoc.current = ed.getJSON() as PMDocJSON;
         if (debounce.current) clearTimeout(debounce.current);
-        debounce.current = setTimeout(() => {
-          onChangeRef.current(docToMarkdown(ed.getJSON() as PMDocJSON, registry));
-        }, 300);
+        debounce.current = setTimeout(() => emitRef.current(), 300);
       },
     },
     [extensions, registry],

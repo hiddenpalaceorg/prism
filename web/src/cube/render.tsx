@@ -38,7 +38,6 @@ export async function renderWikiMarkdown(
     page,
     pageHref,
     bindings: hpBindings,
-    interwiki: { tcrf: "https://tcrf.net/$1" },
     resolveLinks: async (refs) => {
       if (refs.length === 0) return new Map();
       const res = await getPool().query(

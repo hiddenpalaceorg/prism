@@ -27,7 +27,6 @@ export function getCube(): Cube {
       site: {
         apiBasePath: "/api/cube",
         homeSlug: "Main_Page",
-        interwiki: { tcrf: "https://tcrf.net/$1" },
       },
       onInvalidate: (tags, pages) => {
         // Wiki pages live at root; revalidate the edited page and every page
@@ -46,7 +45,7 @@ export function getCube(): Cube {
 }
 
 export function nsPrefix(ns: string): string {
-  return ns.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()).replace(/ /g, "_");
+  return ns.replace(/^./, (c) => c.toUpperCase());
 }
 
 /** Root-relative URL for a page ref (the host owns the URL scheme). */

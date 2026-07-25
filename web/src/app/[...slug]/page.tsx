@@ -7,7 +7,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
-import { notFound, permanentRedirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { isTitleError, normalizeTitle } from "cube";
 import { getModeratorFromHeaders } from "@/lib/auth";
 import { getCube, pageHref } from "@/cube/cube";
@@ -64,7 +64,11 @@ export default async function WikiPage({ params, searchParams }: Props) {
   const sp0 = await searchParams;
   const editing = sp0.edit !== undefined;
 
-  const resolved = await cube.api.resolve(title);
+  // ?redirect=no lands on the redirect page itself instead of its target,
+  // which is what the "Redirected from" link offers.
+  const resolved = await cube.api.resolve(title, {
+    followRedirect: sp0.redirect !== "no",
+  });
   if (!resolved) {
     // Missing page: the edit view creates it; readers get a create prompt.
     const user = await cube.config.auth?.getUser({ headers: await headers() });
@@ -117,20 +121,28 @@ export default async function WikiPage({ params, searchParams }: Props) {
   if (requested !== canonical && (resolved.redirectedFrom ?? resolved).ns === "main") {
     const search = new URLSearchParams();
     for (const [k, v] of Object.entries(sp0)) {
-      if (typeof v === "string") search.set(k, v);
-      else if (v === undefined) search.set(k, "");
+      // Repeated params (?a=1&a=2) arrive as arrays; append each so the
+      // redirect does not silently drop them.
+      if (typeof v === "string") search.append(k, v);
+      else if (Array.isArray(v)) for (const one of v) search.append(k, one);
+      else search.append(k, "");
     }
     const qs = search.toString().replace(/=(?=&|$)/g, "");
-    permanentRedirect(canonical + (qs !== "" ? `?${qs}` : ""));
+    // Temporary, not permanent: the target depends on mutable redirect rows and
+    // page titles, and a cached 308 would outlive both.
+    redirect(canonical + (qs !== "" ? `?${qs}` : ""));
   }
 
-  const sp = sp0;
-  const view = editing ? "edit" : sp.history !== undefined ? "history" : sp.source !== undefined ? "source" : "read";
-  const revId = typeof sp.rev === "string" ? Number(sp.rev) : undefined;
+  const view = editing ? "edit" : sp0.history !== undefined ? "history" : sp0.source !== undefined ? "source" : "read";
+  // Only a positive integer selects a revision; anything else reads as "latest"
+  // and must not light up the "not current" banner (Number("abc") is NaN, and
+  // NaN !== undefined).
+  const revNum = typeof sp0.rev === "string" ? Number(sp0.rev) : NaN;
+  const revId = Number.isInteger(revNum) && revNum > 0 ? revNum : undefined;
 
   // Editing never follows redirects: editing a redirect edits the redirect.
   const target = editing ? { ns: ref.ns, slug: ref.slug } : resolved;
-  const page = await cube.api.getPage(target, revId ? { revId } : {});
+  const page = await cube.api.getPage(target, revId !== undefined ? { revId } : {});
   if (!page) notFound();
 
   if (page.visibility === "moderator") {

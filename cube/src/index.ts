@@ -118,7 +118,9 @@ export type SearchHit = {
 };
 
 export type CubeLocalApi = {
-  resolve(title: string): Promise<ResolveResult | null>;
+  /** `followRedirect: false` returns the page itself, so a reader can reach
+   *  a redirect page rather than its target (MediaWiki's ?redirect=no). */
+  resolve(title: string, opts?: { followRedirect?: boolean }): Promise<ResolveResult | null>;
   getPage(ref: { ns: string; slug: string }, opts?: { revId?: number }): Promise<Page | null>;
   savePage(input: SaveInput): Promise<SaveResult>;
   movePage(input: MoveInput): Promise<{ pageId: number }>;
@@ -157,10 +159,10 @@ export function createCube(config: CubeConfig): Cube {
   const saveContext: SaveContext = { registry, slug, ...(config.validate && { validate: config.validate }) };
 
   const api: CubeLocalApi = {
-    async resolve(title) {
+    async resolve(title, opts = {}) {
       const ref = normalizeTitle(title, slug);
       if (isTitleError(ref)) return null;
-      return resolveRef(pool(), ref);
+      return resolveRef(pool(), ref, opts.followRedirect !== false);
     },
 
     async getPage(ref, opts = {}) {
@@ -331,7 +333,11 @@ async function savePageDryRun(
   if (hasErrors(all) || all.length > 0) throw new CubeValidationError(all);
 }
 
-async function resolveRef(pool: Pool, ref: TitleRef): Promise<ResolveResult | null> {
+async function resolveRef(
+  pool: Pool,
+  ref: TitleRef,
+  followRedirect = true,
+): Promise<ResolveResult | null> {
   const page = await pool.query(
     `SELECT p.is_redirect, r.to_ns, r.to_slug
        FROM cube_page p
@@ -341,7 +347,7 @@ async function resolveRef(pool: Pool, ref: TitleRef): Promise<ResolveResult | nu
   );
   const row = page.rows[0];
   if (!row) return null;
-  if (row.is_redirect && row.to_slug) {
+  if (followRedirect && row.is_redirect && row.to_slug) {
     const target = await pool.query(
       `SELECT 1 FROM cube_page WHERE ns = $1 AND slug = $2 AND deleted_at IS NULL`,
       [row.to_ns, row.to_slug],

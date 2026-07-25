@@ -58,6 +58,8 @@ export default function WikiEditor({
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ head: number } | null>(null);
   const validateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Visual mode debounces its markdown; saving must not race that timer.
+  const flushVisual = useRef<(() => string | null) | null>(null);
 
   const validate = useCallback(
     (text: string) => {
@@ -89,6 +91,9 @@ export default function WikiEditor({
   }, [markdown, validate]);
 
   const save = async () => {
+    // Pending visual-mode edits first: `markdown` state can be up to one
+    // debounce window behind what the user sees.
+    const current = flushVisual.current?.() ?? markdown;
     setSaving(true);
     setError(null);
     setConflict(null);
@@ -97,7 +102,7 @@ export default function WikiEditor({
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          markdown,
+          markdown: current,
           comment,
           minor,
           ...(baseRevision !== null && { baseRevision }),
@@ -156,7 +161,7 @@ export default function WikiEditor({
       ) : (
         <div className="cube-editor-surface">
           <Suspense fallback={<div className="cube-editor-loading">Loading visual editor...</div>}>
-            <VisualEditor markdown={markdown} onChange={setMarkdown} specs={specs} />
+            <VisualEditor markdown={markdown} onChange={setMarkdown} specs={specs} flushRef={flushVisual} />
           </Suspense>
         </div>
       )}

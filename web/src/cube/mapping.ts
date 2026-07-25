@@ -16,7 +16,7 @@ import type {
   MappingResult,
   TemplateCall,
   TemplateMapping,
-} from "../../../cube/src/import/mediawiki/types";
+} from "cube/import/mediawiki";
 import { FileEntry, FileList } from "./schemas";
 
 // ---------------------------------------------------------------------------
@@ -373,13 +373,6 @@ export const hpMapping: TemplateMapping = {
           name: "RegionDate",
           attrs: { region: positional(call, 1), date: positional(call, 2) },
           placement: "inline",
-        };
-      case "tcrf link":
-        return {
-          kind: "component",
-          name: "TcrfLink",
-          attrs: { page: positional(call, 1) },
-          placement: "block",
         };
       case "prototype footer":
         return mapPrototypeFooter(call, ctx);

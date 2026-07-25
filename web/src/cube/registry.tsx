@@ -4,8 +4,8 @@
  * return plain JSON; Views are client-safe presentational functions.
  */
 
-import type { ReactNode } from "react";
-import type { QueryRow } from "cube";
+import { Fragment, type ReactNode } from "react";
+import { DEFAULT_SLUG_CONFIG, isTitleError, normalizeTitle, type QueryRow } from "cube";
 import type { ComponentBinding, ComponentViewProps, CubeRenderCtx } from "cube/react";
 
 /* ---- shared helpers ------------------------------------------------------ */
@@ -28,6 +28,17 @@ async function resolveMediaUrl(ctx: CubeRenderCtx, name: unknown): Promise<strin
   if (typeof name !== "string" || name === "" || !ctx.resolveMedia) return null;
   const map = await ctx.resolveMedia([name]);
   return map.get(name) ?? null;
+}
+
+/** Page-authored json attrs and json children arrive unvalidated from the
+ *  core, so anything rendered out of them is coerced through these first. */
+function text(v: unknown): string {
+  return typeof v === "string" ? v : v === undefined || v === null ? "" : String(v);
+}
+
+function int(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
 
 function str(v: unknown): string | undefined {
@@ -85,10 +96,132 @@ function LinkList({ links }: { links: PageLink[] }) {
   );
 }
 
+/* ---- inline wikitext in string attrs ------------------------------------- */
+
+// Imported infobox params carry MediaWiki inline markup inside plain string
+// attrs - "[[171-5694-01]]" for a board cross-reference, "<br>" between owners.
+// Rendered as React text children those show up as literal brackets and tags,
+// so the loader turns them into segments (plain JSON, per this module's
+// loader/View split) and RichText draws them.
+
+type RichSeg =
+  | { t: "text"; v: string }
+  | { t: "br" }
+  | { t: "link"; v: string; href: string; exists: boolean };
+
+type RichToken =
+  | { t: "text"; v: string }
+  | { t: "br" }
+  | { t: "link"; target: string; label: string };
+
+const INLINE_WIKITEXT = /\[\[([^\]|]+)(?:\|([^\]]*))?\]\]|<br\s*\/?>/gi;
+
+function hasInlineWikitext(v: unknown): v is string {
+  return typeof v === "string" && (v.includes("[[") || /<br\s*\/?>/i.test(v));
+}
+
+function tokenizeWikitext(src: string): RichToken[] {
+  const out: RichToken[] = [];
+  let last = 0;
+  for (const m of src.matchAll(INLINE_WIKITEXT)) {
+    const at = m.index;
+    if (at > last) out.push({ t: "text", v: src.slice(last, at) });
+    if (m[1] === undefined) {
+      out.push({ t: "br" });
+    } else {
+      const target = m[1].trim();
+      const label = (m[2] ?? "").trim();
+      out.push({ t: "link", target, label: label === "" ? target : label });
+    }
+    last = at + m[0].length;
+  }
+  if (last < src.length) out.push({ t: "text", v: src.slice(last) });
+  return out;
+}
+
+/** Segment the named string attrs, resolving every wikilink in one batch.
+ *  Attrs with no inline markup are omitted; the View falls back to the raw
+ *  string, which is already correct for them. */
+async function richAttrs(
+  ctx: CubeRenderCtx,
+  attrs: Record<string, unknown>,
+  keys: readonly string[],
+): Promise<Record<string, RichSeg[]>> {
+  const tokens = new Map<string, RichToken[]>();
+  for (const key of keys) {
+    const v = attrs[key];
+    if (hasInlineWikitext(v)) tokens.set(key, tokenizeWikitext(v));
+  }
+  if (tokens.size === 0) return {};
+
+  const slugCfg = ctx.slug ?? DEFAULT_SLUG_CONFIG;
+  const refs = new Map<string, { ns: string; slug: string }>();
+  for (const toks of tokens.values()) {
+    for (const t of toks) {
+      if (t.t !== "link" || refs.has(t.target)) continue;
+      const ref = normalizeTitle(t.target, slugCfg);
+      if (!isTitleError(ref)) refs.set(t.target, { ns: ref.ns, slug: ref.slug });
+    }
+  }
+  const existing =
+    ctx.resolveLinks && refs.size > 0
+      ? await ctx.resolveLinks([...refs.values()])
+      : new Map<string, boolean>();
+
+  const out: Record<string, RichSeg[]> = {};
+  for (const [key, toks] of tokens) {
+    out[key] = toks.map((t): RichSeg => {
+      if (t.t === "br") return { t: "br" };
+      if (t.t === "text") return { t: "text", v: t.v };
+      const ref = refs.get(t.target);
+      // An unparseable target keeps its label as prose rather than a dead link.
+      if (!ref) return { t: "text", v: t.label };
+      return {
+        t: "link",
+        v: t.label,
+        href: ctx.pageHref(ref),
+        exists: existing.get(`${ref.ns}:${ref.slug}`) ?? true,
+      };
+    });
+  }
+  return out;
+}
+
+function RichText({ segs }: { segs: RichSeg[] }) {
+  return (
+    <>
+      {segs.map((seg, i) => {
+        if (seg.t === "br") return <br key={i} />;
+        if (seg.t === "text") return <Fragment key={i}>{seg.v}</Fragment>;
+        return (
+          <a key={i} href={seg.href} className={seg.exists ? "hover:underline" : "cube-redlink"}>
+            {seg.v}
+          </a>
+        );
+      })}
+    </>
+  );
+}
+
+/** Row value: the segmented form when the loader produced one, else the raw
+ *  string. */
+function rich(map: Record<string, RichSeg[]> | undefined, key: string, raw?: string) {
+  const segs = map?.[key];
+  return segs ? <RichText segs={segs} /> : raw;
+}
+
 /* ---- Prototype ----------------------------------------------------------- */
+
+/** Prose attrs that carry imported inline wikitext (board/lot cross-references
+ *  and <br> separated ownership history). */
+const PROTOTYPE_RICH = [
+  "originType", "originLot", "originEproms", "originBoard", "originDiscType",
+  "originDevKit", "originLabels", "originFiles", "originDumpMethod", "originOwnership",
+] as const;
 
 type PrototypeData = {
   titleScreenUrl: string | null;
+  rich: Record<string, RichSeg[]>;
 };
 
 function PrototypeView({ attrs, data }: ComponentViewProps) {
@@ -121,25 +254,30 @@ function PrototypeView({ attrs, data }: ComponentViewProps) {
   };
   const d = (data ?? {}) as Partial<PrototypeData>;
 
-  const releaseDates = (Array.isArray(a.releaseDate) ? a.releaseDate : []).filter(
-    (r): r is { region?: string; date?: string } => typeof r === "object" && r !== null,
-  );
+  // releaseDate is a json-typed attr, which the core passes through
+  // unvalidated. Coerce both fields to strings so an object value cannot throw
+  // "Objects are not valid as a React child" and 500 the article.
+  const releaseDates = (Array.isArray(a.releaseDate) ? a.releaseDate : [])
+    .filter((r): r is Record<string, unknown> => Boolean(r) && typeof r === "object")
+    .map((r) => ({ region: text(r.region), date: text(r.date) }))
+    .filter((r) => r.region !== "" || r.date !== "");
   const origin = [
-    ["Type", a.originType],
-    ["Lot", a.originLot],
-    ["EPROMs", a.originEproms],
-    ["Board", a.originBoard],
-    ["Disc type", a.originDiscType],
-    ["Dev kit", a.originDevKit],
-    ["Labels", a.originLabels],
-    ["Files", a.originFiles],
-    ["Dump method", a.originDumpMethod],
-    ["Ownership", a.originOwnership],
+    ["Type", "originType", a.originType],
+    ["Lot", "originLot", a.originLot],
+    ["EPROMs", "originEproms", a.originEproms],
+    ["Board", "originBoard", a.originBoard],
+    ["Disc type", "originDiscType", a.originDiscType],
+    ["Dev kit", "originDevKit", a.originDevKit],
+    ["Labels", "originLabels", a.originLabels],
+    ["Files", "originFiles", a.originFiles],
+    ["Dump method", "originDumpMethod", a.originDumpMethod],
+    ["Ownership", "originOwnership", a.originOwnership],
   ] as const;
 
   return (
     <Infobox title={a.buildName ?? a.game ?? "Prototype"}>
       {d.titleScreenUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
         <img src={d.titleScreenUrl} alt={a.game ?? "Title screen"} className="w-full" />
       ) : null}
       <Row label="Build date" value={a.buildDate} />
@@ -149,9 +287,9 @@ function PrototypeView({ attrs, data }: ComponentViewProps) {
       <Row label="Released by" value={a.releasedBy?.join(", ")} />
       <Row label="File dump date" value={a.fileDumpDate} />
       <Row label="File release date" value={a.fileReleaseDate} />
-      {origin.some(([, v]) => v) ? <SectionHead>Origin</SectionHead> : null}
-      {origin.map(([label, value]) => (
-        <Row key={label} label={label} value={value} />
+      {origin.some(([, , v]) => v) ? <SectionHead>Origin</SectionHead> : null}
+      {origin.map(([label, key, value]) => (
+        <Row key={label} label={label} value={rich(d.rich, key, value)} />
       ))}
       <Row label="Game" value={a.game} />
       <Row label="System" value={a.system} />
@@ -180,6 +318,7 @@ function PrototypeView({ attrs, data }: ComponentViewProps) {
 type BoardData = {
   photoUrl: string | null;
   usedIn: PageLink[];
+  rich: Record<string, RichSeg[]>;
 };
 
 function BoardView({ attrs, data }: ComponentViewProps) {
@@ -199,12 +338,13 @@ function BoardView({ attrs, data }: ComponentViewProps) {
     <>
       <Infobox title={a.hardwareId ?? "Board"}>
         {d.photoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img src={d.photoUrl} alt={a.hardwareId ?? "Board photo"} className="w-full" />
         ) : null}
         <Row label="Type" value={a.hardwareType} />
         <Row label="Date" value={a.hardwareDate} />
         <Row label="Chips" value={a.chips?.join(", ")} />
-        <Row label="Text" value={a.text} />
+        <Row label="Text" value={rich(d.rich, "text", a.text)} />
         <Row label="System" value={a.system} />
         <Row label="Game" value={a.game} />
       </Infobox>
@@ -382,6 +522,37 @@ type HexDumpAnnotation = {
   value: string;
 };
 
+// childrenJson is page-authored and only checked for JSON validity by the
+// core validator (children: "json" carries no shape), so every field is
+// coerced here. Without this a page saying {"lines":[{}]} throws inside a
+// server component and 500s the whole article.
+
+function coerceHexDump(
+  payload: unknown,
+): { lines: HexDumpLine[]; annotations: HexDumpAnnotation[] } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const d = payload as { lines?: unknown; annotations?: unknown };
+  if (!Array.isArray(d.lines) || d.lines.length === 0) return null;
+  const lines = d.lines.map((l) => {
+    const row = (l && typeof l === "object" ? l : {}) as Record<string, unknown>;
+    return {
+      offset: text(row.offset),
+      bytes: text(row.bytes),
+      ...(row.ascii === undefined ? {} : { ascii: text(row.ascii) }),
+    };
+  });
+  const annotations = (Array.isArray(d.annotations) ? d.annotations : [])
+    .filter((a): a is Record<string, unknown> => Boolean(a) && typeof a === "object")
+    .map((a) => ({
+      line: int(a.line),
+      start: int(a.start),
+      length: int(a.length),
+      field: text(a.field),
+      value: text(a.value),
+    }));
+  return { lines, annotations };
+}
+
 function HexDumpRow({
   line,
   annotations,
@@ -436,13 +607,9 @@ function HexDumpRow({
 }
 
 function HexDumpView({ children, childrenJson }: ComponentViewProps) {
-  const d =
-    childrenJson && typeof childrenJson === "object"
-      ? (childrenJson as { lines?: unknown; annotations?: unknown })
-      : null;
-  const lines = d && Array.isArray(d.lines) ? (d.lines as HexDumpLine[]) : null;
+  const dump = coerceHexDump(childrenJson);
 
-  if (!lines || lines.length === 0) {
+  if (!dump) {
     // Malformed or missing payload: fall back to whatever the core rendered.
     return (
       <div className="my-4 max-h-96 overflow-auto rounded border border-neutral-300 bg-neutral-50 text-xs dark:border-neutral-700 dark:bg-neutral-900">
@@ -450,8 +617,7 @@ function HexDumpView({ children, childrenJson }: ComponentViewProps) {
       </div>
     );
   }
-  const annotations =
-    d && Array.isArray(d.annotations) ? (d.annotations as HexDumpAnnotation[]) : [];
+  const { lines, annotations } = dump;
 
   return (
     <details className="my-4 rounded border border-neutral-300 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900">
@@ -516,6 +682,7 @@ function HardwareSystemView({ data }: ComponentViewProps) {
           className="w-40 rounded border border-neutral-300 bg-neutral-50 p-2 text-center text-sm dark:border-neutral-700 dark:bg-neutral-900"
         >
           {b.photoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
             <img src={b.photoUrl} alt={b.title} className="mx-auto max-h-32 w-auto" />
           ) : (
             <div className="grid h-32 place-items-center text-neutral-400">no photo</div>
@@ -542,26 +709,17 @@ function RegionDateView({ attrs }: ComponentViewProps) {
   );
 }
 
-function TcrfLinkView({ attrs }: ComponentViewProps) {
-  const a = attrs as { page?: string };
-  const page = a.page ?? "";
-  return (
-    <a
-      href={`https://tcrf.net/${encodeURI(page.replace(/ /g, "_"))}`}
-      rel="nofollow noopener"
-      className="inline-block rounded border border-neutral-300 px-1.5 py-0.5 text-xs dark:border-neutral-700"
-    >
-      TCRF: {page}
-    </a>
-  );
-}
 
 /* ---- bindings --------------------------------------------------------------------- */
 
 export const hpBindings: Record<string, ComponentBinding> = {
   Prototype: {
     async loader(attrs, ctx): Promise<PrototypeData> {
-      return { titleScreenUrl: await resolveMediaUrl(ctx, attrs.titleScreen) };
+      const [titleScreenUrl, rich] = await Promise.all([
+        resolveMediaUrl(ctx, attrs.titleScreen),
+        richAttrs(ctx, attrs, PROTOTYPE_RICH),
+      ]);
+      return { titleScreenUrl, rich };
     },
     View: PrototypeView,
   },
@@ -569,9 +727,12 @@ export const hpBindings: Record<string, ComponentBinding> = {
   Board: {
     async loader(attrs, ctx): Promise<BoardData> {
       const hardwareId = str(attrs.hardwareId);
-      const photoUrl = await resolveMediaUrl(ctx, attrs.photo);
+      const [photoUrl, rich] = await Promise.all([
+        resolveMediaUrl(ctx, attrs.photo),
+        richAttrs(ctx, attrs, ["text"]),
+      ]);
       const runQuery = ctx.runQuery;
-      if (!runQuery || !hardwareId) return { photoUrl, usedIn: [] };
+      if (!runQuery || !hardwareId) return { photoUrl, usedIn: [], rich };
       const res = await runQuery({
         from: "Prototype",
         where: { origin_board: hardwareId },
@@ -579,7 +740,7 @@ export const hpBindings: Record<string, ComponentBinding> = {
         limit: 175,
       });
       const usedIn = res.kind === "rows" ? res.rows.map((r) => toLink(ctx, r)) : [];
-      return { photoUrl, usedIn };
+      return { photoUrl, usedIn, rich };
     },
     View: BoardView,
   },
@@ -655,6 +816,4 @@ export const hpBindings: Record<string, ComponentBinding> = {
   },
 
   RegionDate: { View: RegionDateView },
-
-  TcrfLink: { View: TcrfLinkView },
 };

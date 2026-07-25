@@ -9,14 +9,27 @@ import { useRouter, useSearchParams } from "next/navigation";
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  // Only same-site relative paths: a single leading slash but not "//" (which
-  // is protocol-relative and would redirect off-site). Blocks open-redirect.
   const nextParam = params.get("next") ?? "/";
-  const next = nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "/";
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Same-origin destinations only. A prefix check is not enough: the URL spec
+  // folds backslashes into slashes for special schemes, so "/\evil.com" parses
+  // as an authority and slips past a startsWith("//") test. Resolve against the
+  // real origin, compare, and keep only the path so nothing else rides along.
+  // Computed here, not in the body: client components still render on the
+  // server, where `window` does not exist.
+  const safeNext = (): string => {
+    try {
+      const url = new URL(nextParam, window.location.origin);
+      if (url.origin !== window.location.origin) return "/";
+      return url.pathname + url.search + url.hash;
+    } catch {
+      return "/";
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +42,7 @@ function LoginForm() {
         body: JSON.stringify({ name, password }),
       });
       if (res.ok) {
-        router.push(next);
+        router.push(safeNext());
         router.refresh();
         return;
       }

@@ -222,7 +222,9 @@ export async function listRecentChanges(
   pool: Pool,
   opts: { limit?: number; before?: number; user?: string } = {},
 ): Promise<RecentChange[]> {
-  const limit = Math.min(opts.limit ?? 50, 500);
+  // Clamp both ends: the caller's value comes from a query string, and
+  // Postgres rejects a negative or fractional LIMIT outright.
+  const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 50) || 50, 1), 500);
   const res = await pool.query(
     `SELECT r.id, p.ns, p.slug, p.title, r.author_name, r.comment, r.minor,
             r.wikitext_fallback, r.created_at,
