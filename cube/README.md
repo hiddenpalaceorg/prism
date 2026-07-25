@@ -57,6 +57,12 @@ npm test          # node --test; integration suites need local Postgres
 npm run typecheck
 ```
 
+`npm run typecheck` makes two passes. The second uses `tsconfig.server.json`,
+which drops the DOM lib and excludes `src/react` and `src/editor`. The base
+config needs DOM for those two directories, and without a separate pass a stray
+`document` or `window` in a module that runs under Node would typecheck clean
+and then fail at runtime.
+
 Schema DDL lives in `db/migrations` (idempotent, additive). The package ships
 TypeScript source and expects `transpilePackages: ["cube"]` in the host's Next
 config. Client code must import the `cube/schema`, `cube/react`, or

@@ -1,11 +1,3 @@
-// The server half of cube, typechecked without the DOM lib.
-//
-// The base config carries DOM because src/react and src/editor genuinely run in
-// a browser. That would otherwise hand the same globals to the modules that run
-// under Node - the parser, validator, query layer, save path, git export, HTTP
-// handlers - where a stray `document` or `window` typechecks clean and then
-// throws in production. Excluding the browser directories here keeps that
-// guardrail; `npm run typecheck` runs both passes.
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
