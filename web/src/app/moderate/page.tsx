@@ -15,6 +15,8 @@ interface Submission {
   system: string;
   file_count: number;
   lot: string | null;
+  photo_sha256: string | null;
+  photo_url: string | null;
 }
 
 const FILTERS = ["queued", "accepted", "rejected", ""] as const;
@@ -210,6 +212,25 @@ export default function Moderate() {
                     Reject
                   </button>
                 </div>
+              )}
+              {s.photo_sha256 && (
+                <a
+                  href={s.photo_url ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Front photo of the physical media"
+                  className="shrink-0"
+                >
+                  {/* Photos are multi-MB scans: draw the cell from the server-scaled
+                      thumb (lanczos), not the original. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`/api/media/${s.photo_sha256}/thumb?w=500`}
+                    alt="Front photo"
+                    loading="lazy"
+                    className="h-14 w-14 rounded-md border border-neutral-200 object-cover dark:border-neutral-800"
+                  />
+                </a>
               )}
             </li>
           ))}
