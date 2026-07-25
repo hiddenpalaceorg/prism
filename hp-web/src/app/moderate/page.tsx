@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { buildHref } from "@/lib/slug";
 
 interface Submission {
@@ -19,7 +20,10 @@ interface Submission {
   photo_url: string | null;
 }
 
-const FILTERS = ["queued", "accepted", "rejected", ""] as const;
+// Each filter is its own URL (?status=accepted) so the accepted list can be
+// linked and bookmarked, not just clicked into. "all" is a UI label only: the
+// API takes no status at all for it.
+const FILTERS = ["queued", "accepted", "rejected", "all"] as const;
 
 interface Whoami {
   moderator: boolean;
@@ -27,8 +31,11 @@ interface Whoami {
   via?: "token" | "wiki";
 }
 
-export default function Moderate() {
-  const [status, setStatus] = useState<string>("queued");
+function Moderate() {
+  const params = useSearchParams();
+  const raw = params.get("status") ?? "queued";
+  const filter = (FILTERS as readonly string[]).includes(raw) ? raw : "queued";
+  const status = filter === "all" ? "" : filter;
   const [items, setItems] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -145,17 +152,17 @@ export default function Moderate() {
 
       <div className="mt-4 flex gap-2">
         {FILTERS.map((f) => (
-          <button
-            key={f || "all"}
-            onClick={() => setStatus(f)}
+          <Link
+            key={f}
+            href={`/moderate?status=${f}`}
             className={`rounded-md px-3 py-1 text-sm ${
-              status === f
+              filter === f
                 ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
                 : "border border-neutral-300 dark:border-neutral-700"
             }`}
           >
-            {f || "all"}
-          </button>
+            {f}
+          </Link>
         ))}
       </div>
 
@@ -237,6 +244,14 @@ export default function Moderate() {
         </ul>
       </div>
     </main>
+  );
+}
+
+export default function ModeratePage() {
+  return (
+    <Suspense>
+      <Moderate />
+    </Suspense>
   );
 }
 
