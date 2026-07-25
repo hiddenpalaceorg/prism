@@ -2,6 +2,7 @@
 
 import type { Pool } from "pg";
 import { minhashJaccard, arrayLit, type QueryFeatures, type AudioTrack } from "./fingerprint";
+import { mediaUrl } from "./media";
 import { slugify, gameSlug } from "./slug";
 import { tlshDiff } from "./tlsh";
 import type { BuildRecord, SimilarityResult } from "./types";
@@ -1073,6 +1074,13 @@ export interface SubmissionListItem {
   file_count: number;
   /** Lot of the ingested build (accepted submissions only; set by moderators after accept). */
   lot: string | null;
+  /** Front physical-media photo of the ingested build, when one is uploaded:
+   *  the media blob's hash, for a thumbnail. Media hangs off a build row, so
+   *  this stays null until a submission is accepted (duplicates excepted —
+   *  their image is already in the library). */
+  photo_sha256: string | null;
+  /** Serving URL for that photo's original bytes. */
+  photo_url: string | null;
 }
 
 /// List submissions (optionally filtered by status), newest first.
@@ -1084,13 +1092,27 @@ export async function listSubmissions(pool: Pool, status?: string, limit = 200):
             q.record->'image'->>'name'         AS name,
             q.record->'info'->>'system'        AS system,
             (q.record->'structural'->>'file_count')::bigint AS file_count,
-            b.lot
+            b.lot,
+            photo.sha256 AS photo_sha256, photo.content_type AS photo_content_type
      FROM submission_queue q
-     LEFT JOIN builds b ON b.sha256 = q.sha256 ${where}
+     LEFT JOIN builds b ON b.sha256 = q.sha256
+     -- The build's front photo (first front-labeled one in upload order, else
+     -- the first photo of any label), same preference the OG card uses.
+     LEFT JOIN LATERAL (
+       SELECT m.sha256, m.content_type FROM build_media m
+       WHERE m.build_sha256 = q.sha256 AND m.kind = 'physical'
+       ORDER BY (m.label IS NOT DISTINCT FROM 'front') DESC, m.created_at, m.id
+       LIMIT 1
+     ) photo ON TRUE
+     ${where}
      ORDER BY q.submitted_at DESC LIMIT $${status ? 2 : 1}`,
     params
   );
-  return r.rows as SubmissionListItem[];
+  const rows = r.rows as Array<SubmissionListItem & { photo_content_type: string | null }>;
+  return rows.map(({ photo_content_type, ...s }) => ({
+    ...s,
+    photo_url: s.photo_sha256 && photo_content_type ? mediaUrl(s.photo_sha256, photo_content_type) : null,
+  }));
 }
 
 /** A name this build's image has circulated under besides its own (an
