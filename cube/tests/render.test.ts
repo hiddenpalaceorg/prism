@@ -59,16 +59,16 @@ test("markdown basics render", async () => {
 
 test("wiki links: existing, red, labeled, interwiki", async () => {
   const { html } = await render(
-    "See [[Existing Page]] and [[Missing|the missing one]] and [[tcrf:Proto:Sonic 2]].\n",
+    "See [[Existing Page]] and [[Missing|the missing one]] and [[example:Proto:Sonic 2]].\n",
     {
-      interwiki: { tcrf: "https://tcrf.net/$1" },
+      interwiki: { example: "https://example.org/$1" },
       resolveLinks: async (refs) =>
         new Map(refs.map((r) => [`${r.ns}:${r.slug}`, r.slug === "Existing_Page"])),
     },
   );
   assert.match(html, /<a href="\/Existing_Page">Existing Page<\/a>/);
   assert.match(html, /<a href="\/Missing" className="cube-redlink">the missing one<\/a>/);
-  assert.match(html, /<a href="https:\/\/tcrf\.net\/Proto:Sonic_2" className="cube-interwiki">/);
+  assert.match(html, /<a href="https:\/\/example\.org\/Proto:Sonic_2" className="cube-interwiki">/);
 });
 
 test("raw html renders escaped as text, not elements", async () => {

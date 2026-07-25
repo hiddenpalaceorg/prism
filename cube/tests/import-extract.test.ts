@@ -32,7 +32,7 @@ function findByName(
 test("sonic fixture: transclusions, extensions, categories", { skip: !HAVE_FIXTURES && "parsoid fixtures not present" }, () => {
   const result = extractHtml(loadFixtureHtml("sonic2_nick_arcade"));
 
-  // Prototype, Download, Tcrf link, filelist, Prototype Footer.
+  // Prototype, Download, an external-wiki link, filelist, Prototype Footer.
   assert.equal(result.transclusions.length, 5);
 
   const proto = findByName(result, "Prototype");
