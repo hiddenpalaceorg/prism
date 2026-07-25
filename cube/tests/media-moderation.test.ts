@@ -63,7 +63,9 @@ const API = "http://cube.test/api/cube";
 function req(
   method: string,
   path: string,
-  opts: { body?: unknown; headers?: Record<string, string>; bytes?: Uint8Array } = {},
+  // Uint8Array<ArrayBuffer>, not the ArrayBufferLike default: DOM's BufferSource
+  // (BodyInit) is pinned to ArrayBuffer since typed arrays became generic.
+  opts: { body?: unknown; headers?: Record<string, string>; bytes?: Uint8Array<ArrayBuffer> } = {},
 ) {
   return new Request(`${API}${path}`, {
     method,

@@ -30,6 +30,14 @@ import { normalizeAttrs } from "../schema/index";
 import { DEFAULT_SLUG_CONFIG, isTitleError, normalizeTitle, type SlugConfig } from "../slug";
 import { DEFAULT_INTRINSIC_TAGS } from "../validate";
 
+// The editing path. These are "use client" modules; they live behind the same
+// entrypoint as the render path because the only boundary a subpath should
+// encode is server-vs-client capability, and neither half reaches the database.
+// TipTap loads through a dynamic import inside WikiEditor, so it lands in its
+// own chunk rather than the initial one.
+export { default as WikiEditor, type WikiEditorProps } from "./WikiEditor";
+export { default as VisualEditor, type VisualEditorProps } from "./VisualEditor";
+
 export type ComponentViewProps = {
   attrs: Record<string, unknown>;
   data?: unknown;

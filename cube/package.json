@@ -18,10 +18,6 @@
       "types": "./src/react/index.tsx",
       "default": "./src/react/index.tsx"
     },
-    "./editor": {
-      "types": "./src/editor/index.ts",
-      "default": "./src/editor/index.ts"
-    },
     "./mcp": {
       "types": "./src/mcp/index.ts",
       "default": "./src/mcp/index.ts"
@@ -37,7 +33,7 @@
   },
   "scripts": {
     "test": "node --import tsx --test tests/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json"
   },
   "peerDependencies": {
     "pg": ">=8",

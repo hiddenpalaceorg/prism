@@ -1,5 +1,11 @@
 /**
- * cube/editor: the visual (TipTap) editor layer.
+ * The visual editor layer. INTERNAL: not a package entrypoint.
+ *
+ * TipTap is an implementation detail we expect to replace, so nothing
+ * ProseMirror-shaped (node classes, PM document JSON) is part of cube's public
+ * API - hosts consume the editor as `<WikiEditor>` from cube/react, whose
+ * surface is markdown in, markdown out and survives an engine swap.
+ * markdownToDoc/docToMarkdown are the seam that does not.
  *
  * The canonical round trip is:
  *   markdown -> parseDocument (mdast) -> mdastToDoc -> ProseMirror JSON
@@ -15,18 +21,9 @@ import { parseDocument } from "../parse";
 import type { Registry } from "../schema/index";
 import { mdastToDoc, type PMDocJSON } from "./from-mdast";
 
-export {
-  buildExtensions,
-  componentNode,
-  CubeRawBlock,
-  CubeUnknown,
-  CubeUnknownInline,
-  ImageNode,
-  WikiLinkNode,
-  type BuildExtensionsOptions,
-} from "./extensions";
-export { mdastToDoc, type PMDocJSON, type PMMarkJSON, type PMNodeJSON } from "./from-mdast";
-export { docToMarkdown, serializeMdast } from "./to-markdown";
+export { buildExtensions, type BuildExtensionsOptions } from "./extensions";
+export { mdastToDoc, type PMDocJSON } from "./from-mdast";
+export { docToMarkdown } from "./to-markdown";
 // Re-exported so client code can build a registry without importing the
 // server-side "cube" root module.
 export { builtinComponents } from "../builtins";
