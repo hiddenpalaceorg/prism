@@ -1,0 +1,163 @@
+name: Deploy hpwiki
+
+# Ships main to the production box (hpwiki) through a self-hosted runner that
+# lives on that box, so nothing has to reach in over SSH.
+#
+# SECURITY, read before editing: the runner executes as the user that owns the
+# hiddenpalace.org MediaWiki install and can read the app's .env.local. This
+# repo is PUBLIC, so a fork-controlled trigger here would hand that user's
+# shell to anyone who opens a pull request. Only `push` to main and a manual
+# dispatch may reach the runner. Never add pull_request, pull_request_target,
+# issue_comment, or a workflow_call to this file, and never give another
+# workflow a `self-hosted` job.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time, and never cancel a running one: it stops the server
+# partway through the swap.
+concurrency:
+  group: deploy-hpwiki
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: build, swap, verify
+    # Forks have no such runner, and a queued job there would hang forever.
+    if: github.repository == 'hiddenpalaceorg/prism'
+    runs-on: [self-hosted, hpwiki]
+    timeout-minutes: 30
+    env:
+      APP: /home/thedrx/curator-web
+      PORT: "6800"
+      SESSION: deploy
+      BOT_SESSION: bot
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The box's Node is what serves the app, so build with it rather than a
+      # runner-managed toolchain: same binary, same native modules.
+      - name: put the box's node on PATH
+        run: echo "$HOME/node22/bin" >> "$GITHUB_PATH"
+
+      # Workspace root install, so the `cube` workspace package resolves
+      # locally instead of hitting the unrelated registry package of that name.
+      - name: install workspace deps
+        run: npm ci
+
+      - name: typecheck and tests
+        working-directory: web
+        run: |
+          npx tsc --noEmit
+          npm test
+
+      # Build once here, while the live server is still up, purely as a gate:
+      # a broken build must never be the thing that takes the site down. The
+      # build needs DATABASE_URL (build-time page generation reads Postgres),
+      # which only exists in the server's own .env.local.
+      - name: preflight build
+        working-directory: web
+        run: |
+          ln -sfn "$APP/.env.local" .env.local
+          npm run build
+
+      # Everything the server runs, straight from the tree that just passed:
+      # source, plus the exact node_modules npm installed here. Syncing the
+      # modules is what keeps the app dir from drifting into a hand-curated
+      # state. .env.local and asset-store are the server's own and must never
+      # be deleted (see the never-wipe rules in the deploy skill).
+      - name: sync tree into the app dir
+        run: |
+          rsync -a --delete \
+            --exclude node_modules --exclude .next --exclude .git \
+            --exclude tsconfig.tsbuildinfo --exclude .env.local \
+            --exclude asset-store \
+            web/ "$APP"/
+          rsync -a --delete --exclude /cube node_modules/ "$APP"/node_modules/
+          rsync -a --delete --exclude node_modules cube/ "$APP"/node_modules/cube/
+
+      - name: build, restart, verify
+        run: |
+          set -euo pipefail
+
+          start_app() {
+            tmux kill-session -t "$SESSION" 2>/dev/null || true
+            tmux new-session -d -s "$SESSION"
+            tmux send-keys -t "$SESSION" \
+              "export PATH=\$HOME/node22/bin:\$PATH; cd $APP; npx next start -p $PORT 2>&1 | tee ~/server.log" C-m
+            # if/fi rather than `grep && break`: a failing && compound under
+            # set -e would abort the script on the first not-yet-bound poll.
+            for _ in $(seq 1 15); do
+              if ss -ltn | grep -q ":$PORT"; then break; fi
+              sleep 1
+            done
+          }
+
+          verify() {
+            ss -ltn | grep -q ":$PORT" || return 1
+            # / alone can answer 200 with Postgres down, /builds cannot.
+            for path in / /builds; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT$path")
+              echo "  GET $path -> $code"
+              [ "$code" = 200 ] || return 1
+            done
+          }
+
+          # Hardlink copy, so keeping a rollback build costs no disk. The
+          # source tree is already the new code at this point, so a rollback
+          # leaves the tree ahead of the running build until the next green
+          # deploy. That is deliberate: serving beats matching.
+          rm -rf "$APP/.next.prev"
+          if [ -d "$APP/.next" ]; then cp -al "$APP/.next" "$APP/.next.prev"; fi
+
+          rollback() {
+            echo "::error::deploy failed, restoring the previous build"
+            rm -rf "$APP/.next"
+            if [ -d "$APP/.next.prev" ]; then mv "$APP/.next.prev" "$APP/.next"; fi
+            start_app
+            verify || echo "::error::rollback did not come up cleanly, check ~/server.log"
+            exit 1
+          }
+          trap rollback ERR
+
+          # next build rewrites .next, so the server has to be down for it.
+          # This is the only window where the site is unavailable (seconds).
+          tmux kill-session -t "$SESSION" 2>/dev/null || true
+          ( cd "$APP" && npm run build )
+          start_app
+          verify
+
+          trap - ERR
+          rm -rf "$APP/.next.prev"
+          echo "BUILD_ID=$(cat "$APP/.next/BUILD_ID")" >> "$GITHUB_ENV"
+
+      # The Discord bot runs the same tree, so it needs restarting too. Only
+      # where a DISCORD_TOKEN is configured, and a failure here does not roll
+      # the site back: the app is already up and verified.
+      - name: restart the discord bot
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          grep -q '^DISCORD_TOKEN=' "$APP/.env.local" || { echo "no DISCORD_TOKEN, skipped"; exit 0; }
+          tmux kill-session -t "$BOT_SESSION" 2>/dev/null || true
+          tmux new-session -d -s "$BOT_SESSION"
+          tmux send-keys -t "$BOT_SESSION" \
+            "export PATH=\$HOME/node22/bin:\$PATH; cd $APP; npm run bot 2>&1 | tee ~/bot.log" C-m
+          for _ in $(seq 1 20); do
+            if grep -q 'logged in as' ~/bot.log 2>/dev/null; then break; fi
+            sleep 1
+          done
+          grep -m1 'logged in as' ~/bot.log || { echo "bot did not log in:"; tail -5 ~/bot.log; exit 1; }
+
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### hpwiki deploy"
+            echo
+            echo "- commit: \`${GITHUB_SHA:0:12}\`"
+            echo "- build: \`${BUILD_ID:-none}\`"
+            echo "- result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
