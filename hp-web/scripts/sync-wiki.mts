@@ -3,11 +3,11 @@
 // save (wikitext fallback when conversion fails), remember the high-water
 // timestamp in a state file.
 //
-//   npx tsx web/scripts/sync-wiki.mts                 one pass (default)
-//   npx tsx web/scripts/sync-wiki.mts --loop 300      poll every 5 minutes
-//   npx tsx web/scripts/sync-wiki.mts --since 2026-07-20T00:00:00Z
+//   npx tsx hp-web/scripts/sync-wiki.mts                 one pass (default)
+//   npx tsx hp-web/scripts/sync-wiki.mts --loop 300      poll every 5 minutes
+//   npx tsx hp-web/scripts/sync-wiki.mts --since 2026-07-20T00:00:00Z
 //
-// Flags: --state <path>   state file (default web/.wiki-sync-state.json)
+// Flags: --state <path>   state file (default hp-web/.wiki-sync-state.json)
 //        --since <ts>     initial MW ISO timestamp (first run only; state wins)
 //        --loop <seconds> keep polling; --once is the default
 //        --limit <n>      max recent-change entries per pass (default 500)

@@ -253,12 +253,12 @@ jobs:
             gh api -X DELETE "repos/${GH_REPO}/releases/${id}"
           done
 
-  web:
-    name: web (tsc + tests)
+  hp-web:
+    name: hp-web (tsc + tests)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: web
+        working-directory: hp-web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -30,7 +30,7 @@ crates/prism-ffi/      UniFFI bridge over the core, used by the native GUIs
 crates/prism-win/      Windows app: GUI + CLI via --cli (windows-rs)
 macos/                   macOS GUI (SwiftUI)
 ps2exe-adapter/          Python adapter: runs ps2exe, emits canonical JSON + progress
-web/                     Next.js + Postgres listing and similarity service
+hp-web/                  Next.js + Postgres listing and similarity service (hiddenpalace.org)
 lib/ps2exe/              ps2exe engine (submodule)
 ```
 
@@ -45,7 +45,7 @@ cd ps2exe-adapter && uv sync && cd ..    # one-time adapter setup
 cargo run -p prism-cli -- --adapter-dir "$PWD/ps2exe-adapter" analyze image.bin
 cargo run -p prism-cli -- --adapter-dir "$PWD/ps2exe-adapter" analyze image.bin -f json -o out.json
 cargo run -p prism-cli -- stats
-cargo run -p prism-cli -- export -o builds.jsonl   # feed for web/scripts/ingest.ts
+cargo run -p prism-cli -- export -o builds.jsonl   # feed for hp-web/scripts/ingest.ts
 ```
 
 Results are cached by content sha256; the cache and library live in the platform
@@ -55,7 +55,7 @@ user-data directory (`--data-dir` overrides).
 
 ```sh
 cargo test --workspace
-cd web && npm test
+cd hp-web && npm test
 cd ps2exe-adapter && uv run --with pytest pytest tests/
 ```
 

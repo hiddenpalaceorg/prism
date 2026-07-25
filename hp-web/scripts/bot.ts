@@ -20,7 +20,7 @@ const SITE = (process.env.SITE_URL ?? "https://hiddenpalace.org").replace(/\/+$/
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) {
-  console.error("DISCORD_TOKEN must be set (web/.env.local)");
+  console.error("DISCORD_TOKEN must be set (hp-web/.env.local)");
   process.exit(1);
 }
 
