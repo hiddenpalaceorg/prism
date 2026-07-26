@@ -411,7 +411,14 @@ export async function findByEmbedding(
 
 export interface SearchResult {
   mode: "hash" | "text";
-  results: Array<{ sha256: string; name: string; system: string; sim?: number | null }>;
+  results: Array<{
+    sha256: string;
+    name: string;
+    system: string;
+    sim?: number | null;
+    /** Set when the build matched only through a file inside it. */
+    file?: string;
+  }>;
 }
 
 /** Filename FTS/fuzzy search, or exact hash lookup when the term looks like a hash. */
@@ -494,6 +501,30 @@ export async function searchFiles(
     [t, pat, limit]
   );
   return r.rows.map((x) => ({ ...x, sim: Number(x.sim) }));
+}
+
+/** search() plus searchFiles(). Hash lookups pass through. Text terms merge
+ *  both arms ranked by trigram similarity, one row per build. When a build
+ *  matches both ways the higher-sim representation wins, so a near-exact
+ *  filename (with the file attached) outranks the text_doc FTS matches whose
+ *  name-sim is ~0 and would otherwise fill the cap. */
+export async function searchAll(
+  pool: Pool,
+  term: string,
+  limit = 50,
+  includePrivate = false
+): Promise<SearchResult> {
+  const byName = await search(pool, term, limit, includePrivate);
+  if (byName.mode === "hash") return byName;
+  const byFile = await searchFiles(pool, term, limit, includePrivate);
+  const best = new Map(byName.results.map((x) => [x.sha256, x]));
+  for (const f of byFile) {
+    const cur = best.get(f.sha256);
+    if (cur && (cur.sim ?? 0) >= f.sim) continue;
+    best.set(f.sha256, { sha256: f.sha256, name: f.name, system: f.system, sim: f.sim, file: f.file });
+  }
+  const results = [...best.values()].sort((a, b) => (b.sim ?? 0) - (a.sim ?? 0)).slice(0, limit);
+  return { mode: "text", results };
 }
 
 export type SubmissionKind = "build" | "duplicate";
