@@ -353,16 +353,26 @@ export async function deleteMedia(pool: Pool, buildSha: string, id: number): Pro
   return !!r.rowCount;
 }
 
-/** Look up the served content type of a media blob (or a video's poster). */
-export async function mediaContentType(pool: Pool, sha256: string): Promise<string | null> {
+/** Look up how a media blob is served: its content type, and the name it was
+ *  uploaded under (null for a video's generated poster). */
+export async function mediaBlobInfo(
+  pool: Pool,
+  sha256: string
+): Promise<{ contentType: string; filename: string | null } | null> {
   const r = await pool.query(
-    `SELECT content_type FROM build_media WHERE sha256=$1
+    `SELECT content_type, filename FROM build_media WHERE sha256=$1
      UNION ALL
-     SELECT 'image/jpeg' FROM build_media WHERE poster_sha256=$1
+     SELECT 'image/jpeg', NULL::text FROM build_media WHERE poster_sha256=$1
      LIMIT 1`,
     [sha256]
   );
-  return (r.rows[0]?.content_type as string) ?? null;
+  const row = r.rows[0];
+  return row ? { contentType: row.content_type as string, filename: (row.filename as string) ?? null } : null;
+}
+
+/** Look up the served content type of a media blob (or a video's poster). */
+export async function mediaContentType(pool: Pool, sha256: string): Promise<string | null> {
+  return (await mediaBlobInfo(pool, sha256))?.contentType ?? null;
 }
 
 export async function getBuildNotes(pool: Pool, buildSha: string): Promise<BuildNoteRow[]> {

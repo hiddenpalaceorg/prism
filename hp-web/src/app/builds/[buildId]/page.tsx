@@ -18,6 +18,7 @@ import FileTree from "./FileTree";
 import AssetGallery from "./AssetGallery";
 import AssetViewerHost from "./AssetViewerHost";
 import MediaSection from "./MediaSection";
+import MediaViewerHost, { MediaThumb } from "./MediaViewerHost";
 import ModeratorTools from "./ModeratorTools";
 import NotesSection from "./NotesSection";
 
@@ -178,6 +179,9 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
       {/* One lightbox for the whole page (gallery + file tree); it rewrites the
           URL to <href>/assets/<path> while an asset is open. */}
       <AssetViewerHost assets={assets} buildHref={href} returnHref={href}>
+      {/* Its media counterpart: the header photo and the media grid open the
+          same gallery, deep-linked as #media-<id>. */}
+      <MediaViewerHost items={mediaItems}>
       <Link href="/builds" className="text-sm text-neutral-500 hover:underline">&larr; All builds</Link>
 
       {/* Header block with the photo as a right column: flush with the title,
@@ -230,14 +234,12 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
       </dl>
       </div>
       {previewPhoto && (
-        <a href={previewPhoto.url} target="_blank" rel="noreferrer" className="shrink-0" title={previewPhoto.filename}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`/api/media/${previewPhoto.sha256}/thumb?w=500`}
-            alt={previewPhoto.filename}
-            className="h-44 w-44 rounded-md border border-neutral-200 object-cover dark:border-neutral-800"
-          />
-        </a>
+        <MediaThumb
+          item={previewPhoto}
+          width={500}
+          wrapClassName="block shrink-0"
+          className="h-44 w-44 rounded-md border border-neutral-200 object-cover hover:border-sky-400 dark:border-neutral-800 dark:hover:border-sky-600"
+        />
       )}
       </div>
 
@@ -323,7 +325,7 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
         </section>
       )}
 
-      <MediaSection sha256={sha256} items={mediaItems} skips={skips} />
+      <MediaSection sha256={sha256} skips={skips} />
 
       <NotesSection sha256={sha256} notes={notes} skipped={skips.skip_notes} />
 
@@ -333,6 +335,7 @@ export default async function BuildPage({ params }: { params: Promise<{ buildId:
         </h2>
         <FileTree sha256={sha256} roots={pruneToExpanded(tree, expanded)} initiallyExpanded={[...expanded]} assets={assets} />
       </section>
+      </MediaViewerHost>
       </AssetViewerHost>
     </main>
   );
