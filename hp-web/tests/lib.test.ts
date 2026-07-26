@@ -275,10 +275,74 @@ test("orderAssets accepts a per-kind cap map (missing kind = uncapped)", () => {
   assert.deepEqual(counts, { image: 30, audio: 20, text: 12 });
 });
 
+// --- combined build/file search --------------------------------------------------
+
+import { searchAll } from "../src/lib/queries";
+import type { Pool } from "pg";
+
+/** Routes search()'s name/hash query and searchFiles()'s file query to canned
+ *  rows, keyed on SQL fragments unique to each. */
+function searchPool(nameRows: unknown[], fileRows: unknown[] | null, hashRows: unknown[] = []) {
+  return {
+    query: async (sql: string) => {
+      if (sql.includes("similarity(f.name")) {
+        if (!fileRows) throw new Error("file query should not run");
+        return { rows: fileRows };
+      }
+      if (sql.includes("similarity(name")) return { rows: nameRows };
+      return { rows: hashRows };
+    },
+  } as unknown as Pool;
+}
+
+const hit = (n: number, extra = {}) => ({ sha256: String(n).repeat(64), name: `build${n}`, system: "PS2", ...extra });
+
+test("searchAll ranks name and file hits together, one row per build", async () => {
+  const pool = searchPool(
+    [hit(1, { sim: 0.9 }), hit(2, { sim: 0.1 })],
+    [hit(2, { file: "DUP.BIN", sim: "0.8" }), hit(3, { file: "MAINMENU.TEX", sim: "0.4" })]
+  );
+  const r = await searchAll(pool, "menu");
+  assert.equal(r.mode, "text");
+  assert.deepEqual(
+    r.results.map((x) => [x.name, x.file, x.sim]),
+    [
+      ["build1", undefined, 0.9],
+      ["build2", "DUP.BIN", 0.8], // file match beats its own weak name match
+      ["build3", "MAINMENU.TEX", 0.4],
+    ]
+  );
+});
+
+test("searchAll lets filename matches displace weaker FTS matches under the cap", async () => {
+  // text_doc FTS matches carry sim ~0, so a near-exact filename must outrank
+  // them instead of being appended past the limit.
+  const pool = searchPool(
+    [hit(1, { sim: 0.05 }), hit(2, { sim: 0 })],
+    [hit(3, { file: "MAINMENU.TEX", sim: "0.7" })]
+  );
+  const r = await searchAll(pool, "mainmenu.tex", 2);
+  assert.deepEqual(r.results.map((x) => [x.name, x.file]), [
+    ["build3", "MAINMENU.TEX"],
+    ["build1", undefined],
+  ]);
+});
+
+test("searchAll passes hash lookups through without a file query", async () => {
+  const pool = searchPool([], null, [hit(7)]);
+  const r = await searchAll(pool, "deadbeef".repeat(8));
+  assert.equal(r.mode, "hash");
+  assert.deepEqual(r.results.map((x) => x.name), ["build7"]);
+});
+
+test("searchAll skips the file query for terms too short for trigrams", async () => {
+  const r = await searchAll(searchPool([hit(1, { sim: 0.3 })], null), "ab");
+  assert.deepEqual(r.results.map((x) => x.name), ["build1"]);
+});
+
 // --- submission asset uploads ---------------------------------------------------
 
 import { referencedAssets, MAX_ASSET_BLOB_BYTES, MAX_VIDEO_BLOB_BYTES } from "../src/lib/submission-assets";
-import type { Pool } from "pg";
 
 function fakePool(subRow?: { record: BuildRecord; status: string }, buildRow?: { record: BuildRecord }) {
   return {
