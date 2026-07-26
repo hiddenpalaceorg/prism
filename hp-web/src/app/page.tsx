@@ -11,10 +11,23 @@ interface Hit {
   sim?: number | null;
 }
 
+interface MagHit {
+  id: number;
+  kind: string;
+  title: string | null;
+  section: string | null;
+  issue_slug: string;
+  issue_label: string;
+  cover_date: string | null;
+  magazine_slug: string;
+  magazine_title: string;
+}
+
 export default function Home() {
   const [q, setQ] = useState("");
   const [mode, setMode] = useState<string>("");
   const [hits, setHits] = useState<Hit[]>([]);
+  const [magHits, setMagHits] = useState<MagHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
@@ -22,10 +35,18 @@ export default function Home() {
     if (!term.trim()) return;
     setLoading(true);
     try {
+      // Magazine hits ride alongside; a hash-looking query skips them.
+      const magPromise = /^[0-9a-fA-F]{8,}$/.test(term.trim())
+        ? Promise.resolve<MagHit[]>([])
+        : fetch(`/api/mag/search?q=${encodeURIComponent(term)}&limit=5`)
+            .then((r) => r.json())
+            .then((d) => (d.results as MagHit[]) ?? [])
+            .catch(() => []);
       const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`);
       const data = await res.json();
       setMode(data.mode ?? "");
       setHits(data.results ?? []);
+      setMagHits(await magPromise);
       setSearched(true);
     } finally {
       setLoading(false);
@@ -52,6 +73,7 @@ export default function Home() {
         <h1 className="text-2xl font-semibold tracking-tight">Prism</h1>
         <span className="flex gap-4 text-sm text-neutral-500">
           <Link href="/builds" className="hover:underline">Browse builds &rarr;</Link>
+          <Link href="/magazines" className="hover:underline">Magazines &rarr;</Link>
           <Link href="/moderate" className="hover:underline">Moderation &rarr;</Link>
         </span>
       </div>
@@ -99,7 +121,39 @@ export default function Home() {
             </ul>
           </>
         )}
-        {!loading && searched && hits.length === 0 && (
+        {!loading && magHits.length > 0 && (
+          <div className="mt-8">
+            <p className="mb-2 text-xs uppercase tracking-wide text-neutral-400">In magazines</p>
+            <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
+              {magHits.map((h) => (
+                <li key={h.id} className="py-3">
+                  <Link
+                    href={`/magazines/${h.magazine_slug}/${h.issue_slug}#x-${h.id}`}
+                    className="font-medium hover:underline"
+                  >
+                    {h.title || h.section || h.kind.replace("_", " ")}
+                  </Link>
+                  <div className="mt-0.5 flex gap-3 text-xs text-neutral-500">
+                    <span className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
+                      {h.kind.replace("_", " ")}
+                    </span>
+                    <span>
+                      {h.magazine_title} {h.issue_label}
+                      {h.cover_date ? ` · ${h.cover_date.slice(0, 7)}` : ""}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <Link
+              href={`/magazines?q=${encodeURIComponent(q)}`}
+              className="mt-2 inline-block text-xs text-sky-700 hover:underline dark:text-sky-300"
+            >
+              All magazine matches &rarr;
+            </Link>
+          </div>
+        )}
+        {!loading && searched && hits.length === 0 && magHits.length === 0 && (
           <p className="text-sm text-neutral-500">No matches.</p>
         )}
       </div>
