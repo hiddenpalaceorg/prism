@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BuildMediaView, MediaKind, MediaLabel, SkipFlags } from "@/lib/media";
+import { MediaThumb, useMedia } from "./MediaViewerHost";
 
 interface Viewer {
   name?: string;
@@ -32,7 +33,6 @@ interface Job {
 
 interface Props {
   sha256: string;
-  items: BuildMediaView[];
   skips: SkipFlags;
 }
 
@@ -153,11 +153,12 @@ const SECTIONS: Array<{
 // re-render of the page. The build page is ISR-cached and served by either app
 // slot, so waiting on a refresh to see your own upload is a race the uploader
 // used to lose often enough that a hard reload was the reliable way to see it.
-export default function MediaSection({ sha256, items, skips }: Props) {
+// That reconciliation lives in MediaViewerHost, which owns the list this draws.
+export default function MediaSection({ sha256, skips }: Props) {
   const router = useRouter();
+  const { items, open, add, drop, patch } = useMedia();
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
-  const [added, setAdded] = useState<BuildMediaView[]>([]);
   const [note, setNote] = useState("");
   const nextKey = useRef(1);
   const queue = useRef<Job[]>([]);
@@ -269,7 +270,7 @@ export default function MediaSection({ sha256, items, skips }: Props) {
 
       failed.current.delete(key);
       setUploads((u) => u.filter((x) => x.key !== key));
-      setAdded((a) => (a.some((m) => m.id === media.id) ? a : [...a, media]));
+      add(media);
       scheduleRefresh();
     } catch (e) {
       if (!(e instanceof UploadError) || e.resumable) failed.current.set(key, job);
@@ -309,7 +310,7 @@ export default function MediaSection({ sha256, items, skips }: Props) {
       setNote(`Error: ${j.error ?? res.statusText}`);
       return;
     }
-    setAdded((a) => a.filter((m) => m.id !== id));
+    drop(id);
     router.refresh();
   }
 
@@ -325,17 +326,11 @@ export default function MediaSection({ sha256, items, skips }: Props) {
       setNote(`Error: ${j.error ?? res.statusText}`);
       return;
     }
-    setAdded((a) => a.map((m) => (m.id === id ? { ...m, label } : m)));
+    patch(id, { label });
     router.refresh();
   }
 
-  // Server rows plus uploads this page finished that a refresh has not brought
-  // back yet (see the note on the component). Reconciled here rather than by an
-  // effect, so an item is never briefly in both lists or in neither.
-  const serverIds = new Set(items.map((m) => m.id));
-  const pending = added.filter((m) => !serverIds.has(m.id));
-  const shown = pending.length === 0 ? items : [...items, ...pending];
-  const total = shown.length;
+  const total = items.length;
   return (
     <section className="mt-8">
       <h2 className="text-lg font-medium">
@@ -346,7 +341,7 @@ export default function MediaSection({ sha256, items, skips }: Props) {
       )}
       <div className="mt-3 grid gap-8">
         {SECTIONS.map((s) => {
-          const mine = shown.filter((m) => m.kind === s.kind);
+          const mine = items.filter((m) => m.kind === s.kind);
           const skipped = skips[s.skipKey] && mine.length === 0;
           return (
             <div key={s.kind}>
@@ -378,6 +373,15 @@ export default function MediaSection({ sha256, items, skips }: Props) {
                         src={m.url}
                         className="max-h-80 w-full rounded-md border border-neutral-200 bg-black dark:border-neutral-800"
                       />
+                      {/* The player takes the clicks here, so it is the filename
+                          that opens the gallery (same as the asset cards). */}
+                      <button
+                        onClick={() => open(m.id)}
+                        title={m.filename}
+                        className="mt-1 block w-0 min-w-full truncate text-left font-mono text-[11px] text-sky-700 hover:underline dark:text-sky-400"
+                      >
+                        {m.filename}
+                      </button>
                       <Caption item={m} viewer={viewer} onDelete={() => remove(m.id)} />
                     </figure>
                   ))}
@@ -386,18 +390,15 @@ export default function MediaSection({ sha256, items, skips }: Props) {
                 <div className="mt-2 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                   {mine.map((m) => (
                     <figure key={m.id}>
-                      <a href={m.url} target="_blank" rel="noreferrer">
-                        {/* Physical photos are multi-MB scans; draw the cell from the
-                            server-scaled thumb (2x the cell, lanczos) instead of making
-                            the browser downsample the original. */}
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={s.kind === "physical" ? `/api/media/${m.sha256}/thumb?w=500` : m.url}
-                          alt={m.filename}
-                          loading="lazy"
-                          className={`${s.kind === "physical" ? "aspect-square" : "h-36"} w-full rounded-md border border-neutral-200 object-cover dark:border-neutral-800`}
-                        />
-                      </a>
+                      {/* Physical photos are multi-MB scans; the cell draws from
+                          the server-scaled thumb (2x the cell, lanczos) and the
+                          full image loads only once the gallery opens it. */}
+                      <MediaThumb
+                        item={m}
+                        width={s.kind === "physical" ? 500 : undefined}
+                        wrapClassName="block w-full"
+                        className={`${s.kind === "physical" ? "aspect-square" : "h-36"} w-full rounded-md border border-neutral-200 object-cover hover:border-sky-400 dark:border-neutral-800 dark:hover:border-sky-600`}
+                      />
                       <Caption
                         item={m}
                         viewer={viewer}
