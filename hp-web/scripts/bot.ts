@@ -1,14 +1,14 @@
 // prism Discord bot. "!prism <query>" searches public builds by hash
 // (sha256/md5/sha1, build- or file-level), build name, and filename, and
 // replies with links to the build pages. Read-only; private builds are
-// excluded by search()/searchFiles() themselves (visibleSql).
+// excluded by searchAll() itself (visibleSql).
 //
 // Usage: npm run bot   (env DISCORD_TOKEN, DATABASE_URL, optional SITE_URL)
 // The Discord application needs the Message Content intent enabled.
 
 import { Client, EmbedBuilder, Events, GatewayIntentBits, Partials } from "discord.js";
 import pg from "pg";
-import { search, searchFiles } from "../src/lib/queries";
+import { searchAll } from "../src/lib/queries";
 import { buildHref } from "../src/lib/slug";
 import { loadDotEnv } from "./dotenv";
 
@@ -36,16 +36,11 @@ interface Hit {
   file?: string;
 }
 
-/** Hash lookup when the term looks like one; otherwise name/FTS matches
- *  first, then builds matched only through a filename. */
+/** Hash lookup when the term looks like one, otherwise name and filename
+ *  matches ranked together by similarity. One extra result so formatReply
+ *  can tell when the list overflows. */
 async function findBuilds(term: string): Promise<Hit[]> {
-  const r = await search(pool, term, MAX_RESULTS + 1);
-  if (r.mode === "hash") return r.results;
-  const byFile = await searchFiles(pool, term, MAX_RESULTS + 1);
-  const seen = new Set(r.results.map((x) => x.sha256));
-  const hits: Hit[] = [...r.results];
-  for (const f of byFile) if (!seen.has(f.sha256)) hits.push(f);
-  return hits;
+  return (await searchAll(pool, term, MAX_RESULTS + 1)).results;
 }
 
 /** Neutralize markdown in build names used as link text. Only characters

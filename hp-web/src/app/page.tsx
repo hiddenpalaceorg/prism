@@ -9,6 +9,8 @@ interface Hit {
   name: string;
   system: string;
   sim?: number | null;
+  /** Set when the build matched through a file inside it. */
+  file?: string;
 }
 
 interface MagHit {
@@ -78,7 +80,7 @@ export default function Home() {
         </span>
       </div>
       <p className="mt-1 text-sm text-neutral-500">
-        Search known builds by filename or hash.
+        Search known builds by title, filename, or hash.
       </p>
 
       <form onSubmit={runSearch} className="mt-6 flex gap-2">
@@ -114,6 +116,11 @@ export default function Home() {
                       {h.system || "unknown"}
                     </span>
                     <span className="font-mono">{h.sha256.slice(0, 16)}…</span>
+                    {h.file && (
+                      <span className="min-w-0 truncate font-mono" title={h.file}>
+                        {h.file}
+                      </span>
+                    )}
                     {h.sim != null && <span>sim {h.sim.toFixed(2)}</span>}
                   </div>
                 </li>

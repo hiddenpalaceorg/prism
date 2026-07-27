@@ -133,3 +133,48 @@ jobs:
             echo "- build: \`${BUILD_ID:-none}\`"
             echo "- result: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Tell the Discord deploy channel how the run ended. The URL lives in
+      # the DISCORD_DEPLOY_WEBHOOK repo secret (a webhook URL alone is enough
+      # to post, so it stays out of this public file). No secret means skip
+      # quietly, and a webhook hiccup must never fail a deploy that already
+      # happened, hence continue-on-error.
+      - name: notify discord
+        if: always()
+        continue-on-error: true
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+          STATUS: ${{ job.status }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "no webhook configured, skipping"; exit 0; }
+          SUBJECT=$(git log -1 --format=%s 2>/dev/null) || SUBJECT="(unknown)"
+          export SUBJECT
+          # Node builds the JSON (arbitrary commit subjects need real
+          # escaping) and posts it. The box's node goes on PATH here directly
+          # rather than trusting the PATH step ran: a failure notice matters
+          # most when the run died early.
+          PATH="$HOME/node22/bin:$PATH" node -e '
+            const status = process.env.STATUS;
+            const kinds = {
+              success: { title: "hpwiki deploy succeeded", color: 0x57f287 },
+              failure: { title: "hpwiki deploy failed", color: 0xed4245 },
+            };
+            const kind = kinds[status] || { title: "hpwiki deploy " + status, color: 0x95a5a6 };
+            const repo = process.env.GITHUB_SERVER_URL + "/" + process.env.GITHUB_REPOSITORY;
+            const sha = process.env.GITHUB_SHA || "";
+            const lines = [
+              "[`" + sha.slice(0, 12) + "`](" + repo + "/commit/" + sha + ") " + process.env.SUBJECT,
+            ];
+            if (process.env.BUILD_ID) lines.push("build `" + process.env.BUILD_ID + "`");
+            lines.push("[run log](" + repo + "/actions/runs/" + process.env.GITHUB_RUN_ID + ")");
+            fetch(process.env.WEBHOOK, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                username: "prism deploy",
+                embeds: [{ title: kind.title, description: lines.join("\n"), color: kind.color }],
+              }),
+            }).then((res) => {
+              if (!res.ok) { console.error("webhook answered " + res.status); process.exitCode = 1; }
+            });
+          '
