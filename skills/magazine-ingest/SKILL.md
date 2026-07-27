@@ -320,6 +320,12 @@ orchestrator merging and sanity-checking the checkpoints. The identity pass
 work-dir path, its page range, the wire format, and the policy sections
 above.
 
+The work dir is shared, so each subagent must keep its helper scripts and QA
+renders in a private subdirectory named for its batch (for example
+`qa-004/`). Two agents writing `zoom.py` at the work-dir root overwrite each
+other mid-run; only the `pages-NNN.jsonl` checkpoints (already unique per
+batch) belong at the root.
+
 ## Auth and target
 
 `post.py` resolves the moderation token from the `PRISM_MODERATION_TOKEN`
