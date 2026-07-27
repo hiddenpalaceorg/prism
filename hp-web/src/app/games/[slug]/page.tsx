@@ -5,10 +5,12 @@ import { notFound } from "next/navigation";
 import { getModeratorFromHeaders } from "@/lib/auth";
 import { getPool } from "@/lib/db";
 import { getGameAssets, getGameBySlug, getGameBuilds } from "@/lib/queries";
+import { getGameCoverage } from "@/lib/mag/queries";
 import { assetExcerpts, assetMonths, assetTotals, orderAssets } from "@/lib/assets";
 import AssetGallery from "../../builds/[buildId]/AssetGallery";
 import AssetViewerHost from "../../builds/[buildId]/AssetViewerHost";
 import GameBuilds from "./GameBuilds";
+import GameMagCoverage from "./GameMagCoverage";
 
 // The timeline shows at most this many items per kind per month; the rest
 // live on /games/<slug>/assets. Excerpt reads stay bounded regardless.
@@ -46,9 +48,10 @@ export default async function GamePage({ params }: Params) {
   // The page renders per-request (force-dynamic), so a wiki-moderator's
   // cookies reveal private builds here — badged, exactly like /builds.
   const includePrivate = !!(await getModeratorFromHeaders(await headers()));
-  const [builds, assets] = await Promise.all([
+  const [builds, assets, coverage] = await Promise.all([
     getGameBuilds(pool, game.id, includePrivate),
     getGameAssets(pool, game.id, includePrivate),
+    getGameCoverage(pool, game.id),
   ]);
   // Timeline: one bucket per month of the assets' own file dates. The viewer
   // steps through the whole timeline in order; each month's gallery shows a
@@ -81,6 +84,7 @@ export default async function GamePage({ params }: Params) {
           </div>
 
           <GameBuilds builds={builds} />
+          <GameMagCoverage coverage={coverage} />
         </div>
 
         {assets.length > 0 && (
