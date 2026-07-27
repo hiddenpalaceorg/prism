@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import ZoomPan from "../../../builds/[buildId]/ZoomPan";
-import { extractAnchor, magBlobUrl, magThumbUrl, personHref } from "@/lib/mag/hrefs";
+import { extractAnchor, magBlobUrl, magThumbUrl, personHref, tagHref } from "@/lib/mag/hrefs";
 import ModTools from "./ModTools";
 
 export interface IssuePageItem {
@@ -569,13 +569,14 @@ export default function IssueBrowser({
                         <span key={s} className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">{s}</span>
                       ))}
                       {e.tags.map((t) => (
-                        <span
+                        <Link
                           key={t.slug}
-                          className="rounded bg-neutral-100 px-1.5 py-0.5 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+                          href={tagHref(t.slug)}
+                          className="rounded bg-neutral-100 px-1.5 py-0.5 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700"
                           title={t.kind}
                         >
                           {t.name}
-                        </span>
+                        </Link>
                       ))}
                     </div>
                   )}
