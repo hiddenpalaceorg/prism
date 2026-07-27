@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { getPool } from "@/lib/db";
 import { magazineHref, magThumbUrl } from "@/lib/mag/hrefs";
-import { listMagazines } from "@/lib/mag/queries";
+import { listMagazines, listSearchFacets } from "@/lib/mag/queries";
 import MagSearch from "./MagSearch";
 
 export const runtime = "nodejs";
@@ -17,11 +17,15 @@ export const metadata: Metadata = {
 // /magazines — every indexed magazine with its first cover and issue count,
 // plus full-text search across all extracts.
 export default async function MagazinesPage() {
-  const magazines = await listMagazines(getPool());
+  const pool = getPool();
+  const [magazines, facets] = await Promise.all([listMagazines(pool), listSearchFacets(pool)]);
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
-      <Link href="/" className="text-sm text-neutral-500 hover:underline">&larr; Search</Link>
+      <div className="flex items-baseline justify-between">
+        <Link href="/" className="text-sm text-neutral-500 hover:underline">&larr; Search</Link>
+        <Link href="/magazines/tags" className="text-sm text-neutral-500 hover:underline">Tags &rarr;</Link>
+      </div>
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">Magazines</h1>
       <p className="mt-1 text-sm text-neutral-500">
         Page-by-page index of gaming print media: every review, preview, interview, ad, chart, and tip,
@@ -29,7 +33,11 @@ export default async function MagazinesPage() {
       </p>
 
       <Suspense>
-        <MagSearch magazines={magazines.map((m) => ({ slug: m.slug, title: m.title }))} />
+        <MagSearch
+          magazines={magazines.map((m) => ({ slug: m.slug, title: m.title }))}
+          systems={facets.systems}
+          languages={facets.languages}
+        />
       </Suspense>
 
       {magazines.length === 0 ? (

@@ -802,6 +802,76 @@ export async function getPersonCoverage(pool: Pool, personId: number): Promise<C
   return r.rows as CoverageItem[];
 }
 
+export interface TagRow {
+  slug: string;
+  kind: string;
+  name: string;
+  extract_count: number;
+}
+
+export async function listTags(pool: Pool): Promise<TagRow[]> {
+  const r = await pool.query(
+    `SELECT t.slug, t.kind, t.name, COUNT(e.id)::int AS extract_count
+     FROM mag_tag t
+     LEFT JOIN extract_tag et ON et.tag_id=t.id
+     LEFT JOIN magazine_extract e ON e.id=et.extract_id AND e.status <> 'rejected'
+     GROUP BY t.id
+     ORDER BY extract_count DESC, t.name ASC`
+  );
+  return r.rows as TagRow[];
+}
+
+export async function getTagBySlug(pool: Pool, slug: string): Promise<TagRow | null> {
+  const r = await pool.query(
+    `SELECT t.slug, t.kind, t.name, COUNT(e.id)::int AS extract_count
+     FROM mag_tag t
+     LEFT JOIN extract_tag et ON et.tag_id=t.id
+     LEFT JOIN magazine_extract e ON e.id=et.extract_id AND e.status <> 'rejected'
+     WHERE t.slug=$1
+     GROUP BY t.id`,
+    [slug]
+  );
+  return (r.rows[0] as TagRow | undefined) ?? null;
+}
+
+export async function getTagCoverage(pool: Pool, tagSlug: string): Promise<CoverageItem[]> {
+  const r = await pool.query(
+    `SELECT ${COVERAGE_COLS}, 'subject' AS role, NULL::text AS title_printed
+     FROM extract_tag et
+     JOIN mag_tag t ON t.id=et.tag_id
+     JOIN magazine_extract e ON e.id=et.extract_id AND e.status <> 'rejected'
+     JOIN magazine_issue i ON i.id=e.issue_id
+     JOIN magazines m ON m.id=i.magazine_id
+     WHERE t.slug=$1
+     ORDER BY i.cover_date ASC NULLS LAST, e.seq`,
+    [tagSlug]
+  );
+  return r.rows as CoverageItem[];
+}
+
+/** Filter options actually present in the index, for the search UI. */
+export interface MagSearchFacets {
+  systems: string[];
+  languages: string[];
+}
+
+export async function listSearchFacets(pool: Pool): Promise<MagSearchFacets> {
+  const [sys, langs] = await Promise.all([
+    pool.query(
+      `SELECT DISTINCT es.system FROM extract_system es
+       JOIN magazine_extract e ON e.id=es.extract_id AND e.status <> 'rejected'
+       ORDER BY es.system`
+    ),
+    pool.query(
+      `SELECT DISTINCT language FROM magazine_extract WHERE status <> 'rejected' ORDER BY language`
+    ),
+  ]);
+  return {
+    systems: (sys.rows as { system: string }[]).map((r) => r.system),
+    languages: (langs.rows as { language: string }[]).map((r) => r.language),
+  };
+}
+
 export interface MagSearchFilters {
   magazine?: string;
   kind?: string;

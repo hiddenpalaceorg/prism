@@ -27,3 +27,7 @@ export function magThumbUrl(sha256: string, w: 500 | 1000 = 500): string {
 export function personHref(slug: string): string {
   return `/people/${slug}`;
 }
+
+export function tagHref(slug: string): string {
+  return `/magazines/tags/${slug}`;
+}
