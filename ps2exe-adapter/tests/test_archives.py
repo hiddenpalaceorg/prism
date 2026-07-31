@@ -6,10 +6,14 @@ in-memory zip fixtures served through a minimal fake volume reader.
 
 import hashlib
 import io
+import os
+import pathlib
+import subprocess
+import sys
 import zipfile
 
 from prism_adapter import viewable
-from prism_adapter.cli import _extract_assets, _hash_files
+from prism_adapter.cli import _PS2EXE_DIR, _extract_assets, _hash_files
 from prism_adapter.progress import ProgressManager
 
 
@@ -112,3 +116,68 @@ def test_member_assets_are_extracted(tmp_path):
     blob = (tmp_path / png["sha256"][:2] / png["sha256"]).read_bytes()
     assert blob == PNG
     assert assets["/DATA/PROTO.ZIP/notes.txt"]["kind"] == "text"
+
+
+# Runs in a subprocess: the regression is process death (SIGSEGV/SIGABRT out of
+# libarchive), which no `except` in-process can catch or report.
+_TEARDOWN_SRC = '''
+import io, os, sys, zipfile
+sys.path.insert(0, os.environ["PS2EXE_DIR"])
+sys.path.insert(0, os.environ["ADAPTER_DIR"])
+
+import libarchive
+from prism_adapter.progress import ProgressManager
+from utils.archives import ArchiveWrapper
+
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("big.bin", b"A" * (1 << 20))
+    z.writestr("second.bin", b"B" * (1 << 20))
+src = io.BytesIO(buf.getvalue())
+src.name = "TEARDOWN.ZIP"
+
+wrapper = ArchiveWrapper(src, None, ProgressManager())
+wrapper.__enter__()
+entry = next(iter(wrapper))
+reader = entry.open()
+reader[0:16]  # partial: the rest of the member is still inside libarchive
+
+# An unlistable member archive tears the wrapper down with readers still open.
+wrapper.__exit__(None, None, None)
+
+# close() drains to EOF, and a further read asks for bytes outright. Both used
+# to walk into the freed handle; both must now stay in Python.
+reader.close()
+try:
+    reader._closed = False
+    reader[16:32]
+except libarchive.ArchiveError:
+    pass
+print("OK")
+'''
+
+
+def test_reader_outliving_its_archive_does_not_kill_the_process(tmp_path):
+    """A reader still open when its archive is torn down must never reach the
+    freed libarchive handle.
+
+    libarchive dies on a handle whose magic no longer matches -- abort() with
+    "PROGRAMMER ERROR ... invalid archive handle", or a plain segfault if the
+    freed struct got reused. Either way the whole analysis is lost, so one
+    unreadable member archive used to cost the entire build.
+    """
+    script = tmp_path / "teardown.py"
+    script.write_text(_TEARDOWN_SRC)
+    env = {
+        **os.environ,
+        "PS2EXE_DIR": str(_PS2EXE_DIR),
+        "ADAPTER_DIR": str(pathlib.Path(__file__).resolve().parents[1]),
+    }
+    proc = subprocess.run(
+        [sys.executable, str(script)], env=env, capture_output=True, text=True
+    )
+
+    assert proc.returncode == 0, (
+        f"adapter process died (returncode {proc.returncode})\n{proc.stderr}"
+    )
+    assert "OK" in proc.stdout
