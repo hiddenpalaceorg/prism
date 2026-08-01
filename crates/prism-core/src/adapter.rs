@@ -223,6 +223,33 @@ pub fn run_extract(
     Ok(parsed.assets)
 }
 
+/// Describe a failed adapter run. A native crash (libarchive aborts on input it
+/// refuses) arrives as a 128+signal exit code once the launcher relays it, which
+/// on its own reads as an opaque "exit status: 134".
+fn describe_exit(status: std::process::ExitStatus) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        let signal = status.signal().or_else(|| match status.code() {
+            Some(code) if (129..=192).contains(&code) => Some(code - 128),
+            _ => None,
+        });
+        if let Some(sig) = signal {
+            return match sig {
+                2 => "crashed with SIGINT".into(),
+                4 => "crashed with SIGILL".into(),
+                6 => "crashed with SIGABRT (native abort)".into(),
+                8 => "crashed with SIGFPE".into(),
+                9 => "killed with SIGKILL (out of memory?)".into(),
+                11 => "crashed with SIGSEGV (native fault)".into(),
+                15 => "killed with SIGTERM".into(),
+                other => format!("killed by signal {other}"),
+            };
+        }
+    }
+    format!("exited with {status}")
+}
+
 /// Drive one adapter subprocess: stream stderr progress to `observer`, poll for
 /// cancellation, and parse the single JSON document on stdout as `T`.
 fn run_json<T: serde::de::DeserializeOwned>(
@@ -310,7 +337,8 @@ fn run_json<T: serde::de::DeserializeOwned>(
 
     if !status.success() {
         return Err(Error::Adapter(format!(
-            "adapter exited with {status}\n{}",
+            "adapter {}\n{}",
+            describe_exit(status),
             diag.trim()
         )));
     }
