@@ -6,7 +6,7 @@ export interface BuildOgMediaImage<T> {
 export function selectBuildOgImages<T>(
   media: readonly BuildOgMediaImage<T>[],
   assets: readonly T[],
-  limit = 4,
+  limit = 3,
 ): T[] {
   if (limit <= 0) return [];
 

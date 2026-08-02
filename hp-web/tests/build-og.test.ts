@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { selectBuildOgImages } from "../src/lib/build-og";
 
-test("selectBuildOgImages selects up to four front media first", () => {
+test("selectBuildOgImages selects up to three front media first", () => {
   assert.deepEqual(
     selectBuildOgImages(
       [
@@ -14,7 +14,7 @@ test("selectBuildOgImages selects up to four front media first", () => {
       ],
       ["asset"],
     ),
-    ["front-1", "front-2", "front-3", "front-4"],
+    ["front-1", "front-2", "front-3"],
   );
 });
 
@@ -28,7 +28,7 @@ test("selectBuildOgImages places a sleeve after front media and before assets", 
       ],
       ["asset-1", "asset-2"],
     ),
-    ["front", "sleeve", "asset-1", "asset-2"],
+    ["front", "sleeve", "asset-1"],
   );
 });
 
@@ -41,6 +41,6 @@ test("selectBuildOgImages never selects back media", () => {
       ],
       ["asset-1", "asset-2", "asset-3"],
     ),
-    ["insert", "asset-1", "asset-2", "asset-3"],
+    ["insert", "asset-1", "asset-2"],
   );
 });
