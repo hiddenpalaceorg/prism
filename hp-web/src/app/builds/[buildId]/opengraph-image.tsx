@@ -3,7 +3,7 @@
 // segment and everything below it, so asset deep links inherit it too.
 //
 // Dark info card: wordmark, title, fact chips, short id — plus an image row.
-// The row shows up to three images: front physical media first, then one insert
+// The row shows up to four images: front physical media first, then one insert
 // (other physical media), then PNG/JPEG/BMP/TGA/TIFF assets. Back media is omitted.
 
 import fsp from "node:fs/promises";
@@ -73,7 +73,7 @@ async function findMediaImages(sha256: string): Promise<BuildOgMediaImage<string
   for (const row of rows.filter(({ label }) => label === "front")) {
     const image = await loadMediaImage(row);
     if (image) images.push({ image, label: "front" });
-    if (images.length === 3) return images;
+    if (images.length === 4) return images;
   }
 
   for (const row of rows.filter(({ label }) => label !== "front")) {
@@ -180,9 +180,11 @@ function Card({ meta, shots }: { meta: BuildMetaRow; shots: string[] }) {
       {shots.length > 0 && (
         <div
           style={{
-            width: shots.length === 1 ? 480 : 600,
+            width: shots.length === 1 ? 480 : 630,
             display: "flex",
+            flexWrap: "wrap",
             alignItems: "center",
+            alignContent: "center",
             gap: 12,
             background: "#171717",
             borderLeft: "1px solid #262626",
@@ -192,7 +194,11 @@ function Card({ meta, shots }: { meta: BuildMetaRow; shots: string[] }) {
           {shots.map((shot, index) => (
             <div
               key={index}
-              style={{ display: "flex", flex: 1, minWidth: 0, height: "100%" }}
+              style={{
+                display: "flex",
+                width: shots.length === 1 ? "100%" : 285,
+                height: shots.length === 1 ? "100%" : 285,
+              }}
             >
               <img
                 src={shot}
@@ -228,7 +234,7 @@ export default async function OgImage({ params }: { params: Promise<{ buildId: s
 
   const media = await findMediaImages(meta.sha256);
   const mediaImages = selectBuildOgImages(media, []);
-  const assets = await findAssetPictures(meta.sha256, 3 - mediaImages.length);
+  const assets = await findAssetPictures(meta.sha256, 4 - mediaImages.length);
   const shots = selectBuildOgImages(media, assets);
   try {
     return await render(meta, shots);
