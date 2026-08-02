@@ -214,8 +214,14 @@ function Card({ meta, shots }: { meta: BuildMetaRow; shots: string[] }) {
               key={index}
               style={{
                 display: "flex",
+                // Do not let the image's intrinsic width force a one-column grid.
+                flexGrow: 0,
+                flexShrink: 0,
+                minWidth: 0,
+                minHeight: 0,
                 width: shots.length === 1 ? "100%" : 285,
                 height: shots.length === 1 ? "100%" : 285,
+                overflow: "hidden",
               }}
             >
               <img
