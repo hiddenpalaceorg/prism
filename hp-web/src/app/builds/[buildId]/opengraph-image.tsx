@@ -41,21 +41,38 @@ interface MediaImageRow {
   label: string | null;
 }
 
+async function loadMediaThumbnail(sha256: string): Promise<string | null> {
+  try {
+    const base = process.env.SITE_URL ?? "https://hiddenpalace.org";
+    const url = new URL(`/api/media/${sha256}/thumb?w=500`, base);
+    const response = await fetch(url, { cache: "force-cache" });
+    const contentType = response.headers.get("content-type");
+    if (!response.ok || !contentType?.startsWith("image/")) return null;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return `data:${contentType};base64,${bytes.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 // Oversized photos (and webp, which the card renderer can't decode) are served
-// as scaled JPEGs via ffmpeg. Missing or unreadable candidates are skipped.
+// as 500px JPEGs via ffmpeg: twice the rendered grid-cell width. If direct
+// storage access fails, use the same thumbnail route that serves the build page.
 async function loadMediaImage(row: MediaImageRow): Promise<string | null> {
   try {
     if (row.size > PHOTO_DIRECT_MAX_BYTES || row.content_type === "image/webp") {
-      const scaled = await ensurePhotoScale(row.sha256, MEDIA_NS);
+      const scaled = await ensurePhotoScale(row.sha256, MEDIA_NS, 500);
       const bytes = await fsp.readFile(scaled);
       return `data:image/jpeg;base64,${bytes.toString("base64")}`;
     }
     const bytes = await readBlob(row.sha256, MEDIA_NS);
-    if (bytes === null) return null;
-    return `data:${row.content_type};base64,${bytes.toString("base64")}`;
+    if (bytes !== null) {
+      return `data:${row.content_type};base64,${bytes.toString("base64")}`;
+    }
   } catch {
-    return null;
+    // Fall through to the public thumbnail path.
   }
+  return loadMediaThumbnail(row.sha256);
 }
 
 async function findMediaImages(sha256: string): Promise<BuildOgMediaImage<string>[]> {
@@ -191,6 +208,7 @@ function Card({ meta, shots }: { meta: BuildMetaRow; shots: string[] }) {
             padding: 24,
           }}
         >
+          {/* Priority order is row-major, keeping front/sleeve media top-left. */}
           {shots.map((shot, index) => (
             <div
               key={index}

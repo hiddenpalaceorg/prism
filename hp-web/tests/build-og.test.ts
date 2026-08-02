@@ -18,17 +18,17 @@ test("selectBuildOgImages selects up to four front media first", () => {
   );
 });
 
-test("selectBuildOgImages uses one insert before image assets", () => {
+test("selectBuildOgImages places a sleeve after front media and before assets", () => {
   assert.deepEqual(
     selectBuildOgImages(
       [
-        { image: "insert-1", label: "other" },
+        { image: "sleeve", label: "other" },
         { image: "front", label: "front" },
-        { image: "insert-2", label: null },
+        { image: "other-media", label: null },
       ],
       ["asset-1", "asset-2"],
     ),
-    ["front", "insert-1", "asset-1", "asset-2"],
+    ["front", "sleeve", "asset-1", "asset-2"],
   );
 });
 
