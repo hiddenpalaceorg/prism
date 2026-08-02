@@ -3,6 +3,10 @@ export interface BuildOgMediaImage<T> {
   label: string | null;
 }
 
+export function buildOgObjectFit(index: number, mediaCount: number): "contain" | "cover" {
+  return index < mediaCount ? "contain" : "cover";
+}
+
 export function selectBuildOgImages<T>(
   media: readonly BuildOgMediaImage<T>[],
   assets: readonly T[],

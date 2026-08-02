@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { selectBuildOgImages } from "../src/lib/build-og";
+import { buildOgObjectFit, selectBuildOgImages } from "../src/lib/build-og";
+
+test("buildOgObjectFit contains media and covers assets", () => {
+  assert.equal(buildOgObjectFit(0, 2), "contain");
+  assert.equal(buildOgObjectFit(1, 2), "contain");
+  assert.equal(buildOgObjectFit(2, 2), "cover");
+});
 
 test("selectBuildOgImages selects up to three front media first", () => {
   assert.deepEqual(

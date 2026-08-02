@@ -10,6 +10,7 @@ import fsp from "node:fs/promises";
 import { ImageResponse } from "next/og";
 import { readBlob } from "@/lib/blobstore";
 import {
+  buildOgObjectFit,
   selectBuildOgImages,
   type BuildOgMediaImage,
 } from "@/lib/build-og";
@@ -135,7 +136,15 @@ async function findAssetPictures(sha256: string, limit: number): Promise<string[
   return images;
 }
 
-function Card({ meta, shots }: { meta: BuildMetaRow; shots: string[] }) {
+function Card({
+  meta,
+  shots,
+  mediaCount,
+}: {
+  meta: BuildMetaRow;
+  shots: string[];
+  mediaCount: number;
+}) {
   const facts = buildFacts(meta);
   return (
     <div
@@ -173,7 +182,11 @@ function Card({ meta, shots }: { meta: BuildMetaRow; shots: string[] }) {
             <img
               src={shot}
               alt=""
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: buildOgObjectFit(index, mediaCount),
+              }}
             />
           </div>
         ))}
@@ -258,8 +271,8 @@ function Card({ meta, shots }: { meta: BuildMetaRow; shots: string[] }) {
 
 // Materialize the PNG so satori failures (e.g. an undecodable blob) are
 // catchable — then retry without images instead of 500ing the unfurl.
-async function render(meta: BuildMetaRow, shots: string[]): Promise<Response> {
-  const img = new ImageResponse(<Card meta={meta} shots={shots} />, size);
+async function render(meta: BuildMetaRow, shots: string[], mediaCount: number): Promise<Response> {
+  const img = new ImageResponse(<Card meta={meta} shots={shots} mediaCount={mediaCount} />, size);
   const buf = await img.arrayBuffer();
   return new Response(buf, {
     headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=3600" },
@@ -280,8 +293,8 @@ export default async function OgImage({ params }: { params: Promise<{ buildId: s
   const assets = await findAssetPictures(meta.sha256, 3 - mediaImages.length);
   const shots = selectBuildOgImages(media, assets);
   try {
-    return await render(meta, shots);
+    return await render(meta, shots, mediaImages.length);
   } catch {
-    return await render(meta, []);
+    return await render(meta, [], 0);
   }
 }
