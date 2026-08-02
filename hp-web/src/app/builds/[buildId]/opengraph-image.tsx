@@ -2,14 +2,15 @@
 // satori via next/og. Next's file convention wires it into <meta> for this
 // segment and everything below it, so asset deep links inherit it too.
 //
-// Dark info card: wordmark, title, fact chips, short id — plus an image row.
-// The row shows up to four images: front physical media first, then one insert
-// (other physical media), then PNG/JPEG/BMP/TGA/TIFF assets. Back media is omitted.
+// Full-canvas row of up to three images with compact shaded metadata bands.
+// Front physical media comes first, then one insert (other physical media),
+// then PNG/JPEG/BMP/TGA/TIFF assets. Back media is omitted.
 
 import fsp from "node:fs/promises";
 import { ImageResponse } from "next/og";
 import { readBlob } from "@/lib/blobstore";
 import {
+  buildOgObjectFit,
   selectBuildOgImages,
   type BuildOgMediaImage,
 } from "@/lib/build-og";
@@ -44,7 +45,7 @@ interface MediaImageRow {
 async function loadMediaThumbnail(sha256: string): Promise<string | null> {
   try {
     const base = process.env.SITE_URL ?? "https://hiddenpalace.org";
-    const url = new URL(`/api/media/${sha256}/thumb?w=500`, base);
+    const url = new URL(`/api/media/${sha256}/thumb?w=1000`, base);
     const response = await fetch(url, { cache: "force-cache" });
     const contentType = response.headers.get("content-type");
     if (!response.ok || !contentType?.startsWith("image/")) return null;
@@ -56,12 +57,12 @@ async function loadMediaThumbnail(sha256: string): Promise<string | null> {
 }
 
 // Oversized photos (and webp, which the card renderer can't decode) are served
-// as 500px JPEGs via ffmpeg: twice the rendered grid-cell width. If direct
+// as 1000px JPEGs via ffmpeg for crisp full-canvas panes. If direct
 // storage access fails, use the same thumbnail route that serves the build page.
 async function loadMediaImage(row: MediaImageRow): Promise<string | null> {
   try {
     if (row.size > PHOTO_DIRECT_MAX_BYTES || row.content_type === "image/webp") {
-      const scaled = await ensurePhotoScale(row.sha256, MEDIA_NS, 500);
+      const scaled = await ensurePhotoScale(row.sha256, MEDIA_NS, 1000);
       const bytes = await fsp.readFile(scaled);
       return `data:image/jpeg;base64,${bytes.toString("base64")}`;
     }
@@ -90,7 +91,7 @@ async function findMediaImages(sha256: string): Promise<BuildOgMediaImage<string
   for (const row of rows.filter(({ label }) => label === "front")) {
     const image = await loadMediaImage(row);
     if (image) images.push({ image, label: "front" });
-    if (images.length === 4) return images;
+    if (images.length === 3) return images;
   }
 
   for (const row of rows.filter(({ label }) => label !== "front")) {
@@ -135,112 +136,143 @@ async function findAssetPictures(sha256: string, limit: number): Promise<string[
   return images;
 }
 
-function Card({ meta, shots }: { meta: BuildMetaRow; shots: string[] }) {
+function Card({
+  meta,
+  shots,
+  mediaCount,
+}: {
+  meta: BuildMetaRow;
+  shots: string[];
+  mediaCount: number;
+}) {
+  const facts = buildFacts(meta);
   return (
     <div
       style={{
         width: "100%",
         height: "100%",
         display: "flex",
+        position: "relative",
+        overflow: "hidden",
         background: "#0a0a0a",
         color: "#fafafa",
       }}
     >
       <div
         style={{
-          flex: 1,
-          minWidth: 0,
+          width: "100%",
+          height: "100%",
           display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          padding: 56,
+          background: "#171717",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: 26, letterSpacing: 6, color: "#737373" }}>HIDDEN PALACE</div>
+        {shots.map((shot, index) => (
           <div
+            key={index}
             style={{
-              marginTop: 30,
-              fontSize: 54,
-              lineHeight: 1.15,
-              lineClamp: 3,
-              display: "block",
+              display: "flex",
+              flex: 1,
+              minWidth: 0,
+              minHeight: 0,
+              height: "100%",
+              overflow: "hidden",
+              borderLeft: index === 0 ? "none" : "2px solid rgba(0,0,0,0.5)",
             }}
           >
-            {displayTitle(meta)}
+            <img
+              src={shot}
+              alt=""
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: buildOgObjectFit(index, mediaCount),
+              }}
+            />
           </div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 26 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
-            {buildFacts(meta).map((f) => (
-              <div
-                key={f}
-                style={{
-                  border: "1px solid #333333",
-                  borderRadius: 10,
-                  padding: "8px 20px",
-                  fontSize: 27,
-                  color: "#d4d4d4",
-                }}
-              >
-                {f}
-              </div>
-            ))}
-          </div>
-          {/* One template string: satori treats mixed expression/text as
-              multiple children and then demands display:flex. */}
-          <div style={{ fontSize: 23, color: "#525252" }}>
-            {`${meta.sha256.slice(0, SHORT_SHA_LEN)} · hiddenpalace.org`}
-          </div>
-        </div>
+        ))}
       </div>
-      {shots.length > 0 && (
+
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 108,
+          display: "flex",
+          alignItems: "center",
+          gap: 26,
+          padding: "20px 32px",
+          background: "rgba(0,0,0,0.72)",
+        }}
+      >
         <div
           style={{
-            width: shots.length === 1 ? 480 : 630,
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            alignContent: "center",
-            gap: 12,
-            background: "#171717",
-            borderLeft: "1px solid #262626",
-            padding: 24,
+            flexShrink: 0,
+            fontSize: 17,
+            letterSpacing: 5,
+            color: "#b3b3b3",
           }}
         >
-          {/* Priority order is row-major, keeping front/sleeve media top-left. */}
-          {shots.map((shot, index) => (
+          HIDDEN PALACE
+        </div>
+        <div
+          style={{
+            minWidth: 0,
+            display: "block",
+            fontSize: 38,
+            lineHeight: 1.05,
+            lineClamp: 2,
+          }}
+        >
+          {displayTitle(meta)}
+        </div>
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 88,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 24,
+          padding: "16px 32px",
+          background: "rgba(0,0,0,0.72)",
+        }}
+      >
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          {facts.map((fact) => (
             <div
-              key={index}
+              key={fact}
               style={{
                 display: "flex",
-                // Do not let the image's intrinsic width force a one-column grid.
-                flexGrow: 0,
-                flexShrink: 0,
-                minWidth: 0,
-                minHeight: 0,
-                width: shots.length === 1 ? "100%" : 285,
-                height: shots.length === 1 ? "100%" : 285,
-                overflow: "hidden",
+                border: "1px solid rgba(255,255,255,0.28)",
+                borderRadius: 8,
+                padding: "5px 12px",
+                fontSize: 18,
+                color: "#f0f0f0",
               }}
             >
-              <img
-                src={shot}
-                alt=""
-                style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 12 }}
-              />
+              {fact}
             </div>
           ))}
         </div>
-      )}
+        <div style={{ flexShrink: 0, fontSize: 17, color: "#b3b3b3" }}>
+          {`${meta.sha256.slice(0, SHORT_SHA_LEN)} · hiddenpalace.org`}
+        </div>
+      </div>
     </div>
   );
 }
 
 // Materialize the PNG so satori failures (e.g. an undecodable blob) are
 // catchable — then retry without images instead of 500ing the unfurl.
-async function render(meta: BuildMetaRow, shots: string[]): Promise<Response> {
-  const img = new ImageResponse(<Card meta={meta} shots={shots} />, size);
+async function render(meta: BuildMetaRow, shots: string[], mediaCount: number): Promise<Response> {
+  const img = new ImageResponse(<Card meta={meta} shots={shots} mediaCount={mediaCount} />, size);
   const buf = await img.arrayBuffer();
   return new Response(buf, {
     headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=3600" },
@@ -258,11 +290,11 @@ export default async function OgImage({ params }: { params: Promise<{ buildId: s
 
   const media = await findMediaImages(meta.sha256);
   const mediaImages = selectBuildOgImages(media, []);
-  const assets = await findAssetPictures(meta.sha256, 4 - mediaImages.length);
+  const assets = await findAssetPictures(meta.sha256, 3 - mediaImages.length);
   const shots = selectBuildOgImages(media, assets);
   try {
-    return await render(meta, shots);
+    return await render(meta, shots, mediaImages.length);
   } catch {
-    return await render(meta, []);
+    return await render(meta, [], 0);
   }
 }
