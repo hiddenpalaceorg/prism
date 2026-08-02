@@ -295,6 +295,19 @@ impl Analyzer {
         }
     }
 
+    /// Copy every file from the selected filesystem volume to `out_dir`.
+    /// Recursive mode expands supported compressed archives in place.
+    pub fn extract_files(
+        &self,
+        path: &str,
+        out_dir: &str,
+        recursive: bool,
+        observer: Arc<dyn ProgressObserver>,
+    ) -> Result<u64> {
+        std::fs::create_dir_all(out_dir)?;
+        adapter::run_extract_files(&self.adapter, path, out_dir, recursive, observer)
+    }
+
     /// Number of builds in the local library.
     pub fn library_size(&self) -> Result<u64> {
         self.db.count_builds()

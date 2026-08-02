@@ -55,6 +55,11 @@
                     </MenuFlyoutItem.KeyboardAccelerators>
                 </MenuFlyoutItem>
                 <MenuFlyoutSeparator />
+                <MenuFlyoutItem x:Name="MenuExtractFiles" Text="Extract Files..." IsEnabled="False"
+                                Click="MenuExtractFiles_Click" />
+                <MenuFlyoutItem x:Name="MenuExtractFilesRecursive" Text="Extract Files and Compressed Archives..."
+                                IsEnabled="False" Click="MenuExtractFilesRecursive_Click" />
+                <MenuFlyoutSeparator />
                 <MenuFlyoutItem x:Name="MenuExport" Text="Export Library for Upload..." Click="MenuExport_Click" />
                 <MenuFlyoutSeparator />
                 <MenuFlyoutItem Text="Exit" Click="MenuExit_Click" />

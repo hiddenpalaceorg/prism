@@ -202,6 +202,12 @@ struct RawExtract {
     assets: Vec<RawAsset>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawFileExtract {
+    #[serde(default)]
+    files: u64,
+}
+
 /// Run the adapter's `analyze` on `path`, relaying progress to `observer`.
 pub fn run(
     cmd: &AdapterCommand,
@@ -221,6 +227,27 @@ pub fn run_extract(
 ) -> Result<Vec<RawAsset>> {
     let parsed: RawExtract = run_json(cmd, &["extract", "--path", path, "--out", out_dir], observer)?;
     Ok(parsed.assets)
+}
+
+/// Run the adapter's full-file extraction into `out_dir`. When `recursive` is
+/// true, readable compressed files are expanded in place as directories.
+pub fn run_extract_files(
+    cmd: &AdapterCommand,
+    path: &str,
+    out_dir: &str,
+    recursive: bool,
+    observer: Arc<dyn ProgressObserver>,
+) -> Result<u64> {
+    let parsed: RawFileExtract = if recursive {
+        run_json(
+            cmd,
+            &["extract-files", "--path", path, "--out", out_dir, "--recursive"],
+            observer,
+        )?
+    } else {
+        run_json(cmd, &["extract-files", "--path", path, "--out", out_dir], observer)?
+    };
+    Ok(parsed.files)
 }
 
 /// Describe a failed adapter run. A native crash (libarchive aborts on input it
