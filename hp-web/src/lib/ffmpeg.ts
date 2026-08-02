@@ -398,7 +398,7 @@ export async function extractStill(input: string, out: string): Promise<string> 
 const photoScalesInFlight = new Map<string, Promise<string>>();
 
 /** Widths the photo scale cache will produce: 500 for gallery/preview thumbs
- *  (2x the largest cell they draw into), 1000 for the OG card pane. */
+ *  (2x the largest cell they draw into), 1000 for larger photo previews. */
 export const PHOTO_SCALE_WIDTHS = [500, 1000] as const;
 export type PhotoScaleWidth = (typeof PHOTO_SCALE_WIDTHS)[number];
 
