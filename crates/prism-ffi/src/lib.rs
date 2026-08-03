@@ -331,6 +331,21 @@ impl Engine {
         build_summary(&analysis, |sha| analyzer.asset_blob_path(sha))
     }
 
+    /// Copy all files from an image/container into `out_dir`. Recursive mode
+    /// also expands readable compressed archives at their logical paths.
+    pub fn extract_files(
+        &self,
+        path: String,
+        out_dir: String,
+        recursive: bool,
+        listener: Box<dyn ProgressListener>,
+        cancel: Option<Arc<CancelHandle>>,
+    ) -> Result<u64, PrismError> {
+        let observer = Arc::new(ListenerObserver { listener, cancel });
+        let analyzer = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(analyzer.extract_files(&path, &out_dir, recursive, observer)?)
+    }
+
     /// Number of builds in the local library.
     pub fn library_size(&self) -> Result<u64, PrismError> {
         Ok(self.inner.lock().unwrap_or_else(|e| e.into_inner()).library_size()?)

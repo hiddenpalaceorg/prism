@@ -28,6 +28,7 @@ public sealed partial class MainWindow : Window
     private bool _isQuerying;
 
     private AnalysisSummary? _summary;
+    private string? _sourcePath;
     private RecordDoc? _record;
     private List<AssetInfo> _assets = new();
     private SimilarityResponse? _similarity;
@@ -104,6 +105,14 @@ public sealed partial class MainWindow : Window
         {
             item.IsEnabled = !working;
         }
+        UpdateExtractMenuState();
+    }
+
+    private void UpdateExtractMenuState()
+    {
+        var enabled = !_working && _sourcePath != null;
+        MenuExtractFiles.IsEnabled = enabled;
+        MenuExtractFilesRecursive.IsEnabled = enabled;
     }
 
     // ---- progress (background thread → UI) ----
@@ -228,7 +237,7 @@ public sealed partial class MainWindow : Window
                 var s = force ? engine.Reanalyze(path, listener, cancel) : engine.Analyze(path, listener, cancel);
                 return (s, RecordDoc.Decode(s.Json));
             });
-            ShowBuild(summary, record);
+            ShowBuild(summary, record, path);
             SetStatus($"[{(summary.FromCache ? "cached" : "analyzed")}] {summary.Sha256} — {summary.System}, {summary.FileCount} files");
         }
         catch (PrismException.Cancelled)
@@ -378,9 +387,11 @@ public sealed partial class MainWindow : Window
 
     // ---- build display ----
 
-    private void ShowBuild(AnalysisSummary summary, RecordDoc? record)
+    private void ShowBuild(AnalysisSummary summary, RecordDoc? record, string? sourcePath = null)
     {
         _summary = summary;
+        _sourcePath = sourcePath;
+        UpdateExtractMenuState();
         _record = record;
         _assets = summary.Assets?.ToList() ?? new List<AssetInfo>();
         _similarity = null;
@@ -2145,6 +2156,56 @@ public sealed partial class MainWindow : Window
     }
 
     private void MenuBrowseLibrary_Click(object sender, RoutedEventArgs e) => ShowLibraryPane();
+
+    private void MenuExtractFiles_Click(object sender, RoutedEventArgs e) => ExtractFiles(recursive: false);
+
+    private void MenuExtractFilesRecursive_Click(object sender, RoutedEventArgs e) => ExtractFiles(recursive: true);
+
+    private async void ExtractFiles(bool recursive)
+    {
+        if (_working || _sourcePath == null)
+        {
+            return;
+        }
+        var source = _sourcePath;
+        if (!File.Exists(source) && !Directory.Exists(source))
+        {
+            SetStatus("The original image or folder is no longer available.");
+            return;
+        }
+        if (await PickFolderAsync() is not { } destination)
+        {
+            return;
+        }
+
+        SetWorking(true);
+        _importing = false;
+        var cancel = new CancelHandle();
+        _cancel = cancel;
+        var listener = new UiProgressListener(this);
+        SetStatus(recursive ? "Extracting files and compressed archives…" : "Extracting files…");
+        try
+        {
+            var count = await Task.Run(() =>
+                GetEngine().ExtractFiles(source, destination, recursive, listener, cancel));
+            SetStatus($"Extracted {count} {(count == 1 ? "file" : "files")} → {destination}");
+        }
+        catch (PrismException.Cancelled)
+        {
+            SetStatus("Extraction cancelled — files already completed remain in the destination.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus("Extraction failed.");
+            await ShowErrorAsync(ErrorMessage(ex));
+        }
+        finally
+        {
+            SetWorking(false);
+            _cancel = null;
+            ClearCounters();
+        }
+    }
 
     private async void MenuExport_Click(object sender, RoutedEventArgs e)
     {

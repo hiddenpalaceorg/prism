@@ -15,6 +15,7 @@ import os
 import pathlib
 import re
 import sys
+import tempfile
 
 import blake3
 import numpy as np
@@ -940,6 +941,326 @@ def extract(path, out_dir):
     return {"assets": _process(path, basename, parent_dir, mods, manager, work)}
 
 
+def extract_files(path, out_dir, recursive=False):
+    """Copy every file from the selected volume to ``out_dir``.
+
+    In recursive mode, a readable compressed file becomes a directory at the
+    same path and its members are copied into it.  A member without its own date
+    inherits the enclosing archive's date; a top-level entry without one
+    inherits the volume (or source file) date.
+    """
+    mods = _import_ps2exe()
+    manager = ProgressManager()
+
+    path = os.path.normpath(path)
+    if os.path.isdir(path):
+        source_root = os.path.realpath(path)
+        output_root = os.path.realpath(out_dir)
+        try:
+            output_is_inside_source = os.path.commonpath([source_root, output_root]) == source_root
+        except ValueError:  # different Windows drives cannot overlap
+            output_is_inside_source = False
+        if output_is_inside_source:
+            raise SystemExit("the extraction folder cannot be inside the source folder")
+    basename = os.path.basename(path)
+    parent_dir = pathlib.Path(path).resolve().parent
+    source_date = _path_date(path)
+
+    def work(processor, reader, system):
+        inherited = _volume_date(reader) or source_date
+        budget = _ByteBudget(_archive_byte_budget()) if recursive else None
+        count = _extract_reader_files(
+            reader, out_dir, manager, mods, recursive, inherited, budget=budget
+        )
+        return {"files": count}
+
+    return _process(path, basename, parent_dir, mods, manager, work)
+
+
+def _path_date(path):
+    try:
+        return _dt.datetime.fromtimestamp(os.stat(path).st_mtime, tz=_dt.timezone.utc)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _as_datetime(value):
+    if isinstance(value, _dt.datetime):
+        # Disc timestamps without an explicit zone are conventionally UTC in
+        # the existing readers. Treating them as host-local would shift dates
+        # when extraction runs outside UTC.
+        return value if value.tzinfo is not None else value.replace(tzinfo=_dt.timezone.utc)
+    if isinstance(value, (str, os.PathLike)):
+        return _path_date(value)
+    return None
+
+
+def _volume_date(reader):
+    """Best available volume timestamp, preferring modification over creation."""
+    try:
+        info = reader.get_pvd_info() or {}
+    except Exception:  # noqa: BLE001 — malformed volume metadata is non-fatal
+        return None
+    for key in ("volume_modification_date", "volume_creation_date", "volume_effective_date"):
+        if date := _as_datetime(info.get(key)):
+            return date
+    return None
+
+
+def _set_output_date(path, date):
+    date = _as_datetime(date)
+    if date is None:
+        return
+    try:
+        stamp = date.timestamp()
+        os.utime(path, (stamp, stamp))
+    except (OSError, OverflowError, ValueError):
+        # Some disc formats can encode dates outside the host filesystem's
+        # range.  The bytes are still useful, so leave the host default date.
+        pass
+
+
+def _relative_output_path(raw):
+    clean = _clean_path(str(raw).replace("\\", "/"))
+    parts = [part for part in clean.strip("/").split("/") if part]
+    if os.name == "nt":
+        # Disc/archive names can contain characters Windows cannot represent,
+        # and a colon-bearing first component could otherwise select a drive.
+        # Preserve every valid name exactly; substitute only unrepresentable
+        # characters and reserved DOS device names.
+        invalid = '<>:"\\|?*'
+        devices = {"CON", "PRN", "AUX", "NUL"} | {
+            f"{stem}{n}" for stem in ("COM", "LPT") for n in range(1, 10)
+        }
+        safe = []
+        for part in parts:
+            part = "".join("_" if c in invalid or ord(c) < 32 else c for c in part)
+            part = part.rstrip(" .") or "_"
+            if part.split(".", 1)[0].upper() in devices:
+                part = f"_{part}"
+            safe.append(part)
+        parts = safe
+    return pathlib.Path(*parts)
+
+
+class _ArchiveBudgetExceeded(Exception):
+    pass
+
+
+# The full-file command is genuinely recursive, unlike the three-level preview
+# tree, but still needs a structural ceiling for adversarial archive nesting.
+_FILE_EXTRACT_MAX_DEPTH = 32
+
+
+def _output_target(root, relative):
+    """Join an already-clean relative path without following output symlinks out."""
+    target = root / relative
+    root_real = os.path.realpath(root)
+    check = target if target.exists() else target.parent
+    try:
+        escapes = os.path.commonpath([root_real, os.path.realpath(check)]) != root_real
+    except ValueError:  # different Windows drives
+        escapes = True
+    if escapes:
+        raise OSError(f"output path escapes the extraction folder: {relative}")
+    return target
+
+
+def _bad_output_path(target):
+    return target.with_name(f"{target.stem}_BAD{target.suffix}")
+
+
+def _copy_output_file(reader, entry, target, expected_size=None, budget=None):
+    """Stream one entry atomically and retain partial bytes on read failures.
+
+    Returns ``(head, final_path, unreadable)``. An unreadable file is committed
+    under a ``_BAD`` name instead of aborting the rest of the extraction.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_name = None
+    head = bytearray()
+    bytes_read = 0
+    unreadable = False
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", delete=False, dir=target.parent, prefix=f".{target.name}.", suffix=".part"
+        ) as out:
+            temp_name = out.name
+            fh = None
+            try:
+                fh = reader.open_file(entry)
+                is_ctx = hasattr(fh, "__enter__")
+                if is_ctx:
+                    fh.__enter__()
+            except Exception as e:  # noqa: BLE001 — an unreadable file still yields an empty _BAD
+                unreadable = True
+                if fh is not None:
+                    _close_handle(fh)
+                logging.getLogger("prism-adapter").warning(
+                    "could not open %s for extraction: %s", target.name, e
+                )
+            else:
+                try:
+                    while True:
+                        try:
+                            chunk = fh.read(1024 * 1024)
+                        except Exception as e:  # noqa: BLE001 — retain the readable prefix
+                            unreadable = True
+                            logging.getLogger("prism-adapter").warning(
+                                "file extraction was partial for %s: %s", target.name, e
+                            )
+                            break
+                        if not chunk:
+                            break
+                        if budget is not None and not budget.take(len(chunk)):
+                            raise _ArchiveBudgetExceeded
+                        # Destination failures (full disk, permissions, etc.)
+                        # must abort; only source read failures are best-effort.
+                        out.write(chunk)
+                        bytes_read += len(chunk)
+                        if len(head) < _ARCHIVE_SNIFF_BYTES:
+                            head.extend(chunk[: _ARCHIVE_SNIFF_BYTES - len(head)])
+                finally:
+                    _close_handle(fh)
+        if expected_size is not None and bytes_read != expected_size:
+            unreadable = True
+        final_target = _bad_output_path(target) if unreadable else target
+        os.replace(temp_name, final_target)
+        temp_name = None
+        return bytes(head), final_target, unreadable
+    finally:
+        if temp_name is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temp_name)
+
+
+def _extract_reader_files(
+    reader,
+    out_dir,
+    manager,
+    mods,
+    recursive,
+    inherited_date,
+    *,
+    depth=0,
+    budget=None,
+):
+    """Copy a reader's tree, preserving dates and optionally expanding archives."""
+    root = pathlib.Path(out_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    raw_entries = []
+    try:
+        raw_entries.extend(
+            reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=True)
+        )
+    except Exception as e:  # noqa: BLE001 — extract the entries listed before corruption
+        logging.getLogger("prism-adapter").warning("filesystem listing was partial: %s", e)
+        if not raw_entries:
+            raise
+
+    entries = []
+    seen_paths = set()
+    for entry in raw_entries:
+        if _dir_member_escapes(reader, entry, mods if depth == 0 else None):
+            continue
+        relative = _relative_output_path(reader.get_file_path(entry))
+        if not relative.parts:
+            continue
+        if relative in seen_paths:
+            raise OSError(f"multiple source entries map to the same output path: {relative}")
+        seen_paths.add(relative)
+        try:
+            own_date = _as_datetime(reader.get_file_date(entry))
+        except Exception:  # noqa: BLE001
+            own_date = None
+        entries.append((entry, relative, bool(reader.is_directory(entry)), own_date))
+
+    # Resolve inheritance by logical parent before copying. Include implicit
+    # parents because some volume readers list files without directory entries.
+    explicit_dates = {relative: own_date for _entry, relative, _is_dir, own_date in entries}
+    directory_paths = {relative for _entry, relative, is_dir, _own_date in entries if is_dir}
+    for _entry, relative, _is_dir, _own_date in entries:
+        parent = relative.parent
+        while parent.parts:
+            directory_paths.add(parent)
+            parent = parent.parent
+    dates = {pathlib.Path(): inherited_date}
+    all_paths = directory_paths | {relative for _entry, relative, _is_dir, _own_date in entries}
+    for relative in sorted(all_paths, key=lambda value: len(value.parts)):
+        dates[relative] = explicit_dates.get(relative) or dates.get(relative.parent) or inherited_date
+
+    directories = []
+    for relative in sorted(directory_paths, key=lambda value: len(value.parts)):
+        target = _output_target(root, relative)
+        target.mkdir(parents=True, exist_ok=True)
+        directories.append((target, dates[relative], len(relative.parts)))
+
+    count = 0
+    with manager.counter(total=len(entries), desc="Extracting files", unit="files") as pbar:
+        for entry, relative, is_dir, _own_date in entries:
+            if is_dir:
+                pbar.update()
+                continue
+            target = _output_target(root, relative)
+            entry_budget = budget if depth > 0 else None
+            try:
+                expected_size = int(reader.get_file_size(entry))
+            except Exception:  # noqa: BLE001 — size is advisory for bad-file detection
+                expected_size = None
+            head, target, unreadable = _copy_output_file(
+                reader, entry, target, expected_size, entry_budget
+            )
+            effective_date = dates[relative]
+            _set_output_date(target, effective_date)
+            count += 1
+
+            if (
+                recursive
+                and not unreadable
+                and depth < _FILE_EXTRACT_MAX_DEPTH
+                and _looks_like_archive(head)
+            ):
+                child = _open_member_archive(reader, entry, str(relative), manager, head)
+                if child is not None:
+                    try:
+                        with tempfile.TemporaryDirectory(
+                            dir=target.parent, prefix=f".{target.name}.extract."
+                        ) as staging:
+                            try:
+                                child_count = _extract_reader_files(
+                                    child,
+                                    staging,
+                                    manager,
+                                    mods,
+                                    True,
+                                    effective_date,
+                                    depth=depth + 1,
+                                    budget=budget,
+                                )
+                            except _ArchiveBudgetExceeded:
+                                # Keep the compressed file when expansion would
+                                # exceed the shared decompression safety limit.
+                                child_count = None
+                            if child_count is not None:
+                                os.unlink(target)
+                                os.replace(staging, target)
+                                _set_output_date(target, effective_date)
+                                count += child_count - 1
+                    except Exception as e:  # noqa: BLE001 — corrupt/passworded archive
+                        logging.getLogger("prism-adapter").warning(
+                            "archive file extraction failed for %s: %s", relative, e
+                        )
+                    finally:
+                        _close_member_archive(child)
+            pbar.update()
+
+    # Writing descendants changes directory mtimes, so restore them last,
+    # deepest first. Implicit parents inherit the closest explicit ancestor.
+    for target, date, _level in sorted(directories, key=lambda item: item[2], reverse=True):
+        _set_output_date(target, date)
+    return count
+
+
 def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
     from . import viewable
 
@@ -1350,6 +1671,10 @@ def main():
     p_ex = sub.add_parser("extract", help="extract browser-viewable assets into a store")
     p_ex.add_argument("--path", required=True)
     p_ex.add_argument("--out", required=True)
+    p_files = sub.add_parser("extract-files", help="extract every file from a volume")
+    p_files.add_argument("--path", required=True)
+    p_files.add_argument("--out", required=True)
+    p_files.add_argument("--recursive", action="store_true", help="also expand nested archives")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
@@ -1360,8 +1685,10 @@ def main():
     try:
         if args.command == "analyze":
             result = analyze(args.path)
-        else:
+        elif args.command == "extract":
             result = extract(args.path, args.out)
+        else:
+            result = extract_files(args.path, args.out, args.recursive)
     finally:
         sys.stdout = real_stdout
     json.dump(result, real_stdout)
