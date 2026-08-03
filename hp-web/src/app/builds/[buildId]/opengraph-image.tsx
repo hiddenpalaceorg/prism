@@ -152,7 +152,7 @@ function Card({
         width: "100%",
         height: "100%",
         display: "flex",
-        position: "relative",
+        flexDirection: "column",
         overflow: "hidden",
         background: "#0a0a0a",
         color: "#fafafa",
@@ -160,8 +160,43 @@ function Card({
     >
       <div
         style={{
+          flexShrink: 0,
+          height: 92,
+          display: "flex",
+          alignItems: "center",
+          gap: 24,
+          padding: "16px 28px",
+          background: "#111111",
+        }}
+      >
+        <div
+          style={{
+            flexShrink: 0,
+            fontSize: 16,
+            letterSpacing: 5,
+            color: "#b3b3b3",
+          }}
+        >
+          HIDDEN PALACE
+        </div>
+        <div
+          style={{
+            minWidth: 0,
+            display: "block",
+            fontSize: 32,
+            lineHeight: 1.05,
+            lineClamp: 2,
+          }}
+        >
+          {displayTitle(meta)}
+        </div>
+      </div>
+
+      <div
+        style={{
           width: "100%",
-          height: "100%",
+          flex: 1,
+          minHeight: 0,
           display: "flex",
           background: "#171717",
         }}
@@ -194,54 +229,14 @@ function Card({
 
       <div
         style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 108,
-          display: "flex",
-          alignItems: "center",
-          gap: 26,
-          padding: "20px 32px",
-          background: "rgba(0,0,0,0.72)",
-        }}
-      >
-        <div
-          style={{
-            flexShrink: 0,
-            fontSize: 17,
-            letterSpacing: 5,
-            color: "#b3b3b3",
-          }}
-        >
-          HIDDEN PALACE
-        </div>
-        <div
-          style={{
-            minWidth: 0,
-            display: "block",
-            fontSize: 38,
-            lineHeight: 1.05,
-            lineClamp: 2,
-          }}
-        >
-          {displayTitle(meta)}
-        </div>
-      </div>
-
-      <div
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 88,
+          flexShrink: 0,
+          height: 78,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 24,
-          padding: "16px 32px",
-          background: "rgba(0,0,0,0.72)",
+          padding: "13px 28px",
+          background: "#111111",
         }}
       >
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
@@ -253,7 +248,7 @@ function Card({
                 border: "1px solid rgba(255,255,255,0.28)",
                 borderRadius: 8,
                 padding: "5px 12px",
-                fontSize: 18,
+                fontSize: 17,
                 color: "#f0f0f0",
               }}
             >
@@ -261,7 +256,7 @@ function Card({
             </div>
           ))}
         </div>
-        <div style={{ flexShrink: 0, fontSize: 17, color: "#b3b3b3" }}>
+        <div style={{ flexShrink: 0, fontSize: 16, color: "#b3b3b3" }}>
           {`${meta.sha256.slice(0, SHORT_SHA_LEN)} · hiddenpalace.org`}
         </div>
       </div>
