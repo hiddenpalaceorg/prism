@@ -6,11 +6,18 @@
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Deserializer};
 
 use crate::error::{Error, Result};
 use crate::progress::{AdapterEvent, ProgressObserver};
+
+/// Kill an adapter that stops reporting progress. This is deliberately an
+/// inactivity timeout rather than a limit on the whole operation: healthy
+/// multi-disc analyses may take longer, while a native archive decoder can get
+/// stuck forever on one malformed member.
+const ADAPTER_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Deserialize a value that may be JSON `null` into `T::default()`. ps2exe emits
 /// `null` (not "") for required strings it can't determine — notably `system` on
@@ -257,6 +264,15 @@ fn run_json<T: serde::de::DeserializeOwned>(
     args: &[&str],
     observer: Arc<dyn ProgressObserver>,
 ) -> Result<T> {
+    run_json_with_timeout(cmd, args, observer, ADAPTER_INACTIVITY_TIMEOUT)
+}
+
+fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
+    cmd: &AdapterCommand,
+    args: &[&str],
+    observer: Arc<dyn ProgressObserver>,
+    inactivity_timeout: Duration,
+) -> Result<T> {
     let mut builder = Command::new(&cmd.program);
     builder
         .args(&cmd.args)
@@ -278,6 +294,8 @@ fn run_json<T: serde::de::DeserializeOwned>(
     // Drain stderr (progress NDJSON) on a side thread so stdout can stream.
     let stderr = child.stderr.take().expect("piped stderr");
     let obs = observer.clone();
+    let last_progress = Arc::new(std::sync::Mutex::new(Instant::now()));
+    let stderr_progress = last_progress.clone();
     let stderr_thread = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         let mut tail = String::new();
@@ -288,6 +306,9 @@ fn run_json<T: serde::de::DeserializeOwned>(
             }
             match serde_json::from_str::<AdapterEvent>(trimmed) {
                 Ok(ev) => {
+                    if let Ok(mut last) = stderr_progress.lock() {
+                        *last = Instant::now();
+                    }
                     if let Some(ev) = ev.into_event() {
                         obs.on_event(ev);
                     }
@@ -316,12 +337,22 @@ fn run_json<T: serde::de::DeserializeOwned>(
     });
 
     let mut cancelled = false;
+    let mut timed_out = false;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
         if observer.is_cancelled() {
             cancelled = true;
+            let _ = child.kill();
+            break child.wait()?;
+        }
+        let inactive_for = last_progress
+            .lock()
+            .map(|last| last.elapsed())
+            .unwrap_or_default();
+        if inactive_for >= inactivity_timeout {
+            timed_out = true;
             let _ = child.kill();
             break child.wait()?;
         }
@@ -333,6 +364,14 @@ fn run_json<T: serde::de::DeserializeOwned>(
 
     if cancelled {
         return Err(Error::Cancelled);
+    }
+
+    if timed_out {
+        return Err(Error::Adapter(format!(
+            "adapter timed out after {} seconds without progress\n{}",
+            inactivity_timeout.as_secs(),
+            diag.trim()
+        )));
     }
 
     if !status.success() {
@@ -347,4 +386,39 @@ fn run_json<T: serde::de::DeserializeOwned>(
         Error::Adapter(format!("could not parse adapter output: {e}\nstderr:\n{}", diag.trim()))
     })?;
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::progress::NoopObserver;
+
+    #[test]
+    fn adapter_is_killed_after_inactivity_timeout() {
+        #[cfg(windows)]
+        let cmd = AdapterCommand {
+            program: "powershell.exe".into(),
+            args: vec![
+                "-NoProfile".into(),
+                "-Command".into(),
+                "Start-Sleep -Seconds 10".into(),
+            ],
+        };
+        #[cfg(unix)]
+        let cmd = AdapterCommand {
+            program: "sh".into(),
+            args: vec!["-c".into(), "sleep 10".into()],
+        };
+
+        let started = Instant::now();
+        let result = run_json_with_timeout::<serde_json::Value>(
+            &cmd,
+            &[],
+            Arc::new(NoopObserver),
+            Duration::from_millis(100),
+        );
+
+        assert!(matches!(result, Err(Error::Adapter(ref msg)) if msg.contains("timed out")));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 }
