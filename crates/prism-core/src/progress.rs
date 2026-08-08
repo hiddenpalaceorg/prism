@@ -55,6 +55,12 @@ pub(crate) enum AdapterEvent {
     CounterClose {
         id: u64,
     },
+    ArchiveOpen {
+        path: String,
+    },
+    ArchiveClose {
+        path: String,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -79,7 +85,20 @@ impl AdapterEvent {
                 counts.remove(id);
                 true
             }
+            AdapterEvent::ArchiveOpen { .. } | AdapterEvent::ArchiveClose { .. } => true,
             AdapterEvent::Unknown => false,
+        }
+    }
+
+    pub(crate) fn update_archive_stack(&self, stack: &mut Vec<String>) {
+        match self {
+            AdapterEvent::ArchiveOpen { path } => stack.push(path.clone()),
+            AdapterEvent::ArchiveClose { path } => {
+                if let Some(index) = stack.iter().rposition(|open| open == path) {
+                    stack.truncate(index);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -90,6 +109,7 @@ impl AdapterEvent {
             }
             AdapterEvent::Progress { id, count } => Some(Event::Progress { id, count }),
             AdapterEvent::CounterClose { id } => Some(Event::CounterClose { id }),
+            AdapterEvent::ArchiveOpen { .. } | AdapterEvent::ArchiveClose { .. } => None,
             AdapterEvent::Unknown => None,
         }
     }

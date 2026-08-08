@@ -667,8 +667,13 @@ def _hash_files(reader, manager, mods=None, prefix="", depth=0, budget=None):
 def _archive_member_files(reader, entry, path, manager, depth, head=b"", budget=None):
     """Hash an archive member's own members as `<path>/...` records. Best-effort:
     an archive that can't be opened or dies mid-listing just stays a plain file."""
+    if _archive_is_skipped(path):
+        logging.getLogger("prism-adapter").warning("skipping stalled archive %s", path)
+        return []
+    manager.archive_open(path)
     child = _open_member_archive(reader, entry, path, manager, head)
     if child is None:
+        manager.archive_close(path)
         return []
     try:
         return _hash_files(child, manager, prefix=path, depth=depth + 1, budget=budget)
@@ -677,6 +682,15 @@ def _archive_member_files(reader, entry, path, manager, depth, head=b"", budget=
         return []
     finally:
         _close_member_archive(child)
+        manager.archive_close(path)
+
+
+def _archive_is_skipped(path):
+    """Whether a parent watchdog restart marked this archive as stalled."""
+    try:
+        return path in json.loads(os.environ.get("PRISM_SKIP_ARCHIVES", "[]"))
+    except (TypeError, ValueError):
+        return False
 
 
 def _hash_one(reader, f, rec, size, hbar, fingerprints=True, budget=None):
@@ -1013,8 +1027,13 @@ def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
 def _archive_member_assets(reader, entry, path, out_dir, manager, depth, head=b""):
     """Extract an archive member's own members as `<path>/...` assets.
     Best-effort, like the listing pass."""
+    if _archive_is_skipped(path):
+        logging.getLogger("prism-adapter").warning("skipping stalled archive %s", path)
+        return []
+    manager.archive_open(path)
     child = _open_member_archive(reader, entry, path, manager, head)
     if child is None:
+        manager.archive_close(path)
         return []
     try:
         return _extract_assets(child, out_dir, manager, prefix=path, depth=depth + 1)
@@ -1023,6 +1042,7 @@ def _archive_member_assets(reader, entry, path, out_dir, manager, depth, head=b"
         return []
     finally:
         _close_member_archive(child)
+        manager.archive_close(path)
 
 
 def _read_capped(reader, f, cap):

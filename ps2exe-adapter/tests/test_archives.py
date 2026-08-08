@@ -101,6 +101,14 @@ def test_corrupt_archive_stays_a_plain_file():
     assert [p for p in recs if p.startswith("/BROKEN.ZIP/")] == []
 
 
+def test_parent_watchdog_can_skip_a_stalled_archive(monkeypatch):
+    monkeypatch.setenv("PRISM_SKIP_ARCHIVES", '["/A.ZIP"]')
+    recs = hash_files({"/A.ZIP": make_zip({"inside.txt": b"data"})})
+
+    assert recs["/A.ZIP"]["sha1"]
+    assert "/A.ZIP/inside.txt" not in recs
+
+
 def test_member_assets_are_extracted(tmp_path):
     zip_bytes = make_zip({"art/title.png": PNG, "notes.txt": b"prototype notes\n"})
     out = _extract_assets(FakeVolume({"/DATA/PROTO.ZIP": zip_bytes}), str(tmp_path), ProgressManager())

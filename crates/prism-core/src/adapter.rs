@@ -12,13 +12,14 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Deserializer};
 
 use crate::error::{Error, Result};
-use crate::progress::{AdapterEvent, ProgressObserver};
+use crate::progress::{AdapterEvent, Event, ProgressObserver};
 
 /// Kill an adapter that stops reporting progress. This is deliberately an
 /// inactivity timeout rather than a limit on the whole operation: healthy
 /// multi-disc analyses may take longer, while a native archive decoder can get
 /// stuck forever on one malformed member.
 const ADAPTER_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const MAX_STALLED_ARCHIVES: usize = 16;
 
 /// Deserialize a value that may be JSON `null` into `T::default()`. ps2exe emits
 /// `null` (not "") for required strings it can't determine — notably `system` on
@@ -325,7 +326,26 @@ fn run_json<T: serde::de::DeserializeOwned>(
     args: &[&str],
     observer: Arc<dyn ProgressObserver>,
 ) -> Result<T> {
-    run_json_with_timeout(cmd, args, observer, ADAPTER_INACTIVITY_TIMEOUT)
+    let mut skipped = Vec::new();
+    loop {
+        match run_json_with_timeout(
+            cmd,
+            args,
+            observer.clone(),
+            ADAPTER_INACTIVITY_TIMEOUT,
+            &skipped,
+        ) {
+            Err(Error::AdapterTimeout { archive: Some(archive), .. })
+                if skipped.len() < MAX_STALLED_ARCHIVES && !skipped.contains(&archive) =>
+            {
+                observer.on_event(Event::Message(format!(
+                    "archive stalled; retrying without {archive}"
+                )));
+                skipped.push(archive);
+            }
+            result => return result,
+        }
+    }
 }
 
 fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
@@ -333,6 +353,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     args: &[&str],
     observer: Arc<dyn ProgressObserver>,
     inactivity_timeout: Duration,
+    skipped_archives: &[String],
 ) -> Result<T> {
     let debug_log = cmd.debug_log.as_deref().map(open_debug_log).transpose()?;
     debug_line(
@@ -343,6 +364,10 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     builder
         .args(&cmd.args)
         .args(args)
+        .env(
+            "PRISM_SKIP_ARCHIVES",
+            serde_json::to_string(skipped_archives).unwrap_or_else(|_| "[]".into()),
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
@@ -369,6 +394,8 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     let last_progress = Arc::new(std::sync::Mutex::new(Instant::now()));
     let stderr_progress = last_progress.clone();
     let stderr_log = debug_log.clone();
+    let active_archives = Arc::new(Mutex::new(Vec::new()));
+    let stderr_archives = active_archives.clone();
     let stderr_thread = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         let mut tail = String::new();
@@ -381,6 +408,9 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
             debug_line(&stderr_log, format_args!("adapter stderr: {trimmed}"));
             match serde_json::from_str::<AdapterEvent>(trimmed) {
                 Ok(ev) => {
+                    if let Ok(mut stack) = stderr_archives.lock() {
+                        ev.update_archive_stack(&mut stack);
+                    }
                     if ev.made_progress(&mut progress_counts) {
                         if let Ok(mut last) = stderr_progress.lock() {
                             *last = Instant::now();
@@ -461,11 +491,12 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     }
 
     if timed_out {
-        return Err(Error::Adapter(format!(
-            "adapter timed out after {} seconds without progress\n{}",
-            inactivity_timeout.as_secs(),
-            diag.trim()
-        )));
+        let archive = active_archives.lock().ok().and_then(|stack| stack.last().cloned());
+        return Err(Error::AdapterTimeout {
+            seconds: inactivity_timeout.as_secs(),
+            archive,
+            diagnostics: diag.trim().to_string(),
+        });
     }
 
     if !status.success() {
@@ -512,9 +543,10 @@ mod tests {
             &[],
             Arc::new(NoopObserver),
             Duration::from_millis(100),
+            &[],
         );
 
-        assert!(matches!(result, Err(Error::Adapter(ref msg)) if msg.contains("timed out")));
+        assert!(matches!(result, Err(Error::AdapterTimeout { .. })));
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
