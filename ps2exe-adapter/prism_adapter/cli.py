@@ -1354,6 +1354,10 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARNING, stream=sys.stderr)
+    # Per-read/seek tracing can emit millions of lines when libarchive loops on
+    # a malformed member. Member counters and archive diagnostics remain at
+    # debug/warning level and provide the useful context without multi-GB logs.
+    logging.getLogger("utils.files").setLevel(logging.INFO)
 
     # Force any ps2exe stdout chatter to stderr; stdout is reserved for the result.
     real_stdout = sys.stdout

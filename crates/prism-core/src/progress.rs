@@ -60,6 +60,29 @@ pub(crate) enum AdapterEvent {
 }
 
 impl AdapterEvent {
+    /// True only when this event represents forward work. Some malformed
+    /// archive loops repeatedly publish the same byte count; those events must
+    /// not keep the adapter inactivity watchdog alive forever.
+    pub(crate) fn made_progress(
+        &self,
+        counts: &mut std::collections::HashMap<u64, f64>,
+    ) -> bool {
+        match self {
+            AdapterEvent::CounterOpen { id, .. } => {
+                counts.remove(id);
+                true
+            }
+            AdapterEvent::Progress { id, count } => {
+                counts.insert(*id, *count).is_none_or(|previous| previous != *count)
+            }
+            AdapterEvent::CounterClose { id } => {
+                counts.remove(id);
+                true
+            }
+            AdapterEvent::Unknown => false,
+        }
+    }
+
     pub(crate) fn into_event(self) -> Option<Event> {
         match self {
             AdapterEvent::CounterOpen { id, label, unit, total } => {
@@ -69,5 +92,19 @@ impl AdapterEvent {
             AdapterEvent::CounterClose { id } => Some(Event::CounterClose { id }),
             AdapterEvent::Unknown => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_counter_value_is_not_progress() {
+        let mut counts = std::collections::HashMap::new();
+        let event = AdapterEvent::Progress { id: 7, count: 42.0 };
+        assert!(event.made_progress(&mut counts));
+        assert!(!event.made_progress(&mut counts));
+        assert!(AdapterEvent::Progress { id: 7, count: 43.0 }.made_progress(&mut counts));
     }
 }

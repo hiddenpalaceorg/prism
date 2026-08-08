@@ -372,6 +372,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     let stderr_thread = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         let mut tail = String::new();
+        let mut progress_counts = std::collections::HashMap::new();
         for line in reader.lines().map_while(std::result::Result::ok) {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -380,8 +381,10 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
             debug_line(&stderr_log, format_args!("adapter stderr: {trimmed}"));
             match serde_json::from_str::<AdapterEvent>(trimmed) {
                 Ok(ev) => {
-                    if let Ok(mut last) = stderr_progress.lock() {
-                        *last = Instant::now();
+                    if ev.made_progress(&mut progress_counts) {
+                        if let Ok(mut last) = stderr_progress.lock() {
+                            *last = Instant::now();
+                        }
                     }
                     if let Some(ev) = ev.into_event() {
                         obs.on_event(ev);
