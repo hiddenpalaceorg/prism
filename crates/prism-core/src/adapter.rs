@@ -5,7 +5,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -90,6 +90,34 @@ fn open_debug_log(path: &Path) -> Result<Arc<Mutex<std::fs::File>>> {
     }
     let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
     Ok(Arc::new(Mutex::new(file)))
+}
+
+/// Terminate the launcher and anything it spawned. Killing only `uv`/the shell
+/// can leave the adapter alive with stdout/stderr pipes open, making the joins
+/// below hang even after the timeout fired.
+fn kill_adapter_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        let group = format!("-{}", child.id());
+        let _ = Command::new("kill")
+            .args(["-KILL", &group])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
 }
 
 // ---- Raw adapter output (normalized into the canonical schema by `normalize`) ----
@@ -317,6 +345,11 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        builder.process_group(0);
+    }
     // Windows: run the adapter without popping up a console window (it's a console exe;
     // stdout/stderr are still captured through the pipes above).
     #[cfg(windows)]
@@ -386,7 +419,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
         if observer.is_cancelled() {
             cancelled = true;
             debug_line(&debug_log, "adapter cancellation requested");
-            let _ = child.kill();
+            kill_adapter_tree(&mut child);
             break child.wait()?;
         }
         let inactive_for = last_progress
@@ -402,7 +435,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
                     inactivity_timeout.as_secs()
                 ),
             );
-            let _ = child.kill();
+            kill_adapter_tree(&mut child);
             break child.wait()?;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
