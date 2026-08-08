@@ -1344,6 +1344,7 @@ def _scan_cue_audio(r):
 
 def main():
     parser = argparse.ArgumentParser(prog="prism-adapter")
+    parser.add_argument("--debug", action="store_true", help="enable verbose diagnostic logging")
     sub = parser.add_subparsers(dest="command", required=True)
     p_an = sub.add_parser("analyze", help="analyze a disc image/container/folder")
     p_an.add_argument("--path", required=True)
@@ -1352,7 +1353,7 @@ def main():
     p_ex.add_argument("--out", required=True)
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARNING, stream=sys.stderr)
 
     # Force any ps2exe stdout chatter to stderr; stdout is reserved for the result.
     real_stdout = sys.stdout

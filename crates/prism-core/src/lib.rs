@@ -1100,7 +1100,11 @@ mod cache_hit_tests {
         // Seed the cache with the same identity under a stale name, with assets
         // current so the cache-hit path never spawns the adapter.
         let analyzer = Analyzer::new(Config {
-            adapter: AdapterCommand { program: "false".into(), args: vec![] },
+            adapter: AdapterCommand {
+                program: "false".into(),
+                args: vec![],
+                debug_log: None,
+            },
             data_dir: Some(data_dir),
         })
         .unwrap();

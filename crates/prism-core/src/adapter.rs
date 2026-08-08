@@ -3,9 +3,10 @@
 //! Contract: the adapter prints one canonical-raw JSON document on **stdout** and
 //! streams NDJSON progress events on **stderr**. Rust never imports Python.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Deserializer};
@@ -37,6 +38,8 @@ pub struct AdapterCommand {
     pub program: String,
     /// Base args before the subcommand (e.g. `["run", "--project", "<dir>", "prism-adapter"]`).
     pub args: Vec<String>,
+    /// Append verbose adapter lifecycle and stderr output here when enabled.
+    pub debug_log: Option<PathBuf>,
 }
 
 impl AdapterCommand {
@@ -50,13 +53,43 @@ impl AdapterCommand {
                 adapter_dir.into(),
                 "prism-adapter".into(),
             ],
+            debug_log: None,
         }
     }
 
     /// A bundled, self-contained adapter launcher (shipped app — no uv/Python needed).
     pub fn bin(launcher_path: &str) -> Self {
-        AdapterCommand { program: launcher_path.into(), args: vec![] }
+        AdapterCommand {
+            program: launcher_path.into(),
+            args: vec![],
+            debug_log: None,
+        }
     }
+
+    /// Enable verbose Python logging and preserve the complete adapter trace.
+    pub fn with_debug_log(mut self, path: impl Into<PathBuf>) -> Self {
+        self.args.push("--debug".into());
+        self.debug_log = Some(path.into());
+        self
+    }
+}
+
+fn debug_line(log: &Option<Arc<Mutex<std::fs::File>>>, message: impl std::fmt::Display) {
+    if let Some(log) = log {
+        if let Ok(mut file) = log.lock() {
+            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let _ = writeln!(file, "{now} {message}");
+            let _ = file.flush();
+        }
+    }
+}
+
+fn open_debug_log(path: &Path) -> Result<Arc<Mutex<std::fs::File>>> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    Ok(Arc::new(Mutex::new(file)))
 }
 
 // ---- Raw adapter output (normalized into the canonical schema by `normalize`) ----
@@ -273,6 +306,11 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     observer: Arc<dyn ProgressObserver>,
     inactivity_timeout: Duration,
 ) -> Result<T> {
+    let debug_log = cmd.debug_log.as_deref().map(open_debug_log).transpose()?;
+    debug_line(
+        &debug_log,
+        format_args!("adapter start: {:?} {:?} {:?}", cmd.program, cmd.args, args),
+    );
     let mut builder = Command::new(&cmd.program);
     builder
         .args(&cmd.args)
@@ -290,12 +328,14 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     let mut child = builder
         .spawn()
         .map_err(|e| Error::Adapter(format!("failed to launch `{}`: {e}", cmd.program)))?;
+    debug_line(&debug_log, format_args!("adapter pid: {}", child.id()));
 
     // Drain stderr (progress NDJSON) on a side thread so stdout can stream.
     let stderr = child.stderr.take().expect("piped stderr");
     let obs = observer.clone();
     let last_progress = Arc::new(std::sync::Mutex::new(Instant::now()));
     let stderr_progress = last_progress.clone();
+    let stderr_log = debug_log.clone();
     let stderr_thread = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         let mut tail = String::new();
@@ -304,6 +344,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
             if trimmed.is_empty() {
                 continue;
             }
+            debug_line(&stderr_log, format_args!("adapter stderr: {trimmed}"));
             match serde_json::from_str::<AdapterEvent>(trimmed) {
                 Ok(ev) => {
                     if let Ok(mut last) = stderr_progress.lock() {
@@ -344,6 +385,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
         }
         if observer.is_cancelled() {
             cancelled = true;
+            debug_line(&debug_log, "adapter cancellation requested");
             let _ = child.kill();
             break child.wait()?;
         }
@@ -353,6 +395,13 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
             .unwrap_or_default();
         if inactive_for >= inactivity_timeout {
             timed_out = true;
+            debug_line(
+                &debug_log,
+                format_args!(
+                    "adapter timeout: {} seconds without progress",
+                    inactivity_timeout.as_secs()
+                ),
+            );
             let _ = child.kill();
             break child.wait()?;
         }
@@ -361,6 +410,15 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
 
     let stdout_buf = stdout_thread.join().unwrap_or_default();
     let diag = stderr_thread.join().unwrap_or_default();
+    debug_line(
+        &debug_log,
+        format_args!(
+            "adapter finish: status={} stdout_bytes={} diagnostic_bytes={}",
+            describe_exit(status),
+            stdout_buf.len(),
+            diag.len()
+        ),
+    );
 
     if cancelled {
         return Err(Error::Cancelled);
@@ -403,11 +461,13 @@ mod tests {
                 "-Command".into(),
                 "Start-Sleep -Seconds 10".into(),
             ],
+            debug_log: None,
         };
         #[cfg(unix)]
         let cmd = AdapterCommand {
             program: "sh".into(),
             args: vec!["-c".into(), "sleep 10".into()],
+            debug_log: None,
         };
 
         let started = Instant::now();

@@ -26,6 +26,10 @@ use crate::progress::LoaderObserver;
 #[derive(Parser)]
 #[command(name = "prism", version, about = "Analyze disc images into DAT/JSON and add them to a local library")]
 struct Cli {
+    /// Write verbose adapter diagnostics to prism-debug.log in the current directory.
+    #[arg(long, global = true)]
+    debug: bool,
+
     /// Override the user data dir (cache + local library DB).
     #[arg(long, global = true)]
     data_dir: Option<PathBuf>,
@@ -210,13 +214,20 @@ pub fn run(args: Vec<String>, fallback_adapter: Option<AdapterCommand>) -> i32 {
 }
 
 fn execute(cli: Cli, fallback_adapter: Option<AdapterCommand>) -> Result<()> {
-    let adapter = if let Some(bin) = &cli.adapter_bin {
+    let mut adapter = if let Some(bin) = &cli.adapter_bin {
         AdapterCommand::bin(bin)
     } else if let Some(dir) = &cli.adapter_dir {
         AdapterCommand::uv(dir)
     } else {
         fallback_adapter.unwrap_or_else(|| AdapterCommand::uv("ps2exe-adapter"))
     };
+    if cli.debug {
+        let log = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("prism-debug.log");
+        errln!("debug log: {}", log.display());
+        adapter = adapter.with_debug_log(log);
+    }
     let analyzer = Analyzer::new(Config { adapter, data_dir: cli.data_dir.clone() })
         .context("initializing analyzer")?;
 
