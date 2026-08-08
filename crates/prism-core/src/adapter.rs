@@ -112,7 +112,7 @@ fn kill_adapter_tree(child: &mut Child) {
     {
         let group = format!("-{}", child.id());
         let _ = Command::new("kill")
-            .args(["-KILL", &group])
+            .args(["-KILL", "--", &group])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
