@@ -591,6 +591,49 @@ class _ByteBudget:
         return self.remaining <= 0
 
 
+class _Checkpoint:
+    """Append-only completed-work journal shared across watchdog restarts."""
+
+    def __init__(self, kind):
+        self.kind = kind
+        self.path = os.environ.get("PRISM_CHECKPOINT")
+        self.done = set()
+        self.records = []
+        if self.path:
+            try:
+                with open(self.path, encoding="utf-8") as fh:
+                    for line in fh:
+                        try:
+                            row = json.loads(line)
+                        except (TypeError, ValueError):
+                            continue  # killed during the final append
+                        if row.get("kind") != kind or not isinstance(row.get("path"), str):
+                            continue
+                        self.done.add(row["path"])
+                        if isinstance(row.get("record"), dict):
+                            self.records.append(row["record"])
+            except FileNotFoundError:
+                pass
+            self._fh = open(self.path, "a", encoding="utf-8")
+        else:
+            self._fh = None
+
+    def finish(self, path, record=None):
+        if path in self.done:
+            return
+        self.done.add(path)
+        if record is not None:
+            self.records.append(record)
+        if self._fh is not None:
+            self._fh.write(json.dumps({"kind": self.kind, "path": path, "record": record}))
+            self._fh.write("\n")
+            self._fh.flush()
+
+    def close(self):
+        if self._fh is not None:
+            self._fh.close()
+
+
 def _dir_member_escapes(reader, entry, mods):
     """True when a directory-container member resolves (through a symlink or
     junction) outside the container root. A folder opened as one build must not
@@ -608,8 +651,9 @@ def _dir_member_escapes(reader, entry, mods):
     return os.path.commonpath([root, target]) != root
 
 
-def _hash_files(reader, manager, mods=None, prefix="", depth=0, budget=None):
-    files = []
+def _hash_files(reader, manager, mods=None, prefix="", depth=0, budget=None, checkpoint=None):
+    checkpoint = checkpoint or _Checkpoint("files")
+    files = list(checkpoint.records) if depth == 0 else []
     if budget is None and depth == 0:
         budget = _ByteBudget(_archive_byte_budget())
     file_list = list(reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=True))
@@ -617,11 +661,15 @@ def _hash_files(reader, manager, mods=None, prefix="", depth=0, budget=None):
             manager.counter(total=0, unit="B", file_name="") as hbar:
         for f in file_list:
             path = prefix + _clean_path(reader.get_file_path(f).replace("\\", "/"))
+            if path in checkpoint.done:
+                pbar.update()
+                continue
             is_dir = bool(reader.is_directory(f))
             rec = {"path": path, "is_dir": is_dir}
             if _dir_member_escapes(reader, f, mods):
                 rec["unreadable"] = True
                 files.append(rec)
+                checkpoint.finish(path, rec)
                 pbar.update()
                 continue
             if depth:
@@ -653,18 +701,23 @@ def _hash_files(reader, manager, mods=None, prefix="", depth=0, budget=None):
                 )
 
             files.append(rec)
+            checkpoint.finish(path, rec)
             if (
                 head is not None
                 and depth < _ARCHIVE_MAX_DEPTH
                 and _looks_like_archive(head)
                 and (budget is None or not budget.exhausted)
             ):
-                files.extend(_archive_member_files(reader, f, path, manager, depth, head, budget))
+                files.extend(
+                    _archive_member_files(reader, f, path, manager, depth, head, budget, checkpoint)
+                )
             pbar.update()
     return files
 
 
-def _archive_member_files(reader, entry, path, manager, depth, head=b"", budget=None):
+def _archive_member_files(
+    reader, entry, path, manager, depth, head=b"", budget=None, checkpoint=None
+):
     """Hash an archive member's own members as `<path>/...` records. Best-effort:
     an archive that can't be opened or dies mid-listing just stays a plain file."""
     if _archive_is_skipped(path):
@@ -676,7 +729,9 @@ def _archive_member_files(reader, entry, path, manager, depth, head=b"", budget=
         manager.archive_close(path)
         return []
     try:
-        return _hash_files(child, manager, prefix=path, depth=depth + 1, budget=budget)
+        return _hash_files(
+            child, manager, prefix=path, depth=depth + 1, budget=budget, checkpoint=checkpoint
+        )
     except Exception as e:  # noqa: BLE001 — passworded/unsupported/corrupt
         logging.getLogger("prism-adapter").warning("archive listing failed for %s: %s", path, e)
         return []
@@ -919,7 +974,11 @@ def analyze(path):
 
     def work(processor, reader, system):
         info = _gather_info(processor, reader, system, mods)
-        files = _hash_files(reader, manager, mods)
+        checkpoint = _Checkpoint("files")
+        try:
+            files = _hash_files(reader, manager, mods, checkpoint=checkpoint)
+        finally:
+            checkpoint.close()
         exe_fp = _exe_fp_for(info, reader)
         return info, files, exe_fp, system
 
@@ -949,12 +1008,16 @@ def extract(path, out_dir):
     parent_dir = pathlib.Path(path).resolve().parent
 
     def work(processor, reader, system):
-        return _extract_assets(reader, out_dir, manager, mods)
+        checkpoint = _Checkpoint("assets")
+        try:
+            return _extract_assets(reader, out_dir, manager, mods, checkpoint=checkpoint)
+        finally:
+            checkpoint.close()
 
     return {"assets": _process(path, basename, parent_dir, mods, manager, work)}
 
 
-def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
+def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0, checkpoint=None):
     from . import viewable
 
     # Candidate list first, bytes second — the same two-step the hashing pass
@@ -963,11 +1026,14 @@ def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
     # else (unknown extension, oversized, sniff mismatch below) ships as a raw
     # head snippet the UIs render as a hex view. Archive members are candidates
     # too, extracted through the same recursion as the hashing pass.
+    checkpoint = checkpoint or _Checkpoint("assets")
     entries = []
     for f in reader.iso_iterator(reader.get_root_dir(), recursive=True, include_dirs=False):
         if _dir_member_escapes(reader, f, mods):
             continue  # symlink out of a folder source: never serve its target's bytes
         path = prefix + _clean_path(reader.get_file_path(f).replace("\\", "/"))
+        if path in checkpoint.done:
+            continue
         try:
             size = int(reader.get_file_size(f))
         except Exception:  # noqa: BLE001
@@ -979,14 +1045,18 @@ def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
             classified = None  # too big to serve whole — keep the head snippet only
         entries.append((f, path, size, classified))
 
-    out = []
+    out = list(checkpoint.records) if depth == 0 else []
     with manager.counter(total=len(entries), desc="Extracting assets", unit="files") as pbar:
         for f, path, size, classified in entries:
             if classified is None:
                 head = _read_head(reader, f, viewable.SNIPPET_BYTES)
                 asset = (head, viewable.SNIPPET_MIME, viewable.SNIPPET_KIND) if head else None
                 if head and depth < _ARCHIVE_MAX_DEPTH and _looks_like_archive(head):
-                    out.extend(_archive_member_assets(reader, f, path, out_dir, manager, depth, head))
+                    out.extend(
+                        _archive_member_assets(
+                            reader, f, path, out_dir, manager, depth, head, checkpoint
+                        )
+                    )
             else:
                 kind, mime = classified
                 if size is not None and size > viewable.MAX_ASSET_SIZE:
@@ -995,7 +1065,15 @@ def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
                     streamed = _stream_to_store(reader, f, out_dir, mime, viewable.max_size(kind))
                     if streamed is not None and streamed[0] == "stored":
                         _, sha, n = streamed
-                        out.append({"path": path, "sha256": sha, "size": n, "mime": mime, "kind": kind})
+                        record = {
+                            "path": path,
+                            "sha256": sha,
+                            "size": n,
+                            "mime": mime,
+                            "kind": kind,
+                        }
+                        out.append(record)
+                        checkpoint.finish(path, record)
                         pbar.update()
                         continue
                     if streamed is not None:  # ("mismatch", head)
@@ -1016,15 +1094,20 @@ def _extract_assets(reader, out_dir, manager, mods=None, prefix="", depth=0):
                         asset = None
             pbar.update()
             if asset is None:
+                checkpoint.finish(path)
                 continue
             data, mime, kind = asset
             sha = hashlib.sha256(data).hexdigest()
             _store_blob(out_dir, sha, data)
-            out.append({"path": path, "sha256": sha, "size": len(data), "mime": mime, "kind": kind})
+            record = {"path": path, "sha256": sha, "size": len(data), "mime": mime, "kind": kind}
+            out.append(record)
+            checkpoint.finish(path, record)
     return out
 
 
-def _archive_member_assets(reader, entry, path, out_dir, manager, depth, head=b""):
+def _archive_member_assets(
+    reader, entry, path, out_dir, manager, depth, head=b"", checkpoint=None
+):
     """Extract an archive member's own members as `<path>/...` assets.
     Best-effort, like the listing pass."""
     if _archive_is_skipped(path):
@@ -1036,7 +1119,14 @@ def _archive_member_assets(reader, entry, path, out_dir, manager, depth, head=b"
         manager.archive_close(path)
         return []
     try:
-        return _extract_assets(child, out_dir, manager, prefix=path, depth=depth + 1)
+        return _extract_assets(
+            child,
+            out_dir,
+            manager,
+            prefix=path,
+            depth=depth + 1,
+            checkpoint=checkpoint,
+        )
     except Exception as e:  # noqa: BLE001 — passworded/unsupported/corrupt
         logging.getLogger("prism-adapter").warning("archive extraction failed for %s: %s", path, e)
         return []

@@ -327,13 +327,19 @@ fn run_json<T: serde::de::DeserializeOwned>(
     observer: Arc<dyn ProgressObserver>,
 ) -> Result<T> {
     let mut skipped = Vec::new();
-    loop {
+    let checkpoint = std::env::temp_dir().join(format!(
+        "prism-adapter-checkpoint-{}-{}.jsonl",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let result = loop {
         match run_json_with_timeout(
             cmd,
             args,
             observer.clone(),
             ADAPTER_INACTIVITY_TIMEOUT,
             &skipped,
+            &checkpoint,
         ) {
             Err(Error::AdapterTimeout { archive: Some(archive), .. })
                 if skipped.len() < MAX_STALLED_ARCHIVES && !skipped.contains(&archive) =>
@@ -343,9 +349,11 @@ fn run_json<T: serde::de::DeserializeOwned>(
                 )));
                 skipped.push(archive);
             }
-            result => return result,
+            result => break result,
         }
-    }
+    };
+    let _ = std::fs::remove_file(checkpoint);
+    result
 }
 
 fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
@@ -354,6 +362,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     observer: Arc<dyn ProgressObserver>,
     inactivity_timeout: Duration,
     skipped_archives: &[String],
+    checkpoint: &Path,
 ) -> Result<T> {
     let debug_log = cmd.debug_log.as_deref().map(open_debug_log).transpose()?;
     debug_line(
@@ -368,6 +377,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
             "PRISM_SKIP_ARCHIVES",
             serde_json::to_string(skipped_archives).unwrap_or_else(|_| "[]".into()),
         )
+        .env("PRISM_CHECKPOINT", checkpoint)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
@@ -544,6 +554,10 @@ mod tests {
             Arc::new(NoopObserver),
             Duration::from_millis(100),
             &[],
+            &std::env::temp_dir().join(format!(
+                "prism-adapter-test-checkpoint-{}.jsonl",
+                std::process::id()
+            )),
         );
 
         assert!(matches!(result, Err(Error::AdapterTimeout { .. })));
