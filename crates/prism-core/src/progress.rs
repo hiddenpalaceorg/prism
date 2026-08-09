@@ -102,6 +102,23 @@ impl AdapterEvent {
         }
     }
 
+    /// Track the innermost byte counter's display label for stall diagnostics.
+    pub(crate) fn update_current_file(&self, current: &mut Option<(u64, String)>) {
+        match self {
+            AdapterEvent::CounterOpen { id, label, unit, .. }
+                if unit == "B" && !label.trim().is_empty() =>
+            {
+                *current = Some((*id, label.trim().to_string()));
+            }
+            AdapterEvent::CounterClose { id }
+                if current.as_ref().is_some_and(|(current_id, _)| current_id == id) =>
+            {
+                *current = None;
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn into_event(self) -> Option<Event> {
         match self {
             AdapterEvent::CounterOpen { id, label, unit, total } => {
@@ -126,5 +143,20 @@ mod tests {
         assert!(event.made_progress(&mut counts));
         assert!(!event.made_progress(&mut counts));
         assert!(AdapterEvent::Progress { id: 7, count: 43.0 }.made_progress(&mut counts));
+    }
+
+    #[test]
+    fn byte_counter_tracks_trimmed_file_label() {
+        let mut current = None;
+        AdapterEvent::CounterOpen {
+            id: 9,
+            label: "   BROKEN.ZIP   ".into(),
+            unit: "B".into(),
+            total: Some(100.0),
+        }
+        .update_current_file(&mut current);
+        assert_eq!(current, Some((9, "BROKEN.ZIP".into())));
+        AdapterEvent::CounterClose { id: 9 }.update_current_file(&mut current);
+        assert_eq!(current, None);
     }
 }

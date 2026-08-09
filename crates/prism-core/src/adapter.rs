@@ -429,6 +429,8 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     let stderr_log = debug_log.clone();
     let active_archives = Arc::new(Mutex::new(Vec::new()));
     let stderr_archives = active_archives.clone();
+    let current_file = Arc::new(Mutex::new(None));
+    let stderr_file = current_file.clone();
     let stderr_thread = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         let mut tail = String::new();
@@ -443,6 +445,9 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
                 Ok(ev) => {
                     if let Ok(mut stack) = stderr_archives.lock() {
                         ev.update_archive_stack(&mut stack);
+                    }
+                    if let Ok(mut file) = stderr_file.lock() {
+                        ev.update_current_file(&mut file);
                     }
                     if ev.made_progress(&mut progress_counts) {
                         if let Ok(mut last) = stderr_progress.lock() {
@@ -495,7 +500,16 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
             .unwrap_or_default();
         if let Some(seconds) = timeout_countdown(inactive_for, inactivity_timeout, warning_after) {
             if last_countdown != Some(seconds) {
-                let message = format!("adapter stalled; timeout in {seconds} seconds");
+                let file = current_file
+                    .lock()
+                    .ok()
+                    .and_then(|file| file.as_ref().map(|(_, label)| label.clone()))
+                    .or_else(|| {
+                        active_archives.lock().ok().and_then(|stack| stack.last().cloned())
+                    })
+                    .unwrap_or_else(|| "unknown file".into());
+                let message =
+                    format!("failed to progress on file {file}, skipping in {seconds} seconds");
                 observer.on_event(Event::Message(message.clone()));
                 debug_line(&debug_log, message);
                 last_countdown = Some(seconds);
