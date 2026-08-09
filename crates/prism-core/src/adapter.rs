@@ -18,8 +18,21 @@ use crate::progress::{AdapterEvent, Event, ProgressObserver};
 /// inactivity timeout rather than a limit on the whole operation: healthy
 /// multi-disc analyses may take longer, while a native archive decoder can get
 /// stuck forever on one malformed member.
-const ADAPTER_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const ADAPTER_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+const ADAPTER_TIMEOUT_WARNING_AFTER: Duration = Duration::from_secs(60);
 const MAX_STALLED_ARCHIVES: usize = 16;
+
+fn timeout_countdown(
+    inactive_for: Duration,
+    timeout: Duration,
+    warning_after: Duration,
+) -> Option<u64> {
+    if inactive_for < warning_after || inactive_for >= timeout {
+        return None;
+    }
+    let remaining_ms = timeout.saturating_sub(inactive_for).as_millis();
+    Some(remaining_ms.div_ceil(1000) as u64)
+}
 
 /// Deserialize a value that may be JSON `null` into `T::default()`. ps2exe emits
 /// `null` (not "") for required strings it can't determine — notably `system` on
@@ -338,6 +351,7 @@ fn run_json<T: serde::de::DeserializeOwned>(
             args,
             observer.clone(),
             ADAPTER_INACTIVITY_TIMEOUT,
+            ADAPTER_TIMEOUT_WARNING_AFTER,
             &skipped,
             &checkpoint,
         ) {
@@ -361,6 +375,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     args: &[&str],
     observer: Arc<dyn ProgressObserver>,
     inactivity_timeout: Duration,
+    warning_after: Duration,
     skipped_archives: &[String],
     checkpoint: &Path,
 ) -> Result<T> {
@@ -455,6 +470,7 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
 
     let mut cancelled = false;
     let mut timed_out = false;
+    let mut last_countdown = None;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
@@ -469,6 +485,16 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
             .lock()
             .map(|last| last.elapsed())
             .unwrap_or_default();
+        if let Some(seconds) = timeout_countdown(inactive_for, inactivity_timeout, warning_after) {
+            if last_countdown != Some(seconds) {
+                let message = format!("adapter stalled; timeout in {seconds} seconds");
+                observer.on_event(Event::Message(message.clone()));
+                debug_line(&debug_log, message);
+                last_countdown = Some(seconds);
+            }
+        } else if inactive_for < warning_after {
+            last_countdown = None;
+        }
         if inactive_for >= inactivity_timeout {
             timed_out = true;
             debug_line(
@@ -553,6 +579,7 @@ mod tests {
             &[],
             Arc::new(NoopObserver),
             Duration::from_millis(100),
+            Duration::from_millis(50),
             &[],
             &std::env::temp_dir().join(format!(
                 "prism-adapter-test-checkpoint-{}.jsonl",
@@ -562,5 +589,24 @@ mod tests {
 
         assert!(matches!(result, Err(Error::AdapterTimeout { .. })));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn countdown_starts_after_warning_threshold() {
+        let timeout = Duration::from_secs(120);
+        let warning = Duration::from_secs(60);
+        assert_eq!(
+            timeout_countdown(Duration::from_secs(59), timeout, warning),
+            None
+        );
+        assert_eq!(
+            timeout_countdown(Duration::from_secs(60), timeout, warning),
+            Some(60)
+        );
+        assert_eq!(
+            timeout_countdown(Duration::from_millis(119_001), timeout, warning),
+            Some(1)
+        );
+        assert_eq!(timeout_countdown(timeout, timeout, warning), None);
     }
 }
