@@ -23,6 +23,12 @@ pub enum Error {
         diagnostics: String,
     },
 
+    #[error("adapter failed while reading {archive}\n{diagnostics}")]
+    AdapterArchiveFailure {
+        archive: String,
+        diagnostics: String,
+    },
+
     #[error("unsupported or unreadable image: {0}")]
     Unsupported(String),
 

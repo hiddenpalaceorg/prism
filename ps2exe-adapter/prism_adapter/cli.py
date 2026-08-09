@@ -1473,10 +1473,14 @@ def main():
     real_stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
-        if args.command == "analyze":
-            result = analyze(args.path)
-        else:
-            result = extract(args.path, args.out)
+        try:
+            if args.command == "analyze":
+                result = analyze(args.path)
+            else:
+                result = extract(args.path, args.out)
+        except Exception:  # noqa: BLE001 — preserve the real cause in debug logs
+            logging.getLogger("prism-adapter").exception("adapter command failed")
+            raise
     finally:
         sys.stdout = real_stdout
     json.dump(result, real_stdout)

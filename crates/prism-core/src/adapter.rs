@@ -363,6 +363,14 @@ fn run_json<T: serde::de::DeserializeOwned>(
                 )));
                 skipped.push(archive);
             }
+            Err(Error::AdapterArchiveFailure { archive, .. })
+                if skipped.len() < MAX_STALLED_ARCHIVES && !skipped.contains(&archive) =>
+            {
+                observer.on_event(Event::Message(format!(
+                    "archive failed; retrying without {archive}"
+                )));
+                skipped.push(archive);
+            }
             result => break result,
         }
     };
@@ -536,6 +544,12 @@ fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
     }
 
     if !status.success() {
+        if let Some(archive) = active_archives.lock().ok().and_then(|stack| stack.last().cloned()) {
+            return Err(Error::AdapterArchiveFailure {
+                archive,
+                diagnostics: format!("adapter {}\n{}", describe_exit(status), diag.trim()),
+            });
+        }
         return Err(Error::Adapter(format!(
             "adapter {}\n{}",
             describe_exit(status),
