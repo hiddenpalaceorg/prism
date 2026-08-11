@@ -26,6 +26,7 @@ public sealed partial class MainWindow : Window
     private bool _importing;
     private bool _libraryMode;
     private bool _isQuerying;
+    private int _submitGeneration;
 
     private AnalysisSummary? _summary;
     private RecordDoc? _record;
@@ -1899,12 +1900,13 @@ public sealed partial class MainWindow : Window
             return;
         }
         SetQuerying(true);
+        var generation = ++_submitGeneration;
         ServiceText.Text = "Submitting…";
         var summary = _summary;
         try
         {
             var result = await _service.SubmitAsync(summary.Json, nickname.Trim());
-            var assetNote = await UploadMissingAssetsAsync(summary);
+            var assetNote = await UploadMissingAssetsAsync(summary, generation);
             var acceptNote = "";
             if (_service.ModerationToken != null)
             {
@@ -1927,6 +1929,12 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            // Invalidate queued upload-progress callbacks before returning the UI
+            // to idle, so none can overwrite the terminal Submitted/error text.
+            if (_submitGeneration == generation)
+            {
+                _submitGeneration++;
+            }
             SetQuerying(false);
         }
     }
@@ -1935,7 +1943,7 @@ public sealed partial class MainWindow : Window
     /// so chunks of one blob never interleave.
     private const int ParallelUploads = 32;
 
-    private async Task<string> UploadMissingAssetsAsync(AnalysisSummary summary)
+    private async Task<string> UploadMissingAssetsAsync(AnalysisSummary summary, int generation)
     {
         var local = new Dictionary<string, string>();
         foreach (var a in _assets)
@@ -1978,7 +1986,13 @@ public sealed partial class MainWindow : Window
                 finally
                 {
                     gate.Release();
-                    Enqueue(() => ServiceText.Text = $"Uploading assets {done + failed}/{todo.Count}…");
+                    Enqueue(() =>
+                    {
+                        if (_submitGeneration == generation)
+                        {
+                            ServiceText.Text = $"Uploading assets {done + failed}/{todo.Count}…";
+                        }
+                    });
                 }
             }).ToList();
             await Task.WhenAll(tasks);

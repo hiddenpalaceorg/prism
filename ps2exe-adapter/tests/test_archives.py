@@ -13,7 +13,7 @@ import sys
 import zipfile
 
 from prism_adapter import viewable
-from prism_adapter.cli import _PS2EXE_DIR, _extract_assets, _hash_files
+from prism_adapter.cli import _Checkpoint, _PS2EXE_DIR, _extract_assets, _hash_files
 from prism_adapter.progress import ProgressManager
 
 
@@ -99,6 +99,34 @@ def test_corrupt_archive_stays_a_plain_file():
     assert recs["/BROKEN.ZIP"]["sha1"] == hashlib.sha1(fake).hexdigest()
     assert "unreadable" not in recs["/BROKEN.ZIP"]
     assert [p for p in recs if p.startswith("/BROKEN.ZIP/")] == []
+
+
+def test_parent_watchdog_can_skip_a_stalled_archive(monkeypatch):
+    monkeypatch.setenv("PRISM_SKIP_ARCHIVES", '["/A.ZIP"]')
+    recs = hash_files({"/A.ZIP": make_zip({"inside.txt": b"data"})})
+
+    assert recs["/A.ZIP"]["sha1"]
+    assert "/A.ZIP/inside.txt" not in recs
+
+
+def test_watchdog_restart_reuses_completed_file_records(tmp_path, monkeypatch):
+    monkeypatch.setenv("PRISM_CHECKPOINT", str(tmp_path / "checkpoint.jsonl"))
+    volume = FakeVolume({"/A.ZIP": make_zip({"inside.txt": b"data"}), "/DONE.BIN": b"done"})
+    first_checkpoint = _Checkpoint("files")
+    first = _hash_files(volume, ProgressManager(), checkpoint=first_checkpoint)
+    first_checkpoint.close()
+
+    class NoReadVolume(FakeVolume):
+        def open_file(self, _f):
+            raise AssertionError("completed file was read again")
+
+    second_checkpoint = _Checkpoint("files")
+    second = _hash_files(
+        NoReadVolume(dict(volume.files)), ProgressManager(), checkpoint=second_checkpoint
+    )
+    second_checkpoint.close()
+
+    assert {r["path"] for r in second} == {r["path"] for r in first}
 
 
 def test_member_assets_are_extracted(tmp_path):

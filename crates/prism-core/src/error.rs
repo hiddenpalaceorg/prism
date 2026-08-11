@@ -16,6 +16,19 @@ pub enum Error {
     #[error("adapter failed: {0}")]
     Adapter(String),
 
+    #[error("adapter timed out after {seconds} seconds without progress\n{diagnostics}")]
+    AdapterTimeout {
+        seconds: u64,
+        archive: Option<String>,
+        diagnostics: String,
+    },
+
+    #[error("adapter failed while reading {archive}\n{diagnostics}")]
+    AdapterArchiveFailure {
+        archive: String,
+        diagnostics: String,
+    },
+
     #[error("unsupported or unreadable image: {0}")]
     Unsupported(String),
 

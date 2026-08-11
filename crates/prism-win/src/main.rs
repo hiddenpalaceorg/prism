@@ -29,7 +29,8 @@ fn main() -> windows::core::Result<()> {
         app::attach_console();
         std::process::exit(prism_cli::run(args, app::cli_fallback_adapter()));
     }
-    app::run()
+    let debug = args.iter().skip(1).any(|arg| arg == "--debug");
+    app::run(debug)
 }
 
 #[cfg(windows)]
@@ -317,7 +318,7 @@ mod app {
     /// Icon resource 1, embedded from prism.ico by build.rs via prism.rc.
     const APP_ICON_ID: PCWSTR = PCWSTR(1 as *const u16);
 
-    pub fn run() -> Result<()> {
+    pub fn run(debug: bool) -> Result<()> {
         unsafe {
             // Apartment-threaded COM for the IFileDialog folder picker.
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -343,7 +344,14 @@ mod app {
             };
             RegisterClassW(&wc);
 
-            let init = Box::new(InitConfig { adapter: resolve_adapter(), data_dir: None });
+            let mut adapter = resolve_adapter();
+            if debug {
+                let log = std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join("prism-debug.log");
+                adapter = adapter.with_debug_log(log);
+            }
+            let init = Box::new(InitConfig { adapter, data_dir: None });
 
             let hwnd = CreateWindowExW(
                 WINDOW_EX_STYLE(0),

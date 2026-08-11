@@ -55,11 +55,70 @@ pub(crate) enum AdapterEvent {
     CounterClose {
         id: u64,
     },
+    ArchiveOpen {
+        path: String,
+    },
+    ArchiveClose {
+        path: String,
+    },
     #[serde(other)]
     Unknown,
 }
 
 impl AdapterEvent {
+    /// True only when this event represents forward work. Some malformed
+    /// archive loops repeatedly publish the same byte count; those events must
+    /// not keep the adapter inactivity watchdog alive forever.
+    pub(crate) fn made_progress(
+        &self,
+        counts: &mut std::collections::HashMap<u64, f64>,
+    ) -> bool {
+        match self {
+            AdapterEvent::CounterOpen { id, .. } => {
+                counts.remove(id);
+                true
+            }
+            AdapterEvent::Progress { id, count } => {
+                counts.insert(*id, *count).is_none_or(|previous| previous != *count)
+            }
+            AdapterEvent::CounterClose { id } => {
+                counts.remove(id);
+                true
+            }
+            AdapterEvent::ArchiveOpen { .. } | AdapterEvent::ArchiveClose { .. } => true,
+            AdapterEvent::Unknown => false,
+        }
+    }
+
+    pub(crate) fn update_archive_stack(&self, stack: &mut Vec<String>) {
+        match self {
+            AdapterEvent::ArchiveOpen { path } => stack.push(path.clone()),
+            AdapterEvent::ArchiveClose { path } => {
+                if let Some(index) = stack.iter().rposition(|open| open == path) {
+                    stack.truncate(index);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Track the innermost byte counter's display label for stall diagnostics.
+    pub(crate) fn update_current_file(&self, current: &mut Option<(u64, String)>) {
+        match self {
+            AdapterEvent::CounterOpen { id, label, unit, .. }
+                if unit == "B" && !label.trim().is_empty() =>
+            {
+                *current = Some((*id, label.trim().to_string()));
+            }
+            AdapterEvent::CounterClose { id }
+                if current.as_ref().is_some_and(|(current_id, _)| current_id == id) =>
+            {
+                *current = None;
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn into_event(self) -> Option<Event> {
         match self {
             AdapterEvent::CounterOpen { id, label, unit, total } => {
@@ -67,7 +126,37 @@ impl AdapterEvent {
             }
             AdapterEvent::Progress { id, count } => Some(Event::Progress { id, count }),
             AdapterEvent::CounterClose { id } => Some(Event::CounterClose { id }),
+            AdapterEvent::ArchiveOpen { .. } | AdapterEvent::ArchiveClose { .. } => None,
             AdapterEvent::Unknown => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_counter_value_is_not_progress() {
+        let mut counts = std::collections::HashMap::new();
+        let event = AdapterEvent::Progress { id: 7, count: 42.0 };
+        assert!(event.made_progress(&mut counts));
+        assert!(!event.made_progress(&mut counts));
+        assert!(AdapterEvent::Progress { id: 7, count: 43.0 }.made_progress(&mut counts));
+    }
+
+    #[test]
+    fn byte_counter_tracks_trimmed_file_label() {
+        let mut current = None;
+        AdapterEvent::CounterOpen {
+            id: 9,
+            label: "   BROKEN.ZIP   ".into(),
+            unit: "B".into(),
+            total: Some(100.0),
+        }
+        .update_current_file(&mut current);
+        assert_eq!(current, Some((9, "BROKEN.ZIP".into())));
+        AdapterEvent::CounterClose { id: 9 }.update_current_file(&mut current);
+        assert_eq!(current, None);
     }
 }

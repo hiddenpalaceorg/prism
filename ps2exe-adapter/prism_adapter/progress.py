@@ -97,3 +97,9 @@ class ProgressManager:
 
     def counter(self, **kwargs):
         return _Counter(self, **kwargs)
+
+    def archive_open(self, path):
+        _emit({"ev": "archive_open", "path": path})
+
+    def archive_close(self, path):
+        _emit({"ev": "archive_close", "path": path})

@@ -3,14 +3,36 @@
 //! Contract: the adapter prints one canonical-raw JSON document on **stdout** and
 //! streams NDJSON progress events on **stderr**. Rust never imports Python.
 
-use std::io::{BufRead, BufReader, Read};
-use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Deserializer};
 
 use crate::error::{Error, Result};
-use crate::progress::{AdapterEvent, ProgressObserver};
+use crate::progress::{AdapterEvent, Event, ProgressObserver};
+
+/// Kill an adapter that stops reporting progress. This is deliberately an
+/// inactivity timeout rather than a limit on the whole operation: healthy
+/// multi-disc analyses may take longer, while a native archive decoder can get
+/// stuck forever on one malformed member.
+const ADAPTER_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+const ADAPTER_TIMEOUT_WARNING_AFTER: Duration = Duration::from_secs(60);
+const MAX_STALLED_ARCHIVES: usize = 16;
+
+fn timeout_countdown(
+    inactive_for: Duration,
+    timeout: Duration,
+    warning_after: Duration,
+) -> Option<u64> {
+    if inactive_for < warning_after || inactive_for >= timeout {
+        return None;
+    }
+    let remaining_ms = timeout.saturating_sub(inactive_for).as_millis();
+    Some(remaining_ms.div_ceil(1000) as u64)
+}
 
 /// Deserialize a value that may be JSON `null` into `T::default()`. ps2exe emits
 /// `null` (not "") for required strings it can't determine — notably `system` on
@@ -30,6 +52,8 @@ pub struct AdapterCommand {
     pub program: String,
     /// Base args before the subcommand (e.g. `["run", "--project", "<dir>", "prism-adapter"]`).
     pub args: Vec<String>,
+    /// Append verbose adapter lifecycle and stderr output here when enabled.
+    pub debug_log: Option<PathBuf>,
 }
 
 impl AdapterCommand {
@@ -43,13 +67,71 @@ impl AdapterCommand {
                 adapter_dir.into(),
                 "prism-adapter".into(),
             ],
+            debug_log: None,
         }
     }
 
     /// A bundled, self-contained adapter launcher (shipped app — no uv/Python needed).
     pub fn bin(launcher_path: &str) -> Self {
-        AdapterCommand { program: launcher_path.into(), args: vec![] }
+        AdapterCommand {
+            program: launcher_path.into(),
+            args: vec![],
+            debug_log: None,
+        }
     }
+
+    /// Enable verbose Python logging and preserve the complete adapter trace.
+    pub fn with_debug_log(mut self, path: impl Into<PathBuf>) -> Self {
+        self.args.push("--debug".into());
+        self.debug_log = Some(path.into());
+        self
+    }
+}
+
+fn debug_line(log: &Option<Arc<Mutex<std::fs::File>>>, message: impl std::fmt::Display) {
+    if let Some(log) = log {
+        if let Ok(mut file) = log.lock() {
+            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let _ = writeln!(file, "{now} {message}");
+            let _ = file.flush();
+        }
+    }
+}
+
+fn open_debug_log(path: &Path) -> Result<Arc<Mutex<std::fs::File>>> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    Ok(Arc::new(Mutex::new(file)))
+}
+
+/// Terminate the launcher and anything it spawned. Killing only `uv`/the shell
+/// can leave the adapter alive with stdout/stderr pipes open, making the joins
+/// below hang even after the timeout fired.
+fn kill_adapter_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        let group = format!("-{}", child.id());
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &group])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
 }
 
 // ---- Raw adapter output (normalized into the canonical schema by `normalize`) ----
@@ -257,12 +339,75 @@ fn run_json<T: serde::de::DeserializeOwned>(
     args: &[&str],
     observer: Arc<dyn ProgressObserver>,
 ) -> Result<T> {
+    let mut skipped = Vec::new();
+    let checkpoint = std::env::temp_dir().join(format!(
+        "prism-adapter-checkpoint-{}-{}.jsonl",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let result = loop {
+        match run_json_with_timeout(
+            cmd,
+            args,
+            observer.clone(),
+            ADAPTER_INACTIVITY_TIMEOUT,
+            ADAPTER_TIMEOUT_WARNING_AFTER,
+            &skipped,
+            &checkpoint,
+        ) {
+            Err(Error::AdapterTimeout { archive: Some(archive), .. })
+                if skipped.len() < MAX_STALLED_ARCHIVES && !skipped.contains(&archive) =>
+            {
+                observer.on_event(Event::Message(format!(
+                    "archive stalled; retrying without {archive}"
+                )));
+                skipped.push(archive);
+            }
+            Err(Error::AdapterArchiveFailure { archive, .. })
+                if skipped.len() < MAX_STALLED_ARCHIVES && !skipped.contains(&archive) =>
+            {
+                observer.on_event(Event::Message(format!(
+                    "archive failed; retrying without {archive}"
+                )));
+                skipped.push(archive);
+            }
+            result => break result,
+        }
+    };
+    let _ = std::fs::remove_file(checkpoint);
+    result
+}
+
+fn run_json_with_timeout<T: serde::de::DeserializeOwned>(
+    cmd: &AdapterCommand,
+    args: &[&str],
+    observer: Arc<dyn ProgressObserver>,
+    inactivity_timeout: Duration,
+    warning_after: Duration,
+    skipped_archives: &[String],
+    checkpoint: &Path,
+) -> Result<T> {
+    let debug_log = cmd.debug_log.as_deref().map(open_debug_log).transpose()?;
+    debug_line(
+        &debug_log,
+        format_args!("adapter start: {:?} {:?} {:?}", cmd.program, cmd.args, args),
+    );
     let mut builder = Command::new(&cmd.program);
     builder
         .args(&cmd.args)
         .args(args)
+        .env(
+            "PRISM_SKIP_ARCHIVES",
+            serde_json::to_string(skipped_archives).unwrap_or_else(|_| "[]".into()),
+        )
+        .env("PRISM_CHECKPOINT", checkpoint)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        builder.process_group(0);
+    }
     // Windows: run the adapter without popping up a console window (it's a console exe;
     // stdout/stderr are still captured through the pipes above).
     #[cfg(windows)]
@@ -274,20 +419,41 @@ fn run_json<T: serde::de::DeserializeOwned>(
     let mut child = builder
         .spawn()
         .map_err(|e| Error::Adapter(format!("failed to launch `{}`: {e}", cmd.program)))?;
+    debug_line(&debug_log, format_args!("adapter pid: {}", child.id()));
 
     // Drain stderr (progress NDJSON) on a side thread so stdout can stream.
     let stderr = child.stderr.take().expect("piped stderr");
     let obs = observer.clone();
+    let last_progress = Arc::new(std::sync::Mutex::new(Instant::now()));
+    let stderr_progress = last_progress.clone();
+    let stderr_log = debug_log.clone();
+    let active_archives = Arc::new(Mutex::new(Vec::new()));
+    let stderr_archives = active_archives.clone();
+    let current_file = Arc::new(Mutex::new(None));
+    let stderr_file = current_file.clone();
     let stderr_thread = std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         let mut tail = String::new();
+        let mut progress_counts = std::collections::HashMap::new();
         for line in reader.lines().map_while(std::result::Result::ok) {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
+            debug_line(&stderr_log, format_args!("adapter stderr: {trimmed}"));
             match serde_json::from_str::<AdapterEvent>(trimmed) {
                 Ok(ev) => {
+                    if let Ok(mut stack) = stderr_archives.lock() {
+                        ev.update_archive_stack(&mut stack);
+                    }
+                    if let Ok(mut file) = stderr_file.lock() {
+                        ev.update_current_file(&mut file);
+                    }
+                    if ev.made_progress(&mut progress_counts) {
+                        if let Ok(mut last) = stderr_progress.lock() {
+                            *last = Instant::now();
+                        }
+                    }
                     if let Some(ev) = ev.into_event() {
                         obs.on_event(ev);
                     }
@@ -316,13 +482,51 @@ fn run_json<T: serde::de::DeserializeOwned>(
     });
 
     let mut cancelled = false;
+    let mut timed_out = false;
+    let mut last_countdown = None;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
         if observer.is_cancelled() {
             cancelled = true;
-            let _ = child.kill();
+            debug_line(&debug_log, "adapter cancellation requested");
+            kill_adapter_tree(&mut child);
+            break child.wait()?;
+        }
+        let inactive_for = last_progress
+            .lock()
+            .map(|last| last.elapsed())
+            .unwrap_or_default();
+        if let Some(seconds) = timeout_countdown(inactive_for, inactivity_timeout, warning_after) {
+            if last_countdown != Some(seconds) {
+                let file = current_file
+                    .lock()
+                    .ok()
+                    .and_then(|file| file.as_ref().map(|(_, label)| label.clone()))
+                    .or_else(|| {
+                        active_archives.lock().ok().and_then(|stack| stack.last().cloned())
+                    })
+                    .unwrap_or_else(|| "unknown file".into());
+                let message =
+                    format!("failed to progress on file {file}, skipping in {seconds} seconds");
+                observer.on_event(Event::Message(message.clone()));
+                debug_line(&debug_log, message);
+                last_countdown = Some(seconds);
+            }
+        } else if inactive_for < warning_after {
+            last_countdown = None;
+        }
+        if inactive_for >= inactivity_timeout {
+            timed_out = true;
+            debug_line(
+                &debug_log,
+                format_args!(
+                    "adapter timeout: {} seconds without progress",
+                    inactivity_timeout.as_secs()
+                ),
+            );
+            kill_adapter_tree(&mut child);
             break child.wait()?;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -330,12 +534,36 @@ fn run_json<T: serde::de::DeserializeOwned>(
 
     let stdout_buf = stdout_thread.join().unwrap_or_default();
     let diag = stderr_thread.join().unwrap_or_default();
+    debug_line(
+        &debug_log,
+        format_args!(
+            "adapter finish: status={} stdout_bytes={} diagnostic_bytes={}",
+            describe_exit(status),
+            stdout_buf.len(),
+            diag.len()
+        ),
+    );
 
     if cancelled {
         return Err(Error::Cancelled);
     }
 
+    if timed_out {
+        let archive = active_archives.lock().ok().and_then(|stack| stack.last().cloned());
+        return Err(Error::AdapterTimeout {
+            seconds: inactivity_timeout.as_secs(),
+            archive,
+            diagnostics: diag.trim().to_string(),
+        });
+    }
+
     if !status.success() {
+        if let Some(archive) = active_archives.lock().ok().and_then(|stack| stack.last().cloned()) {
+            return Err(Error::AdapterArchiveFailure {
+                archive,
+                diagnostics: format!("adapter {}\n{}", describe_exit(status), diag.trim()),
+            });
+        }
         return Err(Error::Adapter(format!(
             "adapter {}\n{}",
             describe_exit(status),
@@ -347,4 +575,66 @@ fn run_json<T: serde::de::DeserializeOwned>(
         Error::Adapter(format!("could not parse adapter output: {e}\nstderr:\n{}", diag.trim()))
     })?;
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::progress::NoopObserver;
+
+    #[test]
+    fn adapter_is_killed_after_inactivity_timeout() {
+        #[cfg(windows)]
+        let cmd = AdapterCommand {
+            program: "powershell.exe".into(),
+            args: vec![
+                "-NoProfile".into(),
+                "-Command".into(),
+                "Start-Sleep -Seconds 10".into(),
+            ],
+            debug_log: None,
+        };
+        #[cfg(unix)]
+        let cmd = AdapterCommand {
+            program: "sh".into(),
+            args: vec!["-c".into(), "sleep 10".into()],
+            debug_log: None,
+        };
+
+        let started = Instant::now();
+        let result = run_json_with_timeout::<serde_json::Value>(
+            &cmd,
+            &[],
+            Arc::new(NoopObserver),
+            Duration::from_millis(100),
+            Duration::from_millis(50),
+            &[],
+            &std::env::temp_dir().join(format!(
+                "prism-adapter-test-checkpoint-{}.jsonl",
+                std::process::id()
+            )),
+        );
+
+        assert!(matches!(result, Err(Error::AdapterTimeout { .. })));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn countdown_starts_after_warning_threshold() {
+        let timeout = Duration::from_secs(120);
+        let warning = Duration::from_secs(60);
+        assert_eq!(
+            timeout_countdown(Duration::from_secs(59), timeout, warning),
+            None
+        );
+        assert_eq!(
+            timeout_countdown(Duration::from_secs(60), timeout, warning),
+            Some(60)
+        );
+        assert_eq!(
+            timeout_countdown(Duration::from_millis(119_001), timeout, warning),
+            Some(1)
+        );
+        assert_eq!(timeout_countdown(timeout, timeout, warning), None);
+    }
 }
